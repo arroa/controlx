@@ -1,65 +1,111 @@
-import Image from "next/image";
+import { Command, LockKeyhole, Network, RadioTower } from "lucide-react";
 
-export default function Home() {
+import { LandingAccess } from "@/components/landing-access";
+import { Badge } from "@/components/ui/badge";
+import { getFirstAssignedPath } from "@/lib/admin-data";
+import { getCurrentUser } from "@/lib/current-user";
+import { isDevBypassEnabled } from "@/lib/dev-flags";
+
+export default async function Home() {
+  const currentUser = await getCurrentUser();
+  const destination = currentUser
+    ? currentUser.isSuperAdmin
+      ? "/dashboard"
+      : await getFirstAssignedPath(currentUser.email)
+    : "/dashboard";
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="relative min-h-screen overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,oklch(1_0_0/0.035)_1px,transparent_1px),linear-gradient(to_bottom,oklch(1_0_0/0.035)_1px,transparent_1px)] bg-[size:48px_48px]" />
+      <div className="pointer-events-none absolute left-1/2 top-0 h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-primary/10 blur-[140px]" />
+
+      <header className="relative z-10 mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <Command className="size-5" />
+          </div>
+          <div>
+            <p className="font-semibold leading-none">ControlX</p>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+              Critical operations
+            </p>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <Badge
+          variant="outline"
+          className="border-primary/25 bg-primary/5 text-primary"
+        >
+          Beta privada
+        </Badge>
+      </header>
+
+      <section className="relative z-10 mx-auto flex min-h-[calc(100vh-10rem)] max-w-5xl flex-col items-center justify-center px-6 py-20 text-center">
+        <div className="mb-7 flex items-center gap-2 rounded-full border bg-card/70 px-4 py-2 text-xs text-muted-foreground backdrop-blur">
+          <span className="size-1.5 rounded-full bg-emerald-400" />
+          Una única fuente de verdad para cada ejecución crítica
         </div>
-      </main>
+
+        <h1 className="max-w-4xl text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-6xl lg:text-7xl">
+          Control total cuando cada{" "}
+          <span className="text-primary">paso importa.</span>
+        </h1>
+        <p className="mt-7 max-w-2xl text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
+          Prepara, coordina y gobierna eventos operativos críticos con
+          responsables claros, dependencias, aprobaciones y trazabilidad
+          completa.
+        </p>
+
+        <div className="mt-10">
+          <LandingAccess
+            bypassEnabled={isDevBypassEnabled()}
+            isAuthenticated={Boolean(currentUser)}
+            destination={destination}
+          />
+        </div>
+
+        <div className="mt-16 grid w-full max-w-3xl gap-4 text-left sm:grid-cols-3">
+          <Feature
+            icon={Network}
+            title="Orquestación"
+            description="Dependencias y workstreams coordinados."
+          />
+          <Feature
+            icon={RadioTower}
+            title="Tiempo real"
+            description="Una mirada común durante la ejecución."
+          />
+          <Feature
+            icon={LockKeyhole}
+            title="Trazabilidad"
+            description="Cada decisión conserva su evidencia."
+          />
+        </div>
+      </section>
+
+      <footer className="relative z-10 mx-auto flex max-w-7xl items-center justify-between border-t px-6 py-6 text-xs text-muted-foreground">
+        <span>© 2026 ControlX</span>
+        <span>Operaciones críticas, bajo control.</span>
+      </footer>
+    </main>
+  );
+}
+
+function Feature({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: typeof Network;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-xl border bg-card/50 p-4 backdrop-blur">
+      <Icon className="mb-3 size-4 text-primary" />
+      <p className="text-sm font-medium">{title}</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        {description}
+      </p>
     </div>
   );
 }
