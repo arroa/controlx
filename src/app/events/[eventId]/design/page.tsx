@@ -23,8 +23,8 @@ export default async function EventDesignPage({
   if (!design) notFound();
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-background/90 backdrop-blur">
+    <div className="flex h-dvh flex-col overflow-hidden">
+      <header className="shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
           <Link
             href={user.isSuperAdmin ? "/dashboard" : "/"}
@@ -46,23 +46,25 @@ export default async function EventDesignPage({
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 py-10">
-        <section className="mb-8">
+      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 py-4">
+        <section className="mb-4 shrink-0">
           <p className="text-sm text-muted-foreground">Paso 2 de 3</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight">
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">
             Diseño del evento
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Planilla del diseño: busca, edita en la fila superior y crece hacia
             abajo con actividades y pasos agrupados.
           </p>
         </section>
-        <EventDesign
-          eventId={eventId}
-          initialWorkstreams={design.workstreams}
-          initialBlocks={design.blocks}
-          initialPairs={design.pairs}
-        />
+        <div className="min-h-0 flex-1">
+          <EventDesign
+            eventId={eventId}
+            initialWorkstreams={design.workstreams}
+            initialBlocks={design.blocks}
+            initialPairs={design.pairs}
+          />
+        </div>
       </main>
     </div>
   );

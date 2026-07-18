@@ -35,6 +35,21 @@ export const roleSchema = z.enum([
   "STEERCO",
 ]);
 
+/** Roles que pueden declararse como aprobadores de un paso en planificación. */
+export const approvalRoleSchema = z.enum([
+  "EVENT_ADMIN",
+  "WORKSTREAM_ADMIN",
+  "APPROVER",
+  "STEERCO",
+]);
+
+export const APPROVAL_ROLE_OPTIONS = [
+  { value: "EVENT_ADMIN" as const, label: "Event Admin" },
+  { value: "WORKSTREAM_ADMIN" as const, label: "Workstream Admin" },
+  { value: "APPROVER" as const, label: "Approver" },
+  { value: "STEERCO" as const, label: "SteerCo" },
+];
+
 export const eventMembershipSchema = z.object({
   eventInstanceId: z.string().min(1),
   clerkUserId: z.string().min(1),
@@ -93,6 +108,8 @@ export type EventMembership = z.infer<typeof eventMembershipSchema>;
 export type StepCondition = z.infer<typeof stepConditionSchema>;
 export type Iteration = z.infer<typeof iterationSchema>;
 export type TimelineEntry = z.infer<typeof timelineEntrySchema>;
+export type ApprovalRole = z.infer<typeof approvalRoleSchema>;
+export type Role = z.infer<typeof roleSchema>;
 
 export const controlXIndexes = {
   organizations: [{ key: { slug: 1 }, unique: true }],

@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getDatabase, isMongoConfigured } from "@/lib/mongodb";
 import { isSupportedTimezone } from "@/lib/timezones";
+import { approvalRoleSchema } from "@/domain/controlx";
 
 const timezoneSchema = z
   .string()
@@ -75,9 +76,16 @@ export const moveDirectionSchema = z.object({
 
 export const stepPlanningInputSchema = z.object({
   plannedStartAt: z.iso.datetime().nullable(),
+  estimatedDurationMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(60 * 24 * 14)
+    .nullable(),
   dependencyStepIds: z
     .array(z.string().refine(ObjectId.isValid, "Dependencia inválida"))
     .default([]),
+  approvalRoles: z.array(approvalRoleSchema).default([]),
 });
 
 export type OrganizationSummary = {
@@ -156,7 +164,11 @@ export type DesignStepSummary = {
   description: string;
   order: number;
   plannedStartAt: string | null;
+  estimatedDurationMinutes: number | null;
   dependencyStepIds: string[];
+  approvalRoles: Array<
+    "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
+  >;
   createdAt: string;
 };
 
@@ -280,7 +292,11 @@ type DesignStepDocument = {
   description: string;
   order: number;
   plannedStartAt?: Date | null;
+  estimatedDurationMinutes?: number | null;
   dependencyStepIds?: ObjectId[];
+  approvalRoles?: Array<
+    "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
+  >;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -477,8 +493,10 @@ export async function getEventDesign(eventId: string) {
       description: step.description,
       order: step.order,
       plannedStartAt: step.plannedStartAt?.toISOString() ?? null,
+      estimatedDurationMinutes: step.estimatedDurationMinutes ?? null,
       dependencyStepIds:
         step.dependencyStepIds?.map((id) => id.toHexString()) ?? [],
+      approvalRoles: step.approvalRoles ?? [],
       createdAt: step.createdAt.toISOString(),
     });
     stepsByActivity.set(activityId, list);
@@ -1090,14 +1108,23 @@ export async function deleteWorkstream(
   const database = await getDatabase();
   const eventObjectId = new ObjectId(eventId);
   const id = new ObjectId(workstreamId);
-  const activityCount = await database
+
+  const activities = await database
     .collection<ActivityDocument>("activities")
-    .countDocuments({ eventId: eventObjectId, workstreamId: id });
-  if (activityCount) {
-    throw new Error(
-      "No puedes eliminar un workstream que ya tiene actividades.",
-    );
+    .find({ eventId: eventObjectId, workstreamId: id }, { projection: { _id: 1 } })
+    .toArray();
+  const activityIds = activities.map((item) => item._id!);
+  if (activityIds.length) {
+    await database.collection<DesignStepDocument>("designSteps").deleteMany({
+      eventId: eventObjectId,
+      activityId: { $in: activityIds },
+    });
+    await database.collection<ActivityDocument>("activities").deleteMany({
+      eventId: eventObjectId,
+      workstreamId: id,
+    });
   }
+
   const result = await database
     .collection<WorkstreamDocument>("workstreams")
     .deleteOne({ _id: id, eventId: eventObjectId });
@@ -1155,12 +1182,23 @@ export async function deleteBlock(
   const database = await getDatabase();
   const eventObjectId = new ObjectId(eventId);
   const id = new ObjectId(blockId);
-  const activityCount = await database
+
+  const activities = await database
     .collection<ActivityDocument>("activities")
-    .countDocuments({ eventId: eventObjectId, blockId: id });
-  if (activityCount) {
-    throw new Error("No puedes eliminar un bloque que ya tiene actividades.");
+    .find({ eventId: eventObjectId, blockId: id }, { projection: { _id: 1 } })
+    .toArray();
+  const activityIds = activities.map((item) => item._id!);
+  if (activityIds.length) {
+    await database.collection<DesignStepDocument>("designSteps").deleteMany({
+      eventId: eventObjectId,
+      activityId: { $in: activityIds },
+    });
+    await database.collection<ActivityDocument>("activities").deleteMany({
+      eventId: eventObjectId,
+      blockId: id,
+    });
   }
+
   const result = await database
     .collection<BlockDocument>("blocks")
     .deleteOne({ _id: id, eventId: eventObjectId });
@@ -1251,7 +1289,9 @@ export async function createDesignStep(
     description: input.description,
     order: (last?.order ?? 0) + 1,
     plannedStartAt: null,
+    estimatedDurationMinutes: null,
     dependencyStepIds: [],
+    approvalRoles: [],
     createdBy: actorId,
     createdAt: now,
     updatedAt: now,
@@ -1268,7 +1308,9 @@ export async function createDesignStep(
     description: document.description,
     order: document.order,
     plannedStartAt: null,
+    estimatedDurationMinutes: null,
     dependencyStepIds: [],
+    approvalRoles: [],
     createdAt: now.toISOString(),
   };
 }
@@ -1303,8 +1345,10 @@ function toDesignStepSummary(
     description: step.description,
     order: step.order,
     plannedStartAt: step.plannedStartAt?.toISOString() ?? null,
+    estimatedDurationMinutes: step.estimatedDurationMinutes ?? null,
     dependencyStepIds:
       step.dependencyStepIds?.map((id) => id.toHexString()) ?? [],
+    approvalRoles: step.approvalRoles ?? [],
     createdAt: step.createdAt.toISOString(),
   };
 }
@@ -1442,18 +1486,37 @@ export async function updateDesignStep(
 export async function deleteDesignStep(
   eventId: string,
   stepId: string,
-): Promise<void> {
+): Promise<{ deletedActivityId: string | null }> {
   if (!ObjectId.isValid(eventId) || !ObjectId.isValid(stepId)) {
     throw new Error("Paso inválido.");
   }
   const database = await getDatabase();
-  const result = await database
-    .collection<DesignStepDocument>("designSteps")
-    .deleteOne({
-      _id: new ObjectId(stepId),
-      eventId: new ObjectId(eventId),
-    });
+  const eventObjectId = new ObjectId(eventId);
+  const collection = database.collection<DesignStepDocument>("designSteps");
+  const current = await collection.findOne({
+    _id: new ObjectId(stepId),
+    eventId: eventObjectId,
+  });
+  if (!current) throw new Error("El paso no existe.");
+
+  const siblingCount = await collection.countDocuments({
+    eventId: eventObjectId,
+    activityId: current.activityId,
+  });
+
+  // Unidad de diseño = W-B-A-P. Si era el único paso, se elimina toda la actividad.
+  if (siblingCount <= 1) {
+    const activityId = current.activityId.toHexString();
+    await deleteActivity(eventId, activityId);
+    return { deletedActivityId: activityId };
+  }
+
+  const result = await collection.deleteOne({
+    _id: new ObjectId(stepId),
+    eventId: eventObjectId,
+  });
   if (!result.deletedCount) throw new Error("El paso no existe.");
+  return { deletedActivityId: null };
 }
 
 export async function moveDesignStep(
@@ -1507,7 +1570,7 @@ export async function updateStepPlanning(
   eventId: string,
   stepId: string,
   input: z.infer<typeof stepPlanningInputSchema>,
-): Promise<void> {
+): Promise<DesignStepSummary> {
   if (!ObjectId.isValid(eventId) || !ObjectId.isValid(stepId)) {
     throw new Error("Paso inválido.");
   }
@@ -1545,19 +1608,23 @@ export async function updateStepPlanning(
 
   const result = await database
     .collection<DesignStepDocument>("designSteps")
-    .updateOne(
+    .findOneAndUpdate(
       { _id: new ObjectId(stepId), eventId: eventObjectId },
       {
         $set: {
           plannedStartAt: input.plannedStartAt
             ? new Date(input.plannedStartAt)
             : null,
+          estimatedDurationMinutes: input.estimatedDurationMinutes,
           dependencyStepIds: dependencyIds,
+          approvalRoles: input.approvalRoles,
           updatedAt: new Date(),
         },
       },
+      { returnDocument: "after" },
     );
-  if (!result.matchedCount) throw new Error("El paso no existe.");
+  if (!result) throw new Error("El paso no existe.");
+  return toDesignStepSummary(eventId, result);
 }
 
 function hasDependencyCycle(graph: Map<string, string[]>): boolean {

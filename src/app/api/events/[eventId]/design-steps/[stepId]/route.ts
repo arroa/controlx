@@ -56,8 +56,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   const planningParsed = stepPlanningInputSchema.safeParse(json);
   if (planningParsed.success) {
     try {
-      await updateStepPlanning(eventId, stepId, planningParsed.data);
-      return NextResponse.json({ ok: true });
+      const step = await updateStepPlanning(
+        eventId,
+        stepId,
+        planningParsed.data,
+      );
+      return NextResponse.json({ step });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "No fue posible." },
@@ -91,8 +95,8 @@ export async function DELETE(_: Request, { params }: RouteParams) {
   if ("error" in authResult) return authResult.error;
 
   try {
-    await deleteDesignStep(eventId, stepId);
-    return NextResponse.json({ ok: true });
+    const result = await deleteDesignStep(eventId, stepId);
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No fue posible." },

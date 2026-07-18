@@ -337,8 +337,9 @@ function RemoveCatalogItem({
         <AlertDialogHeader>
           <AlertDialogTitle>¿Eliminar {item.name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            Se quitará del catálogo del evento. No podrá eliminarse si ya tiene
-            actividades asociadas.
+            Se quitará del catálogo. Si tiene actividades en el diseño, también
+            se eliminarán esas actividades y todos sus pasos. No se puede
+            deshacer.
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error ? (

@@ -23,8 +23,8 @@ export default async function EventPlanPage({
   if (!design) notFound();
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-background/90 backdrop-blur">
+    <div className="flex h-dvh flex-col overflow-hidden">
+      <header className="shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
           <Link
             href={user.isSuperAdmin ? "/dashboard" : "/"}
@@ -46,22 +46,24 @@ export default async function EventPlanPage({
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 py-10">
-        <section className="mb-8">
+      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 py-4">
+        <section className="mb-4 shrink-0">
           <p className="text-sm text-muted-foreground">Paso 3 de 3</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight">
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">
             Planificador
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Asigna horarios y conecta dependencias entre pasos, incluso cuando
-            pertenecen a distintos workstreams y bloques.
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            En Planilla defines las condiciones del paso: deps (OK exitoso),
+            aprobaciones y hora. Tiempos es solo el visor del cronograma.
           </p>
         </section>
-        <EventPlanner
-          eventId={eventId}
-          eventTimezone={design.event.timezone}
-          pairs={design.pairs}
-        />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <EventPlanner
+            eventId={eventId}
+            eventTimezone={design.event.timezone}
+            pairs={design.pairs}
+          />
+        </div>
       </main>
     </div>
   );
