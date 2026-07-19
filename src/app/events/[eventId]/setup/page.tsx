@@ -53,12 +53,14 @@ export default async function EventSetupPage({
             Setup del evento
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Define los catálogos cerrados de workstreams y bloques que se
-            utilizarán en el diseño.
+            Define el inicio del Día D (origen del timeline) y los catálogos
+            cerrados de workstreams y bloques.
           </p>
         </section>
         <EventSetup
           eventId={eventId}
+          eventTimezone={setup.event.timezone}
+          initialDayDStartAt={setup.event.dayDStartAt}
           initialWorkstreams={setup.workstreams}
           initialBlocks={setup.blocks}
         />

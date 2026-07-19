@@ -2,12 +2,21 @@
 
 import {
   CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  DoorOpen,
+  FileText,
   Info,
+  ListChecks,
   LoaderCircle,
+  Pencil,
   Save,
   Search,
+  TriangleAlert,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { Label } from "@/components/ui/label";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,12 +50,30 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { DesignPair, DesignStepSummary } from "@/lib/admin-data";
+import type {
+  BlockSummary,
+  DesignPair,
+  DesignStepSummary,
+  GateSummary,
+  WorkstreamSummary,
+} from "@/lib/admin-data";
 import { APPROVAL_ROLE_OPTIONS, type ApprovalRole } from "@/domain/controlx";
+import { GatesManager } from "@/components/gates-manager";
+import {
+  DateTimePicker,
+  toZonedInput,
+} from "@/components/datetime-picker";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_DURATION_MINUTES = 30;
 const PIXELS_PER_MINUTE = 2.4;
+const GATE_COLORS = [
+  "border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  "border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  "border-emerald-500 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  "border-rose-500 bg-rose-500/15 text-rose-700 dark:text-rose-300",
+  "border-violet-500 bg-violet-500/15 text-violet-700 dark:text-violet-300",
+];
 
 type PlannerRow = DesignStepSummary & {
   workstreamName: string;
@@ -59,6 +86,8 @@ type Draft = {
   dependencyStepIds: string[];
   approvalRoles: ApprovalRole[];
   plannedStartAt: string | null;
+  producesGateId: string | null;
+  requiresGateIds: string[];
 };
 
 function pairsToRows(pairs: DesignPair[]): PlannerRow[] {
@@ -83,6 +112,8 @@ function draftFromRow(row: PlannerRow): Draft {
     dependencyStepIds: [...row.dependencyStepIds],
     approvalRoles: [...(row.approvalRoles ?? [])],
     plannedStartAt: row.plannedStartAt,
+    producesGateId: row.producesGateId ?? null,
+    requiresGateIds: [...(row.requiresGateIds ?? [])],
   };
 }
 
@@ -99,19 +130,45 @@ function isDirty(row: PlannerRow, draft: Draft) {
     draft.approvalRoles.length === (row.approvalRoles?.length ?? 0) &&
     draft.approvalRoles.every((role) => row.approvalRoles?.includes(role));
   const sameAnchor = draft.plannedStartAt === row.plannedStartAt;
-  return !(sameDuration && sameDeps && sameApprovals && sameAnchor);
+  const sameProduce =
+    (draft.producesGateId ?? null) === (row.producesGateId ?? null);
+  const sameRequire =
+    draft.requiresGateIds.length === (row.requiresGateIds?.length ?? 0) &&
+    draft.requiresGateIds.every((id) => row.requiresGateIds?.includes(id));
+  return !(
+    sameDuration &&
+    sameDeps &&
+    sameApprovals &&
+    sameAnchor &&
+    sameProduce &&
+    sameRequire
+  );
+}
+
+function gateColorClass(index: number) {
+  return GATE_COLORS[index % GATE_COLORS.length]!;
 }
 
 export function EventPlanner({
   eventId,
   eventTimezone,
+  dayDStartAt,
   pairs,
+  workstreams,
+  blocks,
+  initialGates,
 }: {
   eventId: string;
   eventTimezone: string;
+  dayDStartAt: string | null;
   pairs: DesignPair[];
+  workstreams: WorkstreamSummary[];
+  blocks: BlockSummary[];
+  initialGates: GateSummary[];
 }) {
   const [rows, setRows] = useState(() => pairsToRows(pairs));
+  const [gates, setGates] = useState(initialGates);
+  const [gatesOpen, setGatesOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
     Object.fromEntries(pairsToRows(pairs).map((row) => [row.id, draftFromRow(row)])),
@@ -119,6 +176,11 @@ export function EventPlanner({
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const editingRow = editingId
+    ? (rows.find((row) => row.id === editingId) ?? null)
+    : null;
 
   const filteredRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -131,24 +193,25 @@ export function EventPlanner({
   }, [query, rows]);
 
   function patchRow(step: DesignStepSummary) {
-    setRows((current) =>
-      current.map((row) => (row.id === step.id ? { ...row, ...step } : row)),
-    );
-    setDrafts((current) => ({
-      ...current,
-      [step.id]: {
-        estimatedDurationMinutes:
-          step.estimatedDurationMinutes != null
-            ? String(step.estimatedDurationMinutes)
-            : "",
-        dependencyStepIds: [...step.dependencyStepIds],
-        approvalRoles: [...(step.approvalRoles ?? [])],
-        plannedStartAt: step.plannedStartAt,
-      },
-    }));
+    setRows((current) => {
+      const updated = current.map((row) => {
+        if (row.id === step.id) return { ...row, ...step };
+        if (
+          step.producesGateId &&
+          row.producesGateId === step.producesGateId
+        ) {
+          return { ...row, producesGateId: null };
+        }
+        return row;
+      });
+      setDrafts(
+        Object.fromEntries(updated.map((row) => [row.id, draftFromRow(row)])),
+      );
+      return updated;
+    });
   }
 
-  async function saveRow(row: PlannerRow) {
+  async function saveRow(row: PlannerRow): Promise<boolean> {
     const draft = drafts[row.id] ?? draftFromRow(row);
     const durationRaw = draft.estimatedDurationMinutes.trim();
     const estimatedDurationMinutes =
@@ -160,7 +223,15 @@ export function EventPlanner({
         estimatedDurationMinutes < 1)
     ) {
       setError("La duración debe ser un entero de al menos 1 minuto.");
-      return;
+      return false;
+    }
+
+    if (
+      draft.producesGateId &&
+      draft.requiresGateIds.includes(draft.producesGateId)
+    ) {
+      setError("Un paso no puede producir y requerir el mismo gate.");
+      return false;
     }
 
     setSavingId(row.id);
@@ -175,6 +246,8 @@ export function EventPlanner({
           estimatedDurationMinutes,
           dependencyStepIds: draft.dependencyStepIds,
           approvalRoles: draft.approvalRoles,
+          producesGateId: draft.producesGateId,
+          requiresGateIds: draft.requiresGateIds,
         }),
       },
     ).catch(() => null);
@@ -188,9 +261,31 @@ export function EventPlanner({
 
     if (!response?.ok || !payload?.step) {
       setError(payload?.error ?? "No fue posible guardar la planificación.");
-      return;
+      return false;
     }
     patchRow(payload.step);
+    return true;
+  }
+
+  function handleGatesChange(nextGates: GateSummary[]) {
+    const ids = new Set(nextGates.map((gate) => gate.id));
+    setGates(nextGates);
+    setRows((current) => {
+      const updated = current.map((row) => ({
+        ...row,
+        producesGateId:
+          row.producesGateId && ids.has(row.producesGateId)
+            ? row.producesGateId
+            : null,
+        requiresGateIds: (row.requiresGateIds ?? []).filter((id) =>
+          ids.has(id),
+        ),
+      }));
+      setDrafts(
+        Object.fromEntries(updated.map((row) => [row.id, draftFromRow(row)])),
+      );
+      return updated;
+    });
   }
 
   if (!rows.length) {
@@ -201,31 +296,72 @@ export function EventPlanner({
         <p className="mt-2 max-w-md text-sm text-muted-foreground">
           Completa primero el diseño del evento creando actividades y pasos.
         </p>
+        <Button
+          type="button"
+          className="mt-4"
+          variant="outline"
+          onClick={() => setGatesOpen(true)}
+        >
+          <DoorOpen className="size-4" />
+          Gates ({gates.length})
+        </Button>
+        <GatesManager
+          open={gatesOpen}
+          onOpenChange={setGatesOpen}
+          eventId={eventId}
+          eventTimezone={eventTimezone}
+          gates={gates}
+          workstreams={workstreams}
+          blocks={blocks}
+          onGatesChange={handleGatesChange}
+          onError={setError}
+        />
       </div>
     );
   }
 
   return (
+    <>
     <Tabs
       defaultValue="grid"
-      className="flex h-full min-h-0 flex-col gap-3 overflow-hidden data-horizontal:flex-col"
+      className="flex h-full min-h-0 flex-col gap-2 overflow-hidden data-horizontal:flex-col"
     >
-      <div className="flex shrink-0 flex-wrap items-center gap-3">
-        <TabsList>
-          <TabsTrigger value="grid">Planilla</TabsTrigger>
-          <TabsTrigger value="times">Tiempos</TabsTrigger>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <TabsList className="h-8">
+          <TabsTrigger value="grid" className="h-7 px-2.5 text-xs">
+            Planilla
+          </TabsTrigger>
+          <TabsTrigger value="times" className="h-7 px-2.5 text-xs">
+            Tiempos
+          </TabsTrigger>
         </TabsList>
-        <div className="relative min-w-[220px] flex-1">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="h-8"
+          onClick={() => setGatesOpen(true)}
+        >
+          <DoorOpen className="size-3.5" />
+          Gates
+          {gates.length ? (
+            <Badge variant="outline" className="ml-0.5 h-5 px-1.5 text-[10px]">
+              {gates.length}
+            </Badge>
+          ) : null}
+        </Button>
+        <div className="relative min-w-[180px] flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            className="h-8 pl-8"
+            className="h-8 pl-8 text-sm"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar workstream, bloque, actividad o paso…"
+            placeholder="Buscar…"
           />
         </div>
-        <p className="text-xs text-muted-foreground">
-          TZ: {eventTimezone}
+        <p className="hidden text-[11px] text-muted-foreground md:block">
+          TZ {eventTimezone}
+          {dayDStartAt ? " · Día D definido" : ""}
         </p>
       </div>
 
@@ -243,12 +379,14 @@ export function EventPlanner({
           rows={filteredRows}
           allRows={rows}
           drafts={drafts}
+          gates={gates}
           eventTimezone={eventTimezone}
           savingId={savingId}
           onDraftChange={(id, next) =>
             setDrafts((current) => ({ ...current, [id]: next }))
           }
           onSave={(row) => void saveRow(row)}
+          onOpenGatesCatalog={() => setGatesOpen(true)}
         />
       </TabsContent>
 
@@ -259,12 +397,213 @@ export function EventPlanner({
         <TimesView
           rows={filteredRows}
           allRows={rows}
+          gates={gates}
           eventTimezone={eventTimezone}
+          dayDStartAt={dayDStartAt}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          onEdit={(id) => {
+            setError("");
+            setSelectedId(id);
+            setEditingId(id);
+          }}
         />
       </TabsContent>
     </Tabs>
+
+    <StepPlanningEditor
+      open={Boolean(editingRow)}
+      row={editingRow}
+      allRows={rows}
+      draft={
+        editingRow
+          ? (drafts[editingRow.id] ?? draftFromRow(editingRow))
+          : null
+      }
+      gates={gates}
+      eventTimezone={eventTimezone}
+      saving={savingId === editingRow?.id}
+      error={error}
+      onOpenChange={(open) => {
+        if (!open) setEditingId(null);
+      }}
+      onDraftChange={(next) => {
+        if (!editingRow) return;
+        setDrafts((current) => ({ ...current, [editingRow.id]: next }));
+      }}
+      onSave={() => {
+        if (!editingRow) return;
+        void saveRow(editingRow).then((ok) => {
+          if (ok) setEditingId(null);
+        });
+      }}
+      onOpenGatesCatalog={() => setGatesOpen(true)}
+    />
+
+    <GatesManager
+      open={gatesOpen}
+      onOpenChange={setGatesOpen}
+      eventId={eventId}
+      eventTimezone={eventTimezone}
+      gates={gates}
+      workstreams={workstreams}
+      blocks={blocks}
+      onGatesChange={handleGatesChange}
+      onError={setError}
+    />
+    </>
+  );
+}
+
+function StepPlanningEditor({
+  open,
+  row,
+  allRows,
+  draft,
+  gates,
+  eventTimezone,
+  saving,
+  error,
+  onOpenChange,
+  onDraftChange,
+  onSave,
+  onOpenGatesCatalog,
+}: {
+  open: boolean;
+  row: PlannerRow | null;
+  allRows: PlannerRow[];
+  draft: Draft | null;
+  gates: GateSummary[];
+  eventTimezone: string;
+  saving: boolean;
+  error: string;
+  onOpenChange: (open: boolean) => void;
+  onDraftChange: (draft: Draft) => void;
+  onSave: () => void;
+  onOpenGatesCatalog: () => void;
+}) {
+  const dirty = row && draft ? isDirty(row, draft) : false;
+
+  return (
+    <Dialog open={open && Boolean(row && draft)} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[min(90dvh,720px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+        {row && draft ? (
+          <>
+            <DialogHeader className="shrink-0 border-b p-4 pr-12">
+              <DialogTitle>Planificar “{row.name}”</DialogTitle>
+              <DialogDescription>
+                Ajusta duración, condiciones y hora del paso.
+              </DialogDescription>
+              <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                <Badge variant="outline">{row.workstreamName}</Badge>
+                <Badge variant="secondary">{row.blockName}</Badge>
+                <span className="self-center">{row.activityName}</span>
+              </div>
+            </DialogHeader>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+              <div className="space-y-2">
+                <Label htmlFor={`step-duration-${row.id}`}>Duración (min)</Label>
+                <Input
+                  id={`step-duration-${row.id}`}
+                  inputMode="numeric"
+                  value={draft.estimatedDurationMinutes}
+                  onChange={(event) =>
+                    onDraftChange({
+                      ...draft,
+                      estimatedDurationMinutes: event.target.value,
+                    })
+                  }
+                  placeholder={`${DEFAULT_DURATION_MINUTES}`}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Deps (OK exitoso)</Label>
+                <DependencyPicker
+                  row={row}
+                  allRows={allRows}
+                  selectedIds={draft.dependencyStepIds}
+                  onChange={(dependencyStepIds) =>
+                    onDraftChange({ ...draft, dependencyStepIds })
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Gates</Label>
+                <GatePicker
+                  stepName={row.name}
+                  gates={gates}
+                  producesGateId={draft.producesGateId}
+                  requiresGateIds={draft.requiresGateIds}
+                  onChange={(producesGateId, requiresGateIds) =>
+                    onDraftChange({
+                      ...draft,
+                      producesGateId,
+                      requiresGateIds,
+                    })
+                  }
+                  onOpenGatesCatalog={onOpenGatesCatalog}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Aprobaciones</Label>
+                <ApprovalPicker
+                  stepName={row.name}
+                  selectedRoles={draft.approvalRoles}
+                  onChange={(approvalRoles) =>
+                    onDraftChange({ ...draft, approvalRoles })
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Hora (no antes de)</Label>
+                <DateTimePicker
+                  value={draft.plannedStartAt}
+                  timezone={eventTimezone}
+                  onChange={(plannedStartAt) =>
+                    onDraftChange({ ...draft, plannedStartAt })
+                  }
+                  placeholder="Sin hora"
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="shrink-0 flex-col gap-2 border-t p-4 sm:flex-col">
+              {error ? (
+                <p role="alert" className="w-full text-sm text-red-300">
+                  {error}
+                </p>
+              ) : null}
+              <div className="flex w-full justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  disabled={!dirty || saving}
+                  onClick={onSave}
+                >
+                  {saving ? (
+                    <LoaderCircle className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Guardar
+                </Button>
+              </div>
+            </DialogFooter>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -272,29 +611,34 @@ function PlannerGrid({
   rows,
   allRows,
   drafts,
+  gates,
   eventTimezone,
   savingId,
   onDraftChange,
   onSave,
+  onOpenGatesCatalog,
 }: {
   rows: PlannerRow[];
   allRows: PlannerRow[];
   drafts: Record<string, Draft>;
+  gates: GateSummary[];
   eventTimezone: string;
   savingId: string | null;
   onDraftChange: (id: string, draft: Draft) => void;
   onSave: (row: PlannerRow) => void;
+  onOpenGatesCatalog: () => void;
 }) {
   const colgroup = (
     <colgroup>
-      <col className="w-[11%]" />
-      <col className="w-[9%]" />
-      <col className="w-[12%]" />
-      <col className="w-[12%]" />
+      <col className="w-[10%]" />
       <col className="w-[8%]" />
-      <col className="w-[14%]" />
+      <col className="w-[11%]" />
+      <col className="w-[11%]" />
+      <col className="w-[7%]" />
       <col className="w-[12%]" />
-      <col className="w-[14%]" />
+      <col className="w-[11%]" />
+      <col className="w-[12%]" />
+      <col className="w-[10%]" />
       <col className="w-[8%]" />
     </colgroup>
   );
@@ -312,6 +656,7 @@ function PlannerGrid({
               <TableHead className="bg-muted/40">Paso</TableHead>
               <TableHead className="bg-muted/40">Duración</TableHead>
               <TableHead className="bg-muted/40">Deps (OK exitoso)</TableHead>
+              <TableHead className="bg-muted/40">Gates</TableHead>
               <TableHead className="bg-muted/40">Aprobaciones</TableHead>
               <TableHead className="bg-muted/40">Hora (no antes de)</TableHead>
               <TableHead className="bg-muted/40 text-right"> </TableHead>
@@ -327,7 +672,7 @@ function PlannerGrid({
             {!rows.length ? (
               <TableRow>
                 <TableCell
-                  colSpan={9}
+                  colSpan={10}
                   className="h-24 text-center text-muted-foreground"
                 >
                   No hay filas que coincidan con la búsqueda.
@@ -381,6 +726,22 @@ function PlannerGrid({
                       />
                     </TableCell>
                     <TableCell className="align-top">
+                      <GatePicker
+                        stepName={row.name}
+                        gates={gates}
+                        producesGateId={draft.producesGateId}
+                        requiresGateIds={draft.requiresGateIds}
+                        onChange={(producesGateId, requiresGateIds) =>
+                          onDraftChange(row.id, {
+                            ...draft,
+                            producesGateId,
+                            requiresGateIds,
+                          })
+                        }
+                        onOpenGatesCatalog={onOpenGatesCatalog}
+                      />
+                    </TableCell>
+                    <TableCell className="align-top">
                       <ApprovalPicker
                         stepName={row.name}
                         selectedRoles={draft.approvalRoles}
@@ -390,22 +751,16 @@ function PlannerGrid({
                       />
                     </TableCell>
                     <TableCell className="align-top">
-                      <Input
-                        className="h-8"
-                        type="datetime-local"
-                        value={
-                          draft.plannedStartAt
-                            ? toZonedInput(draft.plannedStartAt, eventTimezone)
-                            : ""
-                        }
-                        onChange={(event) =>
+                      <DateTimePicker
+                        value={draft.plannedStartAt}
+                        timezone={eventTimezone}
+                        onChange={(plannedStartAt) =>
                           onDraftChange(row.id, {
                             ...draft,
-                            plannedStartAt: event.target.value
-                              ? zonedInputToIso(event.target.value, eventTimezone)
-                              : null,
+                            plannedStartAt,
                           })
                         }
+                        placeholder="Sin hora"
                       />
                     </TableCell>
                     <TableCell className="align-top text-right">
@@ -673,6 +1028,204 @@ function DependencyPicker({
   );
 }
 
+function GatePicker({
+  stepName,
+  gates,
+  producesGateId,
+  requiresGateIds,
+  onChange,
+  onOpenGatesCatalog,
+}: {
+  stepName: string;
+  gates: GateSummary[];
+  producesGateId: string | null;
+  requiresGateIds: string[];
+  onChange: (producesGateId: string | null, requiresGateIds: string[]) => void;
+  onOpenGatesCatalog: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pendingProduce, setPendingProduce] = useState<string | null>(
+    producesGateId,
+  );
+  const [pendingRequire, setPendingRequire] = useState<string[]>(requiresGateIds);
+
+  function openModal() {
+    setPendingProduce(producesGateId);
+    setPendingRequire([...requiresGateIds]);
+    setOpen(true);
+  }
+
+  function toggleRequire(id: string) {
+    setPendingRequire((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
+    );
+  }
+
+  function apply() {
+    const requires = pendingRequire.filter((id) => id !== pendingProduce);
+    onChange(pendingProduce, requires);
+    setOpen(false);
+  }
+
+  const produceName = gates.find((gate) => gate.id === producesGateId)?.name;
+  const requireNames = gates
+    .filter((gate) => requiresGateIds.includes(gate.id))
+    .map((gate) => gate.name);
+  const label = [
+    produceName ? `→ ${produceName}` : null,
+    requireNames.length
+      ? `← ${requireNames.length === 1 ? requireNames[0] : `${requireNames.length} gates`}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 w-full justify-between font-normal"
+        onClick={openModal}
+      >
+        <span className="truncate text-left">{label || "Ninguno"}</span>
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Gates de “{stepName}”</DialogTitle>
+            <DialogDescription>
+              Usa gates del catálogo: este paso puede producir uno (al terminar
+              OK) o esperar gates que abren otros workstreams.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {!gates.length ? (
+              <div className="rounded-lg border border-dashed p-4 text-center text-sm">
+                <p className="text-muted-foreground">
+                  Aún no hay gates. Créalos en el catálogo (qué WS/bloques
+                  abren).
+                </p>
+                <Button
+                  type="button"
+                  className="mt-3"
+                  variant="secondary"
+                  onClick={() => {
+                    setOpen(false);
+                    onOpenGatesCatalog();
+                  }}
+                >
+                  Abrir Gates
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">Produce (enciende)</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setOpen(false);
+                        onOpenGatesCatalog();
+                      }}
+                    >
+                      Gestionar…
+                    </Button>
+                  </div>
+                  <Select
+                    value={pendingProduce ?? "none"}
+                    onValueChange={(value) =>
+                      setPendingProduce(value === "none" ? null : value)
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Ninguno" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Ninguno</SelectItem>
+                      {gates.map((gate) => (
+                        <SelectItem key={gate.id} value={gate.id}>
+                          {gate.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Requiere (espera)</p>
+                  <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border p-1">
+                    {gates.map((gate) => {
+                      const disabled = gate.id === pendingProduce;
+                      return (
+                        <label
+                          key={gate.id}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 hover:bg-muted/60",
+                            pendingRequire.includes(gate.id) && "bg-muted/40",
+                            disabled && "cursor-not-allowed opacity-50",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={disabled}
+                            checked={pendingRequire.includes(gate.id)}
+                            onChange={() => toggleRequire(gate.id)}
+                          />
+                          <span className="min-w-0 flex-1 text-sm font-medium">
+                            {gate.name}
+                            {gate.opensTargets.length ? (
+                              <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                                Abre {gate.opensTargets.length} ancla
+                                {gate.opensTargets.length === 1 ? "" : "s"}
+                              </span>
+                            ) : null}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setPendingProduce(null);
+                setPendingRequire([]);
+              }}
+            >
+              Limpiar
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" onClick={apply} disabled={!gates.length}>
+              Aplicar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function ApprovalPicker({
   stepName,
   selectedRoles,
@@ -783,19 +1336,83 @@ type ScheduleItem = {
   usedDefaultDuration: boolean;
 };
 
-function computeSchedule(rows: PlannerRow[]): {
+type GateMarker = {
+  id: string;
+  name: string;
+  openMin: number;
+  colorIndex: number;
+};
+
+function stepMatchesTarget(
+  row: PlannerRow,
+  target: { workstreamId: string; blockId: string | null },
+) {
+  if (row.workstreamId !== target.workstreamId) return false;
+  return target.blockId == null || row.blockId === target.blockId;
+}
+
+function stepsForTargets(
+  rows: PlannerRow[],
+  targets: Array<{ workstreamId: string; blockId: string | null }>,
+) {
+  return rows.filter((row) =>
+    targets.some((target) => stepMatchesTarget(row, target)),
+  );
+}
+
+function computeSchedule(
+  rows: PlannerRow[],
+  gates: GateSummary[],
+  dayDStartAt: string | null,
+): {
   items: Map<string, ScheduleItem>;
   totalMin: number;
+  gateMarkers: GateMarker[];
+  t0Ms: number | null;
 } {
   const byId = new Map(rows.map((row) => [row.id, row]));
+  const producerByGate = new Map<string, string>();
+  for (const row of rows) {
+    if (row.producesGateId) producerByGate.set(row.producesGateId, row.id);
+  }
+
   const inbound = new Map(rows.map((row) => [row.id, 0]));
   const outgoing = new Map<string, string[]>(rows.map((row) => [row.id, []]));
 
+  function addEdge(fromId: string, toId: string) {
+    if (!byId.has(fromId) || !byId.has(toId) || fromId === toId) return;
+    inbound.set(toId, (inbound.get(toId) ?? 0) + 1);
+    outgoing.get(fromId)?.push(toId);
+  }
+
   for (const row of rows) {
     for (const depId of row.dependencyStepIds) {
-      if (!byId.has(depId)) continue;
-      inbound.set(row.id, (inbound.get(row.id) ?? 0) + 1);
-      outgoing.get(depId)?.push(row.id);
+      addEdge(depId, row.id);
+    }
+    for (const gateId of row.requiresGateIds ?? []) {
+      const producerId = producerByGate.get(gateId);
+      if (producerId) addEdge(producerId, row.id);
+      const gate = gates.find((item) => item.id === gateId);
+      if (!gate) continue;
+      for (const closer of stepsForTargets(
+        rows,
+        gate.closesAfterTargets ?? [],
+      )) {
+        addEdge(closer.id, row.id);
+      }
+    }
+  }
+
+  // Megadeps del catálogo: cierre → apertura del gate.
+  for (const gate of gates) {
+    const closers = stepsForTargets(rows, gate.closesAfterTargets ?? []);
+    const opened = stepsForTargets(rows, gate.opensTargets ?? []);
+    const producerId = producerByGate.get(gate.id);
+    for (const openStep of opened) {
+      for (const closer of closers) {
+        addEdge(closer.id, openStep.id);
+      }
+      if (producerId) addEdge(producerId, openStep.id);
     }
   }
 
@@ -812,23 +1429,38 @@ function computeSchedule(rows: PlannerRow[]): {
       if (remaining === 0) queue.push(next);
     }
   }
-  // Cycles already blocked in API; append leftovers for safety.
   for (const row of rows) {
     if (!order.includes(row.id)) order.push(row.id);
   }
 
-  const anchors = rows
-    .filter((row) => row.plannedStartAt)
-    .map((row) => ({
-      id: row.id,
-      ms: new Date(row.plannedStartAt!).getTime(),
-    }));
-  const t0 = anchors.length ? Math.min(...anchors.map((item) => item.ms)) : null;
+  const fallbackPoints = [
+    ...rows
+      .filter((row) => row.plannedStartAt)
+      .map((row) => new Date(row.plannedStartAt!).getTime()),
+    ...gates
+      .filter((gate) => gate.plannedOpenAt)
+      .map((gate) => new Date(gate.plannedOpenAt!).getTime()),
+  ];
+  const t0Ms = dayDStartAt
+    ? new Date(dayDStartAt).getTime()
+    : fallbackPoints.length
+      ? Math.min(...fallbackPoints)
+      : null;
+
+  const toOffsetMin = (iso: string) =>
+    t0Ms == null
+      ? 0
+      : Math.max(0, Math.round((new Date(iso).getTime() - t0Ms) / 60_000));
+
   const anchorMin = new Map(
-    anchors.map((item) => [
-      item.id,
-      Math.round((item.ms - (t0 as number)) / 60_000),
-    ]),
+    rows
+      .filter((row) => row.plannedStartAt && t0Ms != null)
+      .map((row) => [row.id, toOffsetMin(row.plannedStartAt!)]),
+  );
+  const gateTimeMin = new Map(
+    gates
+      .filter((gate) => gate.plannedOpenAt && t0Ms != null)
+      .map((gate) => [gate.id, toOffsetMin(gate.plannedOpenAt!)]),
   );
 
   const items = new Map<string, ScheduleItem>();
@@ -837,10 +1469,60 @@ function computeSchedule(rows: PlannerRow[]): {
     const depEnds = row.dependencyStepIds
       .map((depId) => items.get(depId)?.endMin)
       .filter((value): value is number => value != null);
+
+    const gateConstraintMins: number[] = [];
+    for (const gateId of row.requiresGateIds ?? []) {
+      const producerId = producerByGate.get(gateId);
+      if (producerId) {
+        const end = items.get(producerId)?.endMin;
+        if (end != null) gateConstraintMins.push(end);
+      }
+      const gate = gates.find((item) => item.id === gateId);
+      if (!gate) continue;
+      const timed = gateTimeMin.get(gateId);
+      if (timed != null) gateConstraintMins.push(timed);
+      for (const closer of stepsForTargets(
+        rows,
+        gate.closesAfterTargets ?? [],
+      )) {
+        const end = items.get(closer.id)?.endMin;
+        if (end != null) gateConstraintMins.push(end);
+      }
+    }
+
+    for (const gate of gates) {
+      if (
+        !(gate.opensTargets ?? []).some((target) =>
+          stepMatchesTarget(row, target),
+        )
+      ) {
+        continue;
+      }
+      const timed = gateTimeMin.get(gate.id);
+      if (timed != null) gateConstraintMins.push(timed);
+      const producerId = producerByGate.get(gate.id);
+      if (producerId) {
+        const end = items.get(producerId)?.endMin;
+        if (end != null) gateConstraintMins.push(end);
+      }
+      for (const closer of stepsForTargets(
+        rows,
+        gate.closesAfterTargets ?? [],
+      )) {
+        const end = items.get(closer.id)?.endMin;
+        if (end != null) gateConstraintMins.push(end);
+      }
+    }
+
     const fromDeps = depEnds.length ? Math.max(...depEnds) : 0;
+    const fromGates = gateConstraintMins.length
+      ? Math.max(...gateConstraintMins)
+      : 0;
     const anchored = anchorMin.get(id);
     const startMin =
-      anchored !== undefined ? Math.max(anchored, fromDeps) : fromDeps;
+      anchored !== undefined
+        ? Math.max(anchored, fromDeps, fromGates)
+        : Math.max(fromDeps, fromGates);
     const usedDefaultDuration = row.estimatedDurationMinutes == null;
     const durationMin = row.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
     items.set(id, {
@@ -852,200 +1534,575 @@ function computeSchedule(rows: PlannerRow[]): {
     });
   }
 
+  const gateMarkers: GateMarker[] = gates
+    .map((gate, index) => {
+      const parts: number[] = [];
+      const timed = gateTimeMin.get(gate.id);
+      if (timed != null) parts.push(timed);
+      const producerId = producerByGate.get(gate.id);
+      if (producerId) {
+        const end = items.get(producerId)?.endMin;
+        if (end != null) parts.push(end);
+      }
+      for (const closer of stepsForTargets(
+        rows,
+        gate.closesAfterTargets ?? [],
+      )) {
+        const end = items.get(closer.id)?.endMin;
+        if (end != null) parts.push(end);
+      }
+
+      const hasActivation =
+        timed != null ||
+        Boolean(producerId) ||
+        (gate.closesAfterTargets ?? []).length > 0 ||
+        (gate.approvalRoles ?? []).length > 0;
+
+      if (!hasActivation && !(gate.opensTargets ?? []).length) return null;
+
+      return {
+        id: gate.id,
+        name: gate.name,
+        openMin: parts.length ? Math.max(...parts) : 0,
+        colorIndex: index,
+      };
+    })
+    .filter((marker): marker is GateMarker => marker != null);
+
   const totalMin = Math.max(
     60,
     ...[...items.values()].map((item) => item.endMin),
+    ...gateMarkers.map((marker) => marker.openMin + 15),
   );
-  return { items, totalMin };
+  return { items, totalMin, gateMarkers, t0Ms };
+}
+
+type LaneStats = {
+  stepCount: number;
+  durationMin: number;
+  startMin: number | null;
+  endMin: number | null;
+};
+
+function computeLaneStats(
+  laneRows: PlannerRow[],
+  items: Map<string, ScheduleItem>,
+): LaneStats {
+  let durationMin = 0;
+  let startMin: number | null = null;
+  let endMin: number | null = null;
+  for (const row of laneRows) {
+    const item = items.get(row.id);
+    if (!item) continue;
+    durationMin += item.durationMin;
+    startMin =
+      startMin == null ? item.startMin : Math.min(startMin, item.startMin);
+    endMin = endMin == null ? item.endMin : Math.max(endMin, item.endMin);
+  }
+  return { stepCount: laneRows.length, durationMin, startMin, endMin };
+}
+
+function formatDurationCompact(totalMin: number) {
+  if (totalMin < 60) return `${totalMin}m`;
+  const hours = Math.floor(totalMin / 60);
+  const minutes = totalMin % 60;
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+function TimesLaneHeader({
+  title,
+  expanded,
+  onToggle,
+  statsLabel,
+  tone,
+}: {
+  title: string;
+  expanded: boolean;
+  onToggle: () => void;
+  statsLabel: string;
+  tone: "workstream" | "block";
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className={cn(
+        "sticky left-0 right-0 flex w-full items-center gap-2 px-2 py-1.5 text-left backdrop-blur transition-colors",
+        tone === "workstream"
+          ? "z-[5] bg-sky-500/10 text-sky-700 hover:bg-sky-500/15 dark:bg-sky-400/15 dark:text-sky-300 dark:hover:bg-sky-400/20"
+          : "z-[4] bg-amber-500/10 text-amber-800 hover:bg-amber-500/15 dark:bg-amber-400/15 dark:text-amber-300 dark:hover:bg-amber-400/20",
+      )}
+    >
+      <Chevron className="size-4 shrink-0 opacity-80" />
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-center font-bold tracking-wide",
+          tone === "workstream" ? "text-base" : "text-sm",
+        )}
+      >
+        {title}
+      </span>
+      <span
+        className={cn(
+          "shrink-0 text-[11px] font-medium tabular-nums opacity-80",
+          tone === "workstream"
+            ? "text-sky-800 dark:text-sky-200"
+            : "text-amber-900 dark:text-amber-200",
+        )}
+      >
+        {statsLabel}
+      </span>
+    </button>
+  );
+}
+
+type StepActionItem = {
+  key: string;
+  label: string;
+  icon: typeof Pencil;
+  soon?: boolean;
+};
+
+const STEP_ACTION_ITEMS: StepActionItem[] = [
+  { key: "edit", label: "Editar planificación", icon: Pencil },
+  { key: "details", label: "Más información", icon: FileText },
+  {
+    key: "results",
+    label: "Resultados de ejecución",
+    icon: ListChecks,
+    soon: true,
+  },
+  {
+    key: "failure",
+    label: "Ver fallo",
+    icon: TriangleAlert,
+    soon: true,
+  },
+];
+
+function StepActionFlower({
+  open,
+  onToggle,
+  onClose,
+  onEdit,
+  onDetails,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onEdit: () => void;
+  onDetails: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open, onClose]);
+
+  return (
+    <div ref={rootRef} className="relative size-5">
+      <button
+        type="button"
+        aria-label="Acciones del paso"
+        aria-expanded={open}
+        title="Acciones"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
+        className={cn(
+          "relative z-20 flex size-5 items-center justify-center rounded-full border text-[10px] font-bold leading-none shadow-md transition-colors",
+          open
+            ? "border-sky-300 bg-zinc-100 text-zinc-900 ring-2 ring-black/30 dark:bg-zinc-200"
+            : "border-white/40 bg-black/35 text-primary-foreground hover:bg-black/50",
+        )}
+      >
+        i
+      </button>
+
+      {open ? (
+        <div className="absolute right-0 bottom-full z-30 mb-1.5 flex items-center gap-1.5">
+          {STEP_ACTION_ITEMS.map((action, index) => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.key}
+                type="button"
+                title={
+                  action.soon ? `${action.label} (próximamente)` : action.label
+                }
+                aria-label={action.label}
+                disabled={action.soon}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (action.key === "edit") onEdit();
+                  if (action.key === "details") onDetails();
+                }}
+                className={cn(
+                  "flex size-8 items-center justify-center rounded-full border-2 shadow-lg ring-2 ring-black/40 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 fill-mode-both",
+                  action.soon
+                    ? "cursor-not-allowed border-zinc-400 bg-zinc-300 text-zinc-600 opacity-80"
+                    : "border-sky-300 bg-zinc-100 text-zinc-900 hover:scale-105 hover:border-sky-400 hover:bg-white dark:border-sky-400 dark:bg-zinc-200 dark:text-zinc-900 dark:hover:bg-white",
+                )}
+                style={{ animationDelay: `${index * 45}ms` }}
+              >
+                <Icon className="size-3.5" />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function TimesView({
   rows,
   allRows,
+  gates,
   eventTimezone,
+  dayDStartAt,
   selectedId,
   onSelect,
+  onEdit,
 }: {
   rows: PlannerRow[];
   allRows: PlannerRow[];
+  gates: GateSummary[];
   eventTimezone: string;
+  dayDStartAt: string | null;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  onEdit: (id: string) => void;
 }) {
-  const { items, totalMin } = useMemo(
-    () => computeSchedule(allRows),
-    [allRows],
+  const { items, totalMin, gateMarkers, t0Ms } = useMemo(
+    () => computeSchedule(allRows, gates, dayDStartAt),
+    [allRows, gates, dayDStartAt],
   );
+  const [flowerOpenId, setFlowerOpenId] = useState<string | null>(null);
+  const [infoRowId, setInfoRowId] = useState<string | null>(null);
+  const infoRow =
+    infoRowId == null
+      ? null
+      : (allRows.find((row) => row.id === infoRowId) ?? null);
+
+  useEffect(() => {
+    setFlowerOpenId(null);
+  }, [selectedId]);
   const lanes = useMemo(() => {
     const visibleIds = new Set(rows.map((row) => row.id));
-    const map = new Map<string, PlannerRow[]>();
+    const byWs = new Map<string, Map<string, PlannerRow[]>>();
     for (const row of allRows) {
       if (!visibleIds.has(row.id)) continue;
-      const list = map.get(row.workstreamName) ?? [];
+      let byBlock = byWs.get(row.workstreamName);
+      if (!byBlock) {
+        byBlock = new Map();
+        byWs.set(row.workstreamName, byBlock);
+      }
+      const list = byBlock.get(row.blockName) ?? [];
       list.push(row);
-      map.set(row.workstreamName, list);
+      byBlock.set(row.blockName, list);
     }
-    return [...map.entries()];
+    return [...byWs.entries()].map(([workstreamName, byBlock]) => ({
+      workstreamName,
+      blocks: [...byBlock.entries()].map(([blockName, blockRows]) => ({
+        blockName,
+        rows: blockRows,
+      })),
+    }));
   }, [allRows, rows]);
 
-  const selected = allRows.find((row) => row.id === selectedId) ?? null;
-  const selectedSchedule = selected ? items.get(selected.id) : null;
-  const chartWidth = Math.max(720, totalMin * PIXELS_PER_MINUTE);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const chartWidth = Math.max(960, totalMin * PIXELS_PER_MINUTE);
   const ticks = buildTicks(totalMin);
+  const useClockLabels = Boolean(dayDStartAt && t0Ms != null);
+
+  function toggleCollapsed(key: string) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function statsLabelFor(laneRows: PlannerRow[], extra?: string) {
+    const stats = computeLaneStats(laneRows, items);
+    const parts = [
+      ...(extra ? [extra] : []),
+      `${stats.stepCount} paso${stats.stepCount === 1 ? "" : "s"}`,
+      formatDurationCompact(stats.durationMin),
+    ];
+    if (stats.startMin != null && stats.endMin != null) {
+      parts.push(
+        `${formatAxisLabel(stats.startMin, t0Ms, eventTimezone, useClockLabels)}–${formatAxisLabel(stats.endMin, t0Ms, eventTimezone, useClockLabels)}`,
+      );
+    }
+    return parts.join(" · ");
+  }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden lg:flex-row">
-      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded-xl border">
-        <div style={{ width: chartWidth + 180 }} className="min-w-full">
-          <div className="sticky top-0 z-10 flex border-b bg-background/95 backdrop-blur">
-            <div className="w-[180px] shrink-0 border-r px-3 py-2 text-xs font-medium text-muted-foreground">
-              Workstream
-            </div>
-            <div className="relative h-8 flex-1">
-              {ticks.map((tick) => (
+    <div className="h-full min-h-0 overflow-auto rounded-xl border">
+      <div style={{ width: chartWidth }} className="min-w-full">
+        {!dayDStartAt ? (
+          <div className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
+            Sin Inicio del Día D el eje es relativo. Configúralo en{" "}
+            <span className="font-medium text-foreground">Setup</span>.
+          </div>
+        ) : null}
+        <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
+          {gateMarkers.length ? (
+            <div
+              className="relative h-7 border-b border-border/60"
+              style={{ width: chartWidth }}
+            >
+              {gateMarkers.map((marker) => (
                 <div
-                  key={tick}
-                  className="absolute top-0 bottom-0 border-l border-border/60"
-                  style={{ left: tick * PIXELS_PER_MINUTE }}
+                  key={`head-${marker.id}`}
+                  className="absolute top-1 bottom-1 z-[1]"
+                  style={{ left: marker.openMin * PIXELS_PER_MINUTE }}
+                  title={`${marker.name} · ${formatAxisLabel(marker.openMin, t0Ms, eventTimezone, useClockLabels)}`}
                 >
-                  <span className="ml-1 text-[10px] text-muted-foreground">
-                    {formatMinutes(tick)}
+                  <div
+                    className={cn(
+                      "h-full border-l-2 border-dashed",
+                      gateColorClass(marker.colorIndex).split(" ")[0],
+                    )}
+                  />
+                  <span
+                    className={cn(
+                      "absolute top-0.5 left-1.5 max-w-32 truncate rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                      gateColorClass(marker.colorIndex),
+                    )}
+                  >
+                    {marker.name}
                   </span>
                 </div>
               ))}
             </div>
-          </div>
+          ) : null}
 
-          {!lanes.length ? (
-            <p className="p-8 text-center text-sm text-muted-foreground">
-              No hay filas que coincidan con la búsqueda.
-            </p>
-          ) : (
-            lanes.map(([workstreamName, laneRows]) => (
+          <div className="relative h-7" style={{ width: chartWidth }}>
+            {ticks.map((tick) => (
               <div
-                key={workstreamName}
-                className="flex min-h-16 border-b last:border-b-0"
+                key={tick}
+                className="absolute top-0 bottom-0 border-l border-border/60"
+                style={{ left: tick * PIXELS_PER_MINUTE }}
               >
-                <div className="flex w-[180px] shrink-0 items-start border-r px-3 py-3">
-                  <span className="text-sm font-medium">{workstreamName}</span>
-                </div>
-                <div
-                  className="relative flex-1 py-2"
-                  style={{ width: chartWidth, minHeight: laneRows.length * 36 }}
-                >
-                  {ticks.map((tick) => (
-                    <div
-                      key={`${workstreamName}-${tick}`}
-                      className="absolute inset-y-0 border-l border-border/40"
-                      style={{ left: tick * PIXELS_PER_MINUTE }}
-                    />
-                  ))}
-                  {laneRows.map((row, index) => {
-                    const item = items.get(row.id);
-                    if (!item) return null;
-                    const top = 4 + index * 34;
-                    const left = item.startMin * PIXELS_PER_MINUTE;
-                    const width = Math.max(
-                      8,
-                      item.durationMin * PIXELS_PER_MINUTE,
-                    );
-                    const active = selectedId === row.id;
-                    return (
-                      <button
-                        key={row.id}
-                        type="button"
-                        title={`${row.name} · ${item.durationMin} min`}
-                        onClick={() => onSelect(row.id)}
-                        className={cn(
-                          "absolute truncate rounded-md px-2 py-1 text-left text-xs text-primary-foreground shadow-sm transition-colors",
-                          active
-                            ? "bg-primary ring-2 ring-ring"
-                            : "bg-primary/80 hover:bg-primary",
-                          item.usedDefaultDuration && "opacity-70",
-                        )}
-                        style={{
-                          top,
-                          left,
-                          width,
-                          height: 28,
-                        }}
-                      >
-                        {row.name}
-                      </button>
-                    );
-                  })}
-                </div>
+                <span className="ml-1 text-[10px] text-muted-foreground">
+                  {formatAxisLabel(
+                    tick,
+                    t0Ms,
+                    eventTimezone,
+                    useClockLabels,
+                  )}
+                </span>
               </div>
-            ))
-          )}
+            ))}
+          </div>
         </div>
+
+        {!lanes.length ? (
+          <p className="p-8 text-center text-sm text-muted-foreground">
+            No hay filas que coincidan con la búsqueda.
+          </p>
+        ) : (
+          lanes.map(({ workstreamName, blocks }) => {
+            const wsKey = `ws:${workstreamName}`;
+            const wsExpanded = !collapsed.has(wsKey);
+            const wsRows = blocks.flatMap((block) => block.rows);
+            return (
+              <div key={workstreamName} className="border-b last:border-b-0">
+                <TimesLaneHeader
+                  title={workstreamName}
+                  expanded={wsExpanded}
+                  onToggle={() => toggleCollapsed(wsKey)}
+                  tone="workstream"
+                  statsLabel={statsLabelFor(
+                    wsRows,
+                    `${blocks.length} bloque${blocks.length === 1 ? "" : "s"}`,
+                  )}
+                />
+                {wsExpanded
+                  ? blocks.map(({ blockName, rows: blockRows }) => {
+                      const laneKey = `${workstreamName}::${blockName}`;
+                      const blockKey = `block:${laneKey}`;
+                      const blockExpanded = !collapsed.has(blockKey);
+                      return (
+                        <div key={laneKey}>
+                          <TimesLaneHeader
+                            title={blockName}
+                            expanded={blockExpanded}
+                            onToggle={() => toggleCollapsed(blockKey)}
+                            tone="block"
+                            statsLabel={statsLabelFor(blockRows)}
+                          />
+                          {blockExpanded ? (
+                            <div
+                              className="relative py-1.5"
+                              style={{
+                                width: chartWidth,
+                                minHeight: blockRows.length * 32,
+                              }}
+                            >
+                              {ticks.map((tick) => (
+                                <div
+                                  key={`${laneKey}-${tick}`}
+                                  className="absolute inset-y-0 border-l border-border/40"
+                                  style={{ left: tick * PIXELS_PER_MINUTE }}
+                                />
+                              ))}
+                              {gateMarkers.map((marker) => (
+                                <div
+                                  key={`${laneKey}-${marker.id}`}
+                                  className={cn(
+                                    "pointer-events-none absolute inset-y-0 z-[1] border-l-2 border-dashed opacity-70",
+                                    gateColorClass(marker.colorIndex).split(
+                                      " ",
+                                    )[0],
+                                  )}
+                                  style={{
+                                    left: marker.openMin * PIXELS_PER_MINUTE,
+                                  }}
+                                />
+                              ))}
+                              {blockRows.map((row, index) => {
+                                const item = items.get(row.id);
+                                if (!item) return null;
+                                const top = 2 + index * 30;
+                                const left =
+                                  item.startMin * PIXELS_PER_MINUTE;
+                                const width = Math.max(
+                                  8,
+                                  item.durationMin * PIXELS_PER_MINUTE,
+                                );
+                                const active = selectedId === row.id;
+                                const flowerOpen = flowerOpenId === row.id;
+                                return (
+                                  <div
+                                    key={row.id}
+                                    className={cn(
+                                      "absolute flex h-6 items-center rounded-md shadow-sm",
+                                      flowerOpen
+                                        ? "z-50"
+                                        : active
+                                          ? "z-20"
+                                          : "z-[2]",
+                                      active
+                                        ? "bg-primary ring-2 ring-ring"
+                                        : "bg-primary/80 hover:bg-primary",
+                                      item.usedDefaultDuration && "opacity-70",
+                                    )}
+                                    style={{ top, left, width }}
+                                    title={`${row.name} · ${item.durationMin} min · ${formatAxisLabel(item.startMin, t0Ms, eventTimezone, useClockLabels)}`}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onSelect(active ? null : row.id)
+                                      }
+                                      className="min-w-0 flex-1 truncate px-2 text-left text-[11px] text-primary-foreground"
+                                    >
+                                      {row.name}
+                                    </button>
+                                    {active ? (
+                                      <div className="relative mr-0.5 shrink-0">
+                                        <StepActionFlower
+                                          open={flowerOpen}
+                                          onToggle={() =>
+                                            setFlowerOpenId((current) =>
+                                              current === row.id
+                                                ? null
+                                                : row.id,
+                                            )
+                                          }
+                                          onClose={() => setFlowerOpenId(null)}
+                                          onEdit={() => {
+                                            setFlowerOpenId(null);
+                                            onEdit(row.id);
+                                          }}
+                                          onDetails={() => {
+                                            setFlowerOpenId(null);
+                                            setInfoRowId(row.id);
+                                          }}
+                                        />
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  : null}
+              </div>
+            );
+          })
+        )}
       </div>
 
-      <aside className="w-full shrink-0 overflow-y-auto rounded-xl border p-4 lg:w-80">
-        {!selected ? (
-          <div className="flex h-full min-h-40 flex-col justify-center text-sm text-muted-foreground">
-            <p className="font-medium text-foreground">Visor de tiempos</p>
-            <p className="mt-2">
-              Solo lectura. Las condiciones (deps, aprobaciones y hora) se
-              declaran en Planilla. Aquí ves el cronograma calculado.
-            </p>
-            <p className="mt-3 text-xs">
-              Barras semitransparentes usan duración por defecto (
-              {DEFAULT_DURATION_MINUTES} min). TZ: {eventTimezone}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4 text-sm">
-            <div>
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                <Badge variant="outline">{selected.workstreamName}</Badge>
-                <Badge variant="secondary">{selected.blockName}</Badge>
+      <Dialog
+        open={Boolean(infoRow)}
+        onOpenChange={(open) => {
+          if (!open) setInfoRowId(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          {infoRow ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>{infoRow.name}</DialogTitle>
+                <DialogDescription>
+                  Detalle del paso en el plan.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge variant="outline">{infoRow.workstreamName}</Badge>
+                  <Badge variant="secondary">{infoRow.blockName}</Badge>
+                </div>
+                <p>
+                  <span className="text-muted-foreground">Actividad: </span>
+                  {infoRow.activityName}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Duración: </span>
+                  {infoRow.estimatedDurationMinutes != null
+                    ? `${infoRow.estimatedDurationMinutes} min`
+                    : `default ${DEFAULT_DURATION_MINUTES} min`}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Deps: </span>
+                  {infoRow.dependencyStepIds.length || "ninguna"}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Aprobaciones: </span>
+                  {(infoRow.approvalRoles ?? []).length
+                    ? (infoRow.approvalRoles ?? []).join(", ")
+                    : "ninguna"}
+                </p>
+                <div>
+                  <p className="text-muted-foreground">Descripción</p>
+                  <p className="mt-1 whitespace-pre-wrap">
+                    {infoRow.description?.trim() || "Sin descripción."}
+                  </p>
+                </div>
               </div>
-              <p className="font-medium">{selected.name}</p>
-              <p className="text-xs text-muted-foreground">
-                {selected.activityName}
-              </p>
-            </div>
-
-            {selectedSchedule ? (
-              <p className="text-xs text-muted-foreground">
-                Ventana calculada: {formatMinutes(selectedSchedule.startMin)} →{" "}
-                {formatMinutes(selectedSchedule.endMin)} (
-                {selectedSchedule.durationMin} min
-                {selectedSchedule.usedDefaultDuration ? ", default" : ""})
-              </p>
-            ) : null}
-
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <p>
-                <span className="font-medium text-foreground">Deps: </span>
-                {selected.dependencyStepIds.length
-                  ? `${selected.dependencyStepIds.length} paso(s) (OK exitoso)`
-                  : "ninguna"}
-              </p>
-              <p>
-                <span className="font-medium text-foreground">Aprobaciones: </span>
-                {selected.approvalRoles?.length
-                  ? APPROVAL_ROLE_OPTIONS.filter((option) =>
-                      selected.approvalRoles.includes(option.value),
-                    )
-                      .map((option) => option.label)
-                      .join(", ")
-                  : "ninguna"}
-              </p>
-              <p>
-                <span className="font-medium text-foreground">Hora: </span>
-                {selected.plannedStartAt
-                  ? toZonedInput(selected.plannedStartAt, eventTimezone).replace(
-                      "T",
-                      " ",
-                    )
-                  : "sin condición horaria"}
-              </p>
-            </div>
-          </div>
-        )}
-      </aside>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1063,49 +2120,19 @@ function formatMinutes(total: number) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
-function toZonedInput(iso: string, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+/** Etiqueta del eje: hora civil desde Día D, o offset relativo. */
+function formatAxisLabel(
+  offsetMin: number,
+  t0Ms: number | null,
+  timezone: string,
+  useClock: boolean,
+) {
+  if (!useClock || t0Ms == null) return formatMinutes(offsetMin);
+  const instant = new Date(t0Ms + offsetMin * 60_000);
+  return new Intl.DateTimeFormat("es-PE", {
     timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(new Date(iso));
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day}T${value.hour}:${value.minute}`;
-}
-
-function zonedInputToIso(value: string, timezone: string) {
-  const [datePart, timePart] = value.split("T");
-  const [year, month, day] = datePart.split("-").map(Number);
-  const [hour, minute] = timePart.split(":").map(Number);
-  const desiredUtc = Date.UTC(year, month - 1, day, hour, minute);
-  let instant = desiredUtc;
-
-  for (let iteration = 0; iteration < 2; iteration += 1) {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(new Date(instant));
-    const zoned = Object.fromEntries(
-      parts.map((part) => [part.type, Number(part.value)]),
-    );
-    const renderedUtc = Date.UTC(
-      zoned.year,
-      zoned.month - 1,
-      zoned.day,
-      zoned.hour,
-      zoned.minute,
-    );
-    instant += desiredUtc - renderedUtc;
-  }
-
-  return new Date(instant).toISOString();
+  }).format(instant);
 }

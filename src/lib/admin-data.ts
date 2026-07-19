@@ -23,6 +23,14 @@ export const eventInputSchema = z.object({
   name: z.string().trim().min(3).max(160),
   description: z.string().trim().max(1000).default(""),
   timezone: timezoneSchema,
+  dayDStartAt: z.iso.datetime().nullable().optional(),
+});
+
+export const eventUpdateSchema = z.object({
+  name: z.string().trim().min(3).max(160).optional(),
+  description: z.string().trim().max(1000).optional(),
+  timezone: timezoneSchema.optional(),
+  dayDStartAt: z.iso.datetime().nullable().optional(),
 });
 
 /** Ejecución = instancia del evento (simulacro o real). */
@@ -74,6 +82,29 @@ export const moveDirectionSchema = z.object({
   direction: z.enum(["up", "down"]),
 });
 
+export const gateTargetSchema = z.object({
+  workstreamId: z.string().refine(ObjectId.isValid, "Workstream inválido"),
+  /** null = abre todo el workstream; si hay id, solo ese bloque del WS. */
+  blockId: z
+    .string()
+    .refine(ObjectId.isValid, "Bloque inválido")
+    .nullable(),
+});
+
+export const gateInputSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(500).default(""),
+  /** Qué workstreams/bloques libera cuando el gate se activa. */
+  opensTargets: z.array(gateTargetSchema).default([]),
+  /** Condiciones de activación (AND). Todas opcionales. */
+  plannedOpenAt: z.iso.datetime().nullable().default(null),
+  approvalRoles: z.array(approvalRoleSchema).default([]),
+  /** Cierre (OK) de estos WS/bloques para activar el gate. */
+  closesAfterTargets: z.array(gateTargetSchema).default([]),
+});
+
+export type GateTarget = z.infer<typeof gateTargetSchema>;
+
 export const stepPlanningInputSchema = z.object({
   plannedStartAt: z.iso.datetime().nullable(),
   estimatedDurationMinutes: z
@@ -86,6 +117,14 @@ export const stepPlanningInputSchema = z.object({
     .array(z.string().refine(ObjectId.isValid, "Dependencia inválida"))
     .default([]),
   approvalRoles: z.array(approvalRoleSchema).default([]),
+  producesGateId: z
+    .string()
+    .refine(ObjectId.isValid, "Gate inválido")
+    .nullable()
+    .default(null),
+  requiresGateIds: z
+    .array(z.string().refine(ObjectId.isValid, "Gate inválido"))
+    .default([]),
 });
 
 export type OrganizationSummary = {
@@ -102,6 +141,8 @@ export type EventSummary = {
   name: string;
   description: string;
   timezone: string;
+  /** Origen absoluto del Día D (timeline). null = aún no definido. */
+  dayDStartAt: string | null;
   status: "BORRADOR" | "ACTIVO";
   executionCount: number;
   createdAt: string;
@@ -154,6 +195,31 @@ export type ActivitySummary = {
   createdAt: string;
 };
 
+export type GateSummary = {
+  id: string;
+  eventId: string;
+  name: string;
+  description: string;
+  order: number;
+  /** Workstreams (o WS×bloque) que este gate abre / libera. */
+  opensTargets: Array<{
+    workstreamId: string;
+    blockId: string | null;
+  }>;
+  /** Activación: no antes de esta hora (opcional). */
+  plannedOpenAt: string | null;
+  /** Activación: roles que deben aprobar (opcional, AND). */
+  approvalRoles: Array<
+    "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
+  >;
+  /** Activación: cierre OK de estos WS/bloques (opcional). */
+  closesAfterTargets: Array<{
+    workstreamId: string;
+    blockId: string | null;
+  }>;
+  createdAt: string;
+};
+
 export type DesignStepSummary = {
   id: string;
   eventId: string;
@@ -169,6 +235,8 @@ export type DesignStepSummary = {
   approvalRoles: Array<
     "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
   >;
+  producesGateId: string | null;
+  requiresGateIds: string[];
   createdAt: string;
 };
 
@@ -199,6 +267,7 @@ type EventDocument = {
   name: string;
   description: string;
   timezone: string;
+  dayDStartAt?: Date | null;
   status: "BORRADOR" | "ACTIVO";
   createdBy: string;
   createdAt: Date;
@@ -282,6 +351,29 @@ type ActivityDocument = {
   updatedAt: Date;
 };
 
+type GateDocument = {
+  _id?: ObjectId;
+  eventId: ObjectId;
+  name: string;
+  description: string;
+  order: number;
+  opensTargets?: Array<{
+    workstreamId: ObjectId;
+    blockId: ObjectId | null;
+  }>;
+  plannedOpenAt?: Date | null;
+  approvalRoles?: Array<
+    "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
+  >;
+  closesAfterTargets?: Array<{
+    workstreamId: ObjectId;
+    blockId: ObjectId | null;
+  }>;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type DesignStepDocument = {
   _id?: ObjectId;
   eventId: ObjectId;
@@ -297,6 +389,8 @@ type DesignStepDocument = {
   approvalRoles?: Array<
     "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
   >;
+  producesGateId?: ObjectId | null;
+  requiresGateIds?: ObjectId[];
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -387,6 +481,7 @@ export async function getOrganizationWorkspace(organizationId: string) {
       name: event.name,
       description: event.description,
       timezone: event.timezone,
+      dayDStartAt: event.dayDStartAt?.toISOString() ?? null,
       status: event.status,
       executionCount: countByEvent.get(event._id!.toHexString()) ?? 0,
       createdAt: event.createdAt.toISOString(),
@@ -427,6 +522,7 @@ export async function getEventWorkspace(eventId: string) {
       name: event.name,
       description: event.description,
       timezone: event.timezone,
+      dayDStartAt: event.dayDStartAt?.toISOString() ?? null,
       status: event.status,
       executionCount: executions.length,
       createdAt: event.createdAt.toISOString(),
@@ -456,7 +552,7 @@ export async function getEventDesign(eventId: string) {
   const database = await getDatabase();
   const eventObjectId = new ObjectId(eventId);
 
-  const [workstreams, blocks, activities, steps] = await Promise.all([
+  const [workstreams, blocks, activities, steps, gates] = await Promise.all([
     database
       .collection<WorkstreamDocument>("workstreams")
       .find({ eventId: eventObjectId })
@@ -477,28 +573,18 @@ export async function getEventDesign(eventId: string) {
       .find({ eventId: eventObjectId, blockId: { $exists: true } })
       .sort({ order: 1, createdAt: 1 })
       .toArray(),
+    database
+      .collection<GateDocument>("gates")
+      .find({ eventId: eventObjectId })
+      .sort({ order: 1, createdAt: 1 })
+      .toArray(),
   ]);
 
   const stepsByActivity = new Map<string, DesignStepSummary[]>();
   for (const step of steps) {
     const activityId = step.activityId.toHexString();
     const list = stepsByActivity.get(activityId) ?? [];
-    list.push({
-      id: step._id!.toHexString(),
-      eventId: step.eventId.toHexString(),
-      workstreamId: step.workstreamId.toHexString(),
-      blockId: step.blockId.toHexString(),
-      activityId,
-      name: step.name,
-      description: step.description,
-      order: step.order,
-      plannedStartAt: step.plannedStartAt?.toISOString() ?? null,
-      estimatedDurationMinutes: step.estimatedDurationMinutes ?? null,
-      dependencyStepIds:
-        step.dependencyStepIds?.map((id) => id.toHexString()) ?? [],
-      approvalRoles: step.approvalRoles ?? [],
-      createdAt: step.createdAt.toISOString(),
-    });
+    list.push(toDesignStepSummary(eventId, step));
     stepsByActivity.set(activityId, list);
   }
 
@@ -558,6 +644,7 @@ export async function getEventDesign(eventId: string) {
     event: workspace.event,
     workstreams: workstreamSummaries,
     blocks: blockSummaries,
+    gates: gates.map((gate) => toGateSummary(eventId, gate)),
     pairs,
   };
 }
@@ -618,6 +705,7 @@ export async function createEvent(
     name: input.name,
     description: input.description,
     timezone: input.timezone,
+    dayDStartAt: input.dayDStartAt ? new Date(input.dayDStartAt) : null,
     status: "BORRADOR",
     createdBy: actorId,
     createdAt: now,
@@ -633,9 +721,52 @@ export async function createEvent(
     name: document.name,
     description: document.description,
     timezone: document.timezone,
+    dayDStartAt: document.dayDStartAt?.toISOString() ?? null,
     status: document.status,
     executionCount: 0,
     createdAt: now.toISOString(),
+  };
+}
+
+export async function updateEvent(
+  eventId: string,
+  input: z.infer<typeof eventUpdateSchema>,
+): Promise<EventSummary> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const database = await getDatabase();
+  const id = new ObjectId(eventId);
+  const current = await database
+    .collection<EventDocument>("events")
+    .findOne({ _id: id });
+  if (!current) throw new Error("El evento no existe.");
+
+  const $set: Partial<EventDocument> = { updatedAt: new Date() };
+  if (input.name !== undefined) $set.name = input.name;
+  if (input.description !== undefined) $set.description = input.description;
+  if (input.timezone !== undefined) $set.timezone = input.timezone;
+  if (input.dayDStartAt !== undefined) {
+    $set.dayDStartAt = input.dayDStartAt ? new Date(input.dayDStartAt) : null;
+  }
+
+  const result = await database
+    .collection<EventDocument>("events")
+    .findOneAndUpdate({ _id: id }, { $set }, { returnDocument: "after" });
+  if (!result) throw new Error("El evento no existe.");
+
+  const executionCount = await database
+    .collection<ExecutionDocument>("eventInstances")
+    .countDocuments({ eventId: id });
+
+  return {
+    id: result._id!.toHexString(),
+    organizationId: result.organizationId.toHexString(),
+    name: result.name,
+    description: result.description,
+    timezone: result.timezone,
+    dayDStartAt: result.dayDStartAt?.toISOString() ?? null,
+    status: result.status,
+    executionCount,
+    createdAt: result.createdAt.toISOString(),
   };
 }
 
@@ -1292,6 +1423,8 @@ export async function createDesignStep(
     estimatedDurationMinutes: null,
     dependencyStepIds: [],
     approvalRoles: [],
+    producesGateId: null,
+    requiresGateIds: [],
     createdBy: actorId,
     createdAt: now,
     updatedAt: now,
@@ -1311,6 +1444,8 @@ export async function createDesignStep(
     estimatedDurationMinutes: null,
     dependencyStepIds: [],
     approvalRoles: [],
+    producesGateId: null,
+    requiresGateIds: [],
     createdAt: now.toISOString(),
   };
 }
@@ -1331,6 +1466,114 @@ function toActivitySummary(
   };
 }
 
+function toGateSummary(eventId: string, gate: GateDocument): GateSummary {
+  return {
+    id: gate._id!.toHexString(),
+    eventId,
+    name: gate.name,
+    description: gate.description,
+    order: gate.order,
+    opensTargets: (gate.opensTargets ?? []).map((target) => ({
+      workstreamId: target.workstreamId.toHexString(),
+      blockId: target.blockId ? target.blockId.toHexString() : null,
+    })),
+    plannedOpenAt: gate.plannedOpenAt?.toISOString() ?? null,
+    approvalRoles: gate.approvalRoles ?? [],
+    closesAfterTargets: (gate.closesAfterTargets ?? []).map((target) => ({
+      workstreamId: target.workstreamId.toHexString(),
+      blockId: target.blockId ? target.blockId.toHexString() : null,
+    })),
+    createdAt: gate.createdAt.toISOString(),
+  };
+}
+
+async function resolveGateTargets(
+  eventId: string,
+  targets: Array<{ workstreamId: string; blockId: string | null }>,
+): Promise<
+  Array<{ workstreamId: ObjectId; blockId: ObjectId | null }>
+> {
+  if (!targets.length) return [];
+
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const workstreamIds = [
+    ...new Set(targets.map((target) => target.workstreamId)),
+  ].map((id) => new ObjectId(id));
+  const blockIds = [
+    ...new Set(
+      targets
+        .map((target) => target.blockId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ].map((id) => new ObjectId(id));
+
+  const [workstreams, blocks] = await Promise.all([
+    database
+      .collection<WorkstreamDocument>("workstreams")
+      .find(
+        { eventId: eventObjectId, _id: { $in: workstreamIds } },
+        { projection: { _id: 1 } },
+      )
+      .toArray(),
+    blockIds.length
+      ? database
+          .collection<BlockDocument>("blocks")
+          .find(
+            { eventId: eventObjectId, _id: { $in: blockIds } },
+            { projection: { _id: 1 } },
+          )
+          .toArray()
+      : Promise.resolve([]),
+  ]);
+
+  if (workstreams.length !== workstreamIds.length) {
+    throw new Error("Un workstream del gate no pertenece a este evento.");
+  }
+  if (blocks.length !== blockIds.length) {
+    throw new Error("Un bloque del gate no pertenece a este evento.");
+  }
+
+  // Normaliza: si hay “todo el WS”, no guardar bloques sueltos del mismo WS.
+  const wholeWorkstreams = new Set(
+    targets
+      .filter((target) => target.blockId == null)
+      .map((target) => target.workstreamId),
+  );
+  const normalized: Array<{ workstreamId: ObjectId; blockId: ObjectId | null }> =
+    [];
+  const seen = new Set<string>();
+
+  for (const target of targets) {
+    if (wholeWorkstreams.has(target.workstreamId) && target.blockId != null) {
+      continue;
+    }
+    if (
+      wholeWorkstreams.has(target.workstreamId) &&
+      target.blockId == null
+    ) {
+      const key = `${target.workstreamId}:*`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      normalized.push({
+        workstreamId: new ObjectId(target.workstreamId),
+        blockId: null,
+      });
+      continue;
+    }
+    if (!target.blockId) continue;
+    const key = `${target.workstreamId}:${target.blockId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push({
+      workstreamId: new ObjectId(target.workstreamId),
+      blockId: new ObjectId(target.blockId),
+    });
+  }
+
+  return normalized;
+}
+
 function toDesignStepSummary(
   eventId: string,
   step: DesignStepDocument,
@@ -1349,6 +1592,9 @@ function toDesignStepSummary(
     dependencyStepIds:
       step.dependencyStepIds?.map((id) => id.toHexString()) ?? [],
     approvalRoles: step.approvalRoles ?? [],
+    producesGateId: step.producesGateId?.toHexString() ?? null,
+    requiresGateIds:
+      step.requiresGateIds?.map((id) => id.toHexString()) ?? [],
     createdAt: step.createdAt.toISOString(),
   };
 }
@@ -1566,6 +1812,124 @@ export async function moveDesignStep(
   return refreshed.map((item) => toDesignStepSummary(eventId, item));
 }
 
+export async function createGate(
+  eventId: string,
+  input: z.infer<typeof gateInputSchema>,
+  actorId: string,
+): Promise<GateSummary> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const event = await database
+    .collection<EventDocument>("events")
+    .findOne({ _id: eventObjectId }, { projection: { _id: 1 } });
+  if (!event) throw new Error("El evento no existe.");
+
+  const opensTargets = await resolveGateTargets(eventId, input.opensTargets);
+  const closesAfterTargets = await resolveGateTargets(
+    eventId,
+    input.closesAfterTargets,
+  );
+  const collection = database.collection<GateDocument>("gates");
+  const duplicate = await collection.findOne({
+    eventId: eventObjectId,
+    name: input.name,
+  });
+  if (duplicate) throw new Error("Ya existe un gate con ese nombre.");
+
+  const last = await collection
+    .find({ eventId: eventObjectId })
+    .sort({ order: -1 })
+    .limit(1)
+    .next();
+  const now = new Date();
+  const document: GateDocument = {
+    eventId: eventObjectId,
+    name: input.name,
+    description: input.description,
+    order: (last?.order ?? 0) + 1,
+    opensTargets,
+    plannedOpenAt: input.plannedOpenAt ? new Date(input.plannedOpenAt) : null,
+    approvalRoles: input.approvalRoles,
+    closesAfterTargets,
+    createdBy: actorId,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const result = await collection.insertOne(document);
+  return toGateSummary(eventId, { ...document, _id: result.insertedId });
+}
+
+export async function updateGate(
+  eventId: string,
+  gateId: string,
+  input: z.infer<typeof gateInputSchema>,
+): Promise<GateSummary> {
+  if (!ObjectId.isValid(eventId) || !ObjectId.isValid(gateId)) {
+    throw new Error("Gate inválido.");
+  }
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const opensTargets = await resolveGateTargets(eventId, input.opensTargets);
+  const closesAfterTargets = await resolveGateTargets(
+    eventId,
+    input.closesAfterTargets,
+  );
+  const collection = database.collection<GateDocument>("gates");
+  const duplicate = await collection.findOne({
+    eventId: eventObjectId,
+    name: input.name,
+    _id: { $ne: new ObjectId(gateId) },
+  });
+  if (duplicate) throw new Error("Ya existe un gate con ese nombre.");
+
+  const result = await collection.findOneAndUpdate(
+    { _id: new ObjectId(gateId), eventId: eventObjectId },
+    {
+      $set: {
+        name: input.name,
+        description: input.description,
+        opensTargets,
+        plannedOpenAt: input.plannedOpenAt
+          ? new Date(input.plannedOpenAt)
+          : null,
+        approvalRoles: input.approvalRoles,
+        closesAfterTargets,
+        updatedAt: new Date(),
+      },
+    },
+    { returnDocument: "after" },
+  );
+  if (!result) throw new Error("El gate no existe.");
+  return toGateSummary(eventId, result);
+}
+
+export async function deleteGate(
+  eventId: string,
+  gateId: string,
+): Promise<void> {
+  if (!ObjectId.isValid(eventId) || !ObjectId.isValid(gateId)) {
+    throw new Error("Gate inválido.");
+  }
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const id = new ObjectId(gateId);
+  const result = await database.collection<GateDocument>("gates").deleteOne({
+    _id: id,
+    eventId: eventObjectId,
+  });
+  if (!result.deletedCount) throw new Error("El gate no existe.");
+
+  await database.collection<DesignStepDocument>("designSteps").updateMany(
+    { eventId: eventObjectId, producesGateId: id },
+    { $set: { producesGateId: null, updatedAt: new Date() } },
+  );
+  await database.collection<DesignStepDocument>("designSteps").updateMany(
+    { eventId: eventObjectId, requiresGateIds: id },
+    { $pull: { requiresGateIds: id }, $set: { updatedAt: new Date() } },
+  );
+}
+
 export async function updateStepPlanning(
   eventId: string,
   stepId: string,
@@ -1577,15 +1941,49 @@ export async function updateStepPlanning(
   if (input.dependencyStepIds.includes(stepId)) {
     throw new Error("Un paso no puede depender de sí mismo.");
   }
+  if (
+    input.producesGateId &&
+    input.requiresGateIds.includes(input.producesGateId)
+  ) {
+    throw new Error("Un paso no puede producir y requerir el mismo gate.");
+  }
 
   const database = await getDatabase();
   const eventObjectId = new ObjectId(eventId);
   const dependencyIds = input.dependencyStepIds.map((id) => new ObjectId(id));
+  const requireGateIds = input.requiresGateIds.map((id) => new ObjectId(id));
+  const produceGateId = input.producesGateId
+    ? new ObjectId(input.producesGateId)
+    : null;
+
+  const gateIds = [
+    ...new Set([
+      ...input.requiresGateIds,
+      ...(input.producesGateId ? [input.producesGateId] : []),
+    ]),
+  ];
+  if (gateIds.length) {
+    const gateCount = await database.collection<GateDocument>("gates").countDocuments({
+      eventId: eventObjectId,
+      _id: { $in: gateIds.map((id) => new ObjectId(id)) },
+    });
+    if (gateCount !== gateIds.length) {
+      throw new Error("Un gate no pertenece a este evento.");
+    }
+  }
+
   const steps = await database
     .collection<DesignStepDocument>("designSteps")
     .find(
       { eventId: eventObjectId, blockId: { $exists: true } },
-      { projection: { _id: 1, dependencyStepIds: 1 } },
+      {
+        projection: {
+          _id: 1,
+          dependencyStepIds: 1,
+          producesGateId: 1,
+          requiresGateIds: 1,
+        },
+      },
     )
     .toArray();
   const dependencyCount = steps.filter((step) =>
@@ -1595,6 +1993,21 @@ export async function updateStepPlanning(
     throw new Error("Una dependencia no pertenece a este evento.");
   }
 
+  const producerByGate = new Map<string, string>();
+  for (const step of steps) {
+    if (!step.producesGateId) continue;
+    const gateKey = step.producesGateId.toHexString();
+    if (step._id!.toHexString() === stepId) continue;
+    producerByGate.set(gateKey, step._id!.toHexString());
+  }
+  if (input.producesGateId) {
+    const other = producerByGate.get(input.producesGateId);
+    if (other) {
+      throw new Error("Ese gate ya lo produce otro paso.");
+    }
+    producerByGate.set(input.producesGateId, stepId);
+  }
+
   const graph = new Map(
     steps.map((step) => [
       step._id!.toHexString(),
@@ -1602,8 +2015,36 @@ export async function updateStepPlanning(
     ]),
   );
   graph.set(stepId, input.dependencyStepIds);
+
+  // Edges vía gates: productor → consumidores que requieren el gate.
+  for (const step of steps) {
+    const id = step._id!.toHexString();
+    const required =
+      id === stepId
+        ? input.requiresGateIds
+        : (step.requiresGateIds ?? []).map((gateId) => gateId.toHexString());
+    for (const gateId of required) {
+      const producerId = producerByGate.get(gateId);
+      if (!producerId || producerId === id) continue;
+      const list = graph.get(id) ?? [];
+      if (!list.includes(producerId)) list.push(producerId);
+      graph.set(id, list);
+    }
+  }
+
   if (hasDependencyCycle(graph)) {
-    throw new Error("La dependencia crea un ciclo en el plan.");
+    throw new Error("La dependencia o el gate crea un ciclo en el plan.");
+  }
+
+  if (produceGateId) {
+    await database.collection<DesignStepDocument>("designSteps").updateMany(
+      {
+        eventId: eventObjectId,
+        producesGateId: produceGateId,
+        _id: { $ne: new ObjectId(stepId) },
+      },
+      { $set: { producesGateId: null, updatedAt: new Date() } },
+    );
   }
 
   const result = await database
@@ -1618,6 +2059,8 @@ export async function updateStepPlanning(
           estimatedDurationMinutes: input.estimatedDurationMinutes,
           dependencyStepIds: dependencyIds,
           approvalRoles: input.approvalRoles,
+          producesGateId: produceGateId,
+          requiresGateIds: requireGateIds,
           updatedAt: new Date(),
         },
       },
@@ -1631,15 +2074,15 @@ function hasDependencyCycle(graph: Map<string, string[]>): boolean {
   const visiting = new Set<string>();
   const visited = new Set<string>();
 
-  function visit(stepId: string): boolean {
-    if (visiting.has(stepId)) return true;
-    if (visited.has(stepId)) return false;
-    visiting.add(stepId);
-    for (const dependencyId of graph.get(stepId) ?? []) {
+  function visit(nodeId: string): boolean {
+    if (visiting.has(nodeId)) return true;
+    if (visited.has(nodeId)) return false;
+    visiting.add(nodeId);
+    for (const dependencyId of graph.get(nodeId) ?? []) {
       if (visit(dependencyId)) return true;
     }
-    visiting.delete(stepId);
-    visited.add(stepId);
+    visiting.delete(nodeId);
+    visited.add(nodeId);
     return false;
   }
 

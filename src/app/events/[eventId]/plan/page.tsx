@@ -54,14 +54,18 @@ export default async function EventPlanPage({
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             En Planilla defines las condiciones del paso: deps (OK exitoso),
-            aprobaciones y hora. Tiempos es solo el visor del cronograma.
+            gates, aprobaciones y hora. Tiempos es solo el visor del cronograma.
           </p>
         </section>
         <div className="min-h-0 flex-1 overflow-hidden">
           <EventPlanner
             eventId={eventId}
             eventTimezone={design.event.timezone}
+            dayDStartAt={design.event.dayDStartAt}
             pairs={design.pairs}
+            workstreams={design.workstreams}
+            blocks={design.blocks}
+            initialGates={design.gates}
           />
         </div>
       </main>

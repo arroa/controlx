@@ -128,6 +128,11 @@ export const controlXIndexes = {
   designSteps: [
     { key: { eventId: 1, activityId: 1, order: 1 } },
     { key: { eventId: 1, plannedStartAt: 1 } },
+    { key: { eventId: 1, producesGateId: 1 } },
+  ],
+  gates: [
+    { key: { eventId: 1, order: 1 } },
+    { key: { eventId: 1, name: 1 }, unique: true },
   ],
   eventMemberships: [
     { key: { eventInstanceId: 1, clerkUserId: 1 }, unique: true },

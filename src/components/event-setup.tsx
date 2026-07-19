@@ -2,6 +2,7 @@
 
 import {
   Boxes,
+  CalendarClock,
   CirclePlus,
   Layers3,
   LoaderCircle,
@@ -21,6 +22,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { DateTimePicker } from "@/components/datetime-picker";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -46,10 +48,14 @@ type CatalogItem = WorkstreamSummary | BlockSummary;
 
 export function EventSetup({
   eventId,
+  eventTimezone,
+  initialDayDStartAt,
   initialWorkstreams,
   initialBlocks,
 }: {
   eventId: string;
+  eventTimezone: string;
+  initialDayDStartAt: string | null;
   initialWorkstreams: WorkstreamSummary[];
   initialBlocks: BlockSummary[];
 }) {
@@ -57,40 +63,138 @@ export function EventSetup({
   const [blocks, setBlocks] = useState(initialBlocks);
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <CatalogCard
+    <div className="space-y-6">
+      <DayDCard
         eventId={eventId}
-        kind="workstream"
-        title="Workstreams"
-        description="Líneas de trabajo que se ejecutarán en paralelo."
-        icon={Layers3}
-        items={workstreams}
-        onSaved={(item) =>
-          setWorkstreams((current) =>
-            upsertItem(current, item as WorkstreamSummary),
-          )
-        }
-        onRemoved={(id) =>
-          setWorkstreams((current) =>
-            current.filter((item) => item.id !== id),
-          )
-        }
+        eventTimezone={eventTimezone}
+        initialDayDStartAt={initialDayDStartAt}
       />
-      <CatalogCard
-        eventId={eventId}
-        kind="block"
-        title="Bloques"
-        description="Objetos operativos del evento, normalmente aplicaciones."
-        icon={Boxes}
-        items={blocks}
-        onSaved={(item) =>
-          setBlocks((current) => upsertItem(current, item as BlockSummary))
-        }
-        onRemoved={(id) =>
-          setBlocks((current) => current.filter((item) => item.id !== id))
-        }
-      />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <CatalogCard
+          eventId={eventId}
+          kind="workstream"
+          title="Workstreams"
+          description="Líneas de trabajo que se ejecutarán en paralelo."
+          icon={Layers3}
+          items={workstreams}
+          onSaved={(item) =>
+            setWorkstreams((current) =>
+              upsertItem(current, item as WorkstreamSummary),
+            )
+          }
+          onRemoved={(id) =>
+            setWorkstreams((current) =>
+              current.filter((item) => item.id !== id),
+            )
+          }
+        />
+        <CatalogCard
+          eventId={eventId}
+          kind="block"
+          title="Bloques"
+          description="Objetos operativos del evento, normalmente aplicaciones."
+          icon={Boxes}
+          items={blocks}
+          onSaved={(item) =>
+            setBlocks((current) => upsertItem(current, item as BlockSummary))
+          }
+          onRemoved={(id) =>
+            setBlocks((current) => current.filter((item) => item.id !== id))
+          }
+        />
+      </div>
     </div>
+  );
+}
+
+function DayDCard({
+  eventId,
+  eventTimezone,
+  initialDayDStartAt,
+}: {
+  eventId: string;
+  eventTimezone: string;
+  initialDayDStartAt: string | null;
+}) {
+  const [dayDStartAt, setDayDStartAt] = useState(initialDayDStartAt);
+  const [draft, setDraft] = useState(initialDayDStartAt);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const dirty = draft !== dayDStartAt;
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    const response = await fetch(`/api/events/${eventId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dayDStartAt: draft }),
+    }).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as {
+          event?: { dayDStartAt: string | null };
+          error?: string;
+        })
+      : null;
+    setSaving(false);
+
+    if (!response?.ok || !payload?.event) {
+      setError(payload?.error ?? "No fue posible guardar el inicio del Día D.");
+      return;
+    }
+    setDayDStartAt(payload.event.dayDStartAt);
+    setDraft(payload.event.dayDStartAt);
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex gap-3">
+          <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <CalendarClock className="size-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <CardTitle>Inicio del Día D</CardTitle>
+            <CardDescription className="mt-1">
+              Origen absoluto del timeline (visor de tiempos). Los gates y horas
+              de pasos se miden desde aquí. TZ: {eventTimezone}
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1 space-y-2">
+            <Label>Fecha y hora de arranque del Día D</Label>
+            <DateTimePicker
+              value={draft}
+              timezone={eventTimezone}
+              onChange={setDraft}
+              placeholder="Definir inicio del Día D"
+            />
+          </div>
+          <Button
+            type="button"
+            disabled={!dirty || saving}
+            onClick={() => void save()}
+          >
+            {saving ? <LoaderCircle className="size-4 animate-spin" /> : null}
+            Guardar
+          </Button>
+        </div>
+        {error ? (
+          <p role="alert" className="text-sm text-red-300">
+            {error}
+          </p>
+        ) : null}
+        {!dayDStartAt ? (
+          <p className="text-xs text-muted-foreground">
+            Sin este valor, el planificador usa un origen relativo (el ancla más
+            temprana) y el eje no refleja la hora civil del Día D.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 
