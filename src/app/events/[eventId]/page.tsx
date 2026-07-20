@@ -1,11 +1,20 @@
-import { CalendarRange, ChevronRight, Command, ShieldCheck } from "lucide-react";
+import {
+  Building2,
+  CalendarRange,
+  ChevronRight,
+  Command,
+  ShieldCheck,
+} from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
 import { EventWorkspace } from "@/components/event-workspace";
 import { Badge } from "@/components/ui/badge";
-import { canAccessEvent, getEventWorkspace } from "@/lib/admin-data";
+import {
+  getEventWorkspace,
+  getEventWorkspaceRole,
+} from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 
 export default async function EventPage({
@@ -17,43 +26,62 @@ export default async function EventPage({
   const user = await getCurrentUser();
   if (!user) redirect("/");
 
-  const canAccess =
-    user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
-  if (!canAccess) redirect("/");
+  const role = await getEventWorkspaceRole(
+    user.email,
+    eventId,
+    user.isSuperAdmin,
+  );
+  if (!role) redirect("/");
 
   const workspace = await getEventWorkspace(eventId);
   if (!workspace) notFound();
+
+  const canManageAdmins = role === "SuperAdmin" || role === "OrgAdmin";
+  const RoleIcon =
+    role === "SuperAdmin"
+      ? ShieldCheck
+      : role === "OrgAdmin"
+        ? Building2
+        : CalendarRange;
 
   return (
     <div className="min-h-screen">
       <header className="border-b bg-background/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
           <Link
-            href={user.isSuperAdmin ? "/dashboard" : "/"}
+            href={
+              role === "SuperAdmin"
+                ? "/dashboard"
+                : role === "OrgAdmin" && workspace.organization
+                  ? `/organizations/${workspace.organization.id}`
+                  : "/"
+            }
             className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
           >
             <Command className="size-4" />
           </Link>
           {workspace.organization ? (
             <>
-              <Link
-                href={`/organizations/${workspace.organization.id}`}
-                className="text-sm text-muted-foreground hover:text-foreground"
-              >
-                {workspace.organization.name}
-              </Link>
+              {role === "SuperAdmin" || role === "OrgAdmin" ? (
+                <Link
+                  href={`/organizations/${workspace.organization.id}`}
+                  className="text-sm text-muted-foreground hover:text-foreground"
+                >
+                  {workspace.organization.name}
+                </Link>
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  {workspace.organization.name}
+                </span>
+              )}
               <ChevronRight className="size-4 text-muted-foreground" />
             </>
           ) : null}
           <span className="text-sm font-medium">{workspace.event.name}</span>
           <div className="ml-auto flex items-center gap-2">
             <Badge variant="outline" className="gap-1.5">
-              {user.isSuperAdmin ? (
-                <ShieldCheck className="size-3" />
-              ) : (
-                <CalendarRange className="size-3" />
-              )}
-              {user.isSuperAdmin ? "SuperAdmin" : "EventAdmin"}
+              <RoleIcon className="size-3" />
+              {role}
             </Badge>
             <AuthHeader />
           </div>
@@ -79,6 +107,7 @@ export default async function EventPage({
           event={workspace.event}
           initialAdmins={workspace.admins}
           initialExecutions={workspace.executions}
+          canManageAdmins={canManageAdmins}
         />
       </main>
     </div>

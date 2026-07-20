@@ -12,7 +12,7 @@ export default async function Home() {
     ? currentUser.isSuperAdmin
       ? "/dashboard"
       : await getFirstAssignedPath(currentUser.email)
-    : "/dashboard";
+    : "/entrar";
 
   return (
     <main className="relative min-h-screen overflow-hidden">

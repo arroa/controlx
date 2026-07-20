@@ -4,13 +4,16 @@ import { redirect } from "next/navigation";
 import { AdminDashboard } from "@/components/admin-dashboard";
 import { AuthHeader } from "@/components/auth-header";
 import { Badge } from "@/components/ui/badge";
-import { listOrganizations } from "@/lib/admin-data";
+import { getFirstAssignedPath, listOrganizations } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  if (!user?.isSuperAdmin) {
+  if (!user) {
     redirect("/");
+  }
+  if (!user.isSuperAdmin) {
+    redirect(await getFirstAssignedPath(user.email));
   }
 
   const data = await listOrganizations().catch(() => ({

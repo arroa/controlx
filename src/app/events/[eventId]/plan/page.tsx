@@ -58,15 +58,13 @@ export default async function EventPlanPage({
           </p>
         </section>
         <div className="min-h-0 flex-1 overflow-hidden">
-          <EventPlanner
-            eventId={eventId}
-            eventTimezone={design.event.timezone}
-            dayDStartAt={design.event.dayDStartAt}
-            pairs={design.pairs}
-            workstreams={design.workstreams}
-            blocks={design.blocks}
-            initialGates={design.gates}
-          />
+        <EventPlanner
+          eventId={eventId}
+          eventTimezone={design.event.timezone}
+          dayDStartAt={design.event.dayDStartAt}
+          pairs={design.pairs}
+          initialGates={design.gates}
+        />
         </div>
       </main>
     </div>

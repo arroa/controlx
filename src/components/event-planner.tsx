@@ -51,11 +51,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type {
-  BlockSummary,
   DesignPair,
   DesignStepSummary,
   GateSummary,
-  WorkstreamSummary,
 } from "@/lib/admin-data";
 import { APPROVAL_ROLE_OPTIONS, type ApprovalRole } from "@/domain/controlx";
 import { GatesManager } from "@/components/gates-manager";
@@ -154,16 +152,12 @@ export function EventPlanner({
   eventTimezone,
   dayDStartAt,
   pairs,
-  workstreams,
-  blocks,
   initialGates,
 }: {
   eventId: string;
   eventTimezone: string;
   dayDStartAt: string | null;
   pairs: DesignPair[];
-  workstreams: WorkstreamSummary[];
-  blocks: BlockSummary[];
   initialGates: GateSummary[];
 }) {
   const [rows, setRows] = useState(() => pairsToRows(pairs));
@@ -311,8 +305,7 @@ export function EventPlanner({
           eventId={eventId}
           eventTimezone={eventTimezone}
           gates={gates}
-          workstreams={workstreams}
-          blocks={blocks}
+          pairs={pairs}
           onGatesChange={handleGatesChange}
           onError={setError}
         />
@@ -446,8 +439,7 @@ export function EventPlanner({
       eventId={eventId}
       eventTimezone={eventTimezone}
       gates={gates}
-      workstreams={workstreams}
-      blocks={blocks}
+      pairs={pairs}
       onGatesChange={handleGatesChange}
       onError={setError}
     />

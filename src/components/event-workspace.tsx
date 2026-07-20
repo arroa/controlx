@@ -49,22 +49,26 @@ export function EventWorkspace({
   event,
   initialAdmins,
   initialExecutions,
+  canManageAdmins,
 }: {
   event: EventSummary;
   initialAdmins: AdminSummary[];
   initialExecutions: ExecutionSummary[];
+  canManageAdmins: boolean;
 }) {
   const [executions, setExecutions] = useState(initialExecutions);
 
   return (
     <div className="space-y-10">
-      <AdminManager
-        title="EventAdmins"
-        description="Responsables de configurar y administrar este evento."
-        roleLabel="EventAdmin"
-        endpoint={`/api/events/${event.id}/admins`}
-        initialAdmins={initialAdmins}
-      />
+      {canManageAdmins ? (
+        <AdminManager
+          title="EventAdmins"
+          description="Responsables de configurar y administrar este evento."
+          roleLabel="EventAdmin"
+          endpoint={`/api/events/${event.id}/admins`}
+          initialAdmins={initialAdmins}
+        />
+      ) : null}
 
       <section>
         <div className="mb-4">

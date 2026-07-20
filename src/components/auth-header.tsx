@@ -1,31 +1,27 @@
-import { SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
+import Link from "next/link";
 
-import { DevAuthControls } from "@/components/dev-auth-controls";
+import { UserMenu } from "@/components/user-menu";
 import { Button } from "@/components/ui/button";
+import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
-import { getDevSessionUserId } from "@/lib/dev-session";
 
 export async function AuthHeader() {
-  if (isDevBypassEnabled()) {
-    const userId = await getDevSessionUserId();
-    return <DevAuthControls userId={userId} />;
+  const bypassEnabled = isDevBypassEnabled();
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return (
+      <Button variant="ghost" size="sm" asChild>
+        <Link href={bypassEnabled ? "/" : "/sign-in"}>Ingresar</Link>
+      </Button>
+    );
   }
 
   return (
-    <>
-      <Show when="signed-out">
-        <SignInButton mode="modal">
-          <Button variant="ghost" size="sm">
-            Ingresar
-          </Button>
-        </SignInButton>
-        <SignUpButton mode="modal">
-          <Button size="sm">Crear cuenta</Button>
-        </SignUpButton>
-      </Show>
-      <Show when="signed-in">
-        <UserButton />
-      </Show>
-    </>
+    <UserMenu
+      email={user.email}
+      roleLabel={user.isSuperAdmin ? "SuperAdmin" : "Usuario"}
+      bypassEnabled={bypassEnabled}
+    />
   );
 }

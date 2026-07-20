@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   addEventAdmin,
   adminInputSchema,
-  canAccessEvent,
+  canManageEventAdmins,
 } from "@/lib/admin-data";
 import { requireUser } from "@/lib/api-auth";
 
@@ -17,7 +17,7 @@ export async function POST(
   const { eventId } = await params;
   const canManage =
     authResult.user.isSuperAdmin ||
-    (await canAccessEvent(authResult.user.email, eventId));
+    (await canManageEventAdmins(authResult.user.email, eventId));
   if (!canManage) {
     return NextResponse.json({ error: "Sin acceso." }, { status: 403 });
   }

@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { getDatabase, isMongoConfigured } from "@/lib/mongodb";
+import { validateGateGraph } from "@/lib/gate-validation";
 import { isSupportedTimezone } from "@/lib/timezones";
 import { approvalRoleSchema } from "@/domain/controlx";
 
@@ -101,6 +102,23 @@ export const gateInputSchema = z.object({
   approvalRoles: z.array(approvalRoleSchema).default([]),
   /** Cierre (OK) de estos WS/bloques para activar el gate. */
   closesAfterTargets: z.array(gateTargetSchema).default([]),
+}).superRefine((value, ctx) => {
+  for (const open of value.opensTargets) {
+    const conflict = value.closesAfterTargets.some((close) => {
+      if (close.workstreamId !== open.workstreamId) return false;
+      if (close.blockId == null || open.blockId == null) return true;
+      return close.blockId === open.blockId;
+    });
+    if (conflict) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Un gate no puede requerir y abrir el mismo workstream/bloque.",
+        path: ["opensTargets"],
+      });
+      return;
+    }
+  }
 });
 
 export type GateTarget = z.infer<typeof gateTargetSchema>;
@@ -825,13 +843,19 @@ export async function addOrganizationAdmin(
     .findOne({ _id: id }, { projection: { _id: 1 } });
   if (!organization) throw new Error("La organización no existe.");
 
+  const { ensureClerkUser, normalizeEmail } = await import(
+    "@/lib/clerk-users"
+  );
+  const normalizedEmail = normalizeEmail(email);
+  await ensureClerkUser(normalizedEmail);
+
   const now = new Date();
   const collection =
     database.collection<OrganizationMembershipDocument>(
       "organizationMemberships",
     );
   await collection.updateOne(
-    { organizationId: id, email, role: "ORG_ADMIN" },
+    { organizationId: id, email: normalizedEmail, role: "ORG_ADMIN" },
     {
       $set: { status: "ACTIVE" },
       $setOnInsert: { createdBy: actorId, createdAt: now },
@@ -840,13 +864,13 @@ export async function addOrganizationAdmin(
   );
   const membership = await collection.findOne({
     organizationId: id,
-    email,
+    email: normalizedEmail,
     role: "ORG_ADMIN",
   });
 
   return {
     id: membership!._id!.toHexString(),
-    email,
+    email: normalizedEmail,
     role: "ORG_ADMIN",
     createdAt: membership!.createdAt.toISOString(),
   };
@@ -864,11 +888,17 @@ export async function addEventAdmin(
     .findOne({ _id: id }, { projection: { organizationId: 1 } });
   if (!event) throw new Error("El evento no existe.");
 
+  const { ensureClerkUser, normalizeEmail } = await import(
+    "@/lib/clerk-users"
+  );
+  const normalizedEmail = normalizeEmail(email);
+  await ensureClerkUser(normalizedEmail);
+
   const now = new Date();
   const collection =
     database.collection<EventMembershipDocument>("eventMemberships");
   await collection.updateOne(
-    { eventId: id, email, role: "EVENT_ADMIN" },
+    { eventId: id, email: normalizedEmail, role: "EVENT_ADMIN" },
     {
       $set: { status: "ACTIVE" },
       $setOnInsert: {
@@ -881,13 +911,13 @@ export async function addEventAdmin(
   );
   const membership = await collection.findOne({
     eventId: id,
-    email,
+    email: normalizedEmail,
     role: "EVENT_ADMIN",
   });
 
   return {
     id: membership!._id!.toHexString(),
-    email,
+    email: normalizedEmail,
     role: "EVENT_ADMIN",
     createdAt: membership!.createdAt.toISOString(),
   };
@@ -902,6 +932,12 @@ export async function updateOrganizationAdmin(
   if (!ObjectId.isValid(organizationId) || !ObjectId.isValid(adminId)) {
     throw new Error("Administrador inválido.");
   }
+  const { ensureClerkUser, normalizeEmail } = await import(
+    "@/lib/clerk-users"
+  );
+  const normalizedEmail = normalizeEmail(email);
+  await ensureClerkUser(normalizedEmail);
+
   const database = await getDatabase();
   const result = await database
     .collection<OrganizationMembershipDocument>("organizationMemberships")
@@ -914,7 +950,7 @@ export async function updateOrganizationAdmin(
       },
       {
         $set: {
-          email,
+          email: normalizedEmail,
           updatedBy: actorId,
           updatedAt: new Date(),
         },
@@ -969,6 +1005,12 @@ export async function updateEventAdmin(
   if (!ObjectId.isValid(eventId) || !ObjectId.isValid(adminId)) {
     throw new Error("Administrador inválido.");
   }
+  const { ensureClerkUser, normalizeEmail } = await import(
+    "@/lib/clerk-users"
+  );
+  const normalizedEmail = normalizeEmail(email);
+  await ensureClerkUser(normalizedEmail);
+
   const database = await getDatabase();
   const result = await database
     .collection<EventMembershipDocument>("eventMemberships")
@@ -981,7 +1023,7 @@ export async function updateEventAdmin(
       },
       {
         $set: {
-          email,
+          email: normalizedEmail,
           updatedBy: actorId,
           updatedAt: new Date(),
         },
@@ -1100,6 +1142,63 @@ export async function canAccessEvent(
       ),
   ]);
   return Boolean(eventAdmin || organizationAdmin);
+}
+
+/** Asignar/editar EventAdmins: solo SuperAdmin u OrgAdmin de la org del evento. */
+export async function canManageEventAdmins(
+  email: string,
+  eventId: string,
+): Promise<boolean> {
+  if (!ObjectId.isValid(eventId)) return false;
+  const database = await getDatabase();
+  const event = await database
+    .collection<EventDocument>("events")
+    .findOne(
+      { _id: new ObjectId(eventId) },
+      { projection: { organizationId: 1 } },
+    );
+  if (!event) return false;
+  return canAccessOrganization(email, event.organizationId.toHexString());
+}
+
+export type EventWorkspaceRole = "SuperAdmin" | "OrgAdmin" | "EventAdmin";
+
+export async function getEventWorkspaceRole(
+  email: string,
+  eventId: string,
+  isSuperAdmin: boolean,
+): Promise<EventWorkspaceRole | null> {
+  if (isSuperAdmin) return "SuperAdmin";
+  if (!ObjectId.isValid(eventId)) return null;
+  const database = await getDatabase();
+  const id = new ObjectId(eventId);
+  const event = await database
+    .collection<EventDocument>("events")
+    .findOne({ _id: id }, { projection: { organizationId: 1 } });
+  if (!event) return null;
+
+  const [organizationAdmin, eventAdmin] = await Promise.all([
+    database
+      .collection<OrganizationMembershipDocument>("organizationMemberships")
+      .findOne(
+        {
+          organizationId: event.organizationId,
+          email,
+          status: "ACTIVE",
+        },
+        { projection: { _id: 1 } },
+      ),
+    database
+      .collection<EventMembershipDocument>("eventMemberships")
+      .findOne(
+        { eventId: id, email, status: "ACTIVE" },
+        { projection: { _id: 1 } },
+      ),
+  ]);
+
+  if (organizationAdmin) return "OrgAdmin";
+  if (eventAdmin) return "EventAdmin";
+  return null;
 }
 
 export async function createWorkstream(
@@ -1812,6 +1911,71 @@ export async function moveDesignStep(
   return refreshed.map((item) => toDesignStepSummary(eventId, item));
 }
 
+async function loadDesignedPairRefs(
+  eventId: string,
+): Promise<Array<{ workstreamId: string; blockId: string }>> {
+  if (!ObjectId.isValid(eventId)) return [];
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const activities = await database
+    .collection<ActivityDocument>("activities")
+    .find(
+      { eventId: eventObjectId, blockId: { $exists: true } },
+      { projection: { workstreamId: 1, blockId: 1 } },
+    )
+    .toArray();
+
+  const seen = new Set<string>();
+  const pairs: Array<{ workstreamId: string; blockId: string }> = [];
+  for (const activity of activities) {
+    const workstreamId = activity.workstreamId.toHexString();
+    const blockId = activity.blockId.toHexString();
+    const key = `${workstreamId}:${blockId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ workstreamId, blockId });
+  }
+  return pairs;
+}
+
+async function assertGateGraphValid(
+  eventId: string,
+  draft: {
+    id: string | null;
+    name: string;
+    opensTargets: Array<{ workstreamId: string; blockId: string | null }>;
+    closesAfterTargets: Array<{ workstreamId: string; blockId: string | null }>;
+  },
+) {
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const [existing, designedPairs] = await Promise.all([
+    database
+      .collection<GateDocument>("gates")
+      .find({ eventId: eventObjectId })
+      .toArray(),
+    loadDesignedPairRefs(eventId),
+  ]);
+
+  const result = validateGateGraph({
+    gates: existing.map((gate) => ({
+      id: gate._id!.toHexString(),
+      name: gate.name,
+      opensTargets: (gate.opensTargets ?? []).map((target) => ({
+        workstreamId: target.workstreamId.toHexString(),
+        blockId: target.blockId ? target.blockId.toHexString() : null,
+      })),
+      closesAfterTargets: (gate.closesAfterTargets ?? []).map((target) => ({
+        workstreamId: target.workstreamId.toHexString(),
+        blockId: target.blockId ? target.blockId.toHexString() : null,
+      })),
+    })),
+    draft,
+    designedPairs,
+  });
+  if (!result.ok) throw new Error(result.message);
+}
+
 export async function createGate(
   eventId: string,
   input: z.infer<typeof gateInputSchema>,
@@ -1824,6 +1988,13 @@ export async function createGate(
     .collection<EventDocument>("events")
     .findOne({ _id: eventObjectId }, { projection: { _id: 1 } });
   if (!event) throw new Error("El evento no existe.");
+
+  await assertGateGraphValid(eventId, {
+    id: null,
+    name: input.name,
+    opensTargets: input.opensTargets,
+    closesAfterTargets: input.closesAfterTargets,
+  });
 
   const opensTargets = await resolveGateTargets(eventId, input.opensTargets);
   const closesAfterTargets = await resolveGateTargets(
@@ -1870,6 +2041,14 @@ export async function updateGate(
   }
   const database = await getDatabase();
   const eventObjectId = new ObjectId(eventId);
+
+  await assertGateGraphValid(eventId, {
+    id: gateId,
+    name: input.name,
+    opensTargets: input.opensTargets,
+    closesAfterTargets: input.closesAfterTargets,
+  });
+
   const opensTargets = await resolveGateTargets(eventId, input.opensTargets);
   const closesAfterTargets = await resolveGateTargets(
     eventId,

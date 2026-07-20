@@ -27,11 +27,56 @@ import {
 import { Input } from "@/components/ui/input";
 import type {
   BlockSummary,
+  DesignPair,
   GateSummary,
   WorkstreamSummary,
 } from "@/lib/admin-data";
 import { APPROVAL_ROLE_OPTIONS, type ApprovalRole } from "@/domain/controlx";
+import { validateGateGraph } from "@/lib/gate-validation";
 import { cn } from "@/lib/utils";
+
+type DesignedWorkstream = {
+  workstream: WorkstreamSummary;
+  blocks: BlockSummary[];
+};
+
+/** Solo WS/bloques con actividades en el diseño (no el catálogo vacío). */
+function designedFromPairs(pairs: DesignPair[]): DesignedWorkstream[] {
+  const byWs = new Map<string, DesignedWorkstream>();
+  for (const pair of pairs) {
+    if (!pair.activities.length) continue;
+    let entry = byWs.get(pair.workstream.id);
+    if (!entry) {
+      entry = { workstream: pair.workstream, blocks: [] };
+      byWs.set(pair.workstream.id, entry);
+    }
+    if (!entry.blocks.some((block) => block.id === pair.block.id)) {
+      entry.blocks.push(pair.block);
+    }
+  }
+  return [...byWs.values()].map((entry) => ({
+    ...entry,
+    blocks: [...entry.blocks].sort(
+      (a, b) => a.order - b.order || a.name.localeCompare(b.name, "es"),
+    ),
+  }));
+}
+
+function catalogsFromPairs(pairs: DesignPair[]): {
+  workstreams: WorkstreamSummary[];
+  blocks: BlockSummary[];
+} {
+  const workstreams = new Map<string, WorkstreamSummary>();
+  const blocks = new Map<string, BlockSummary>();
+  for (const pair of pairs) {
+    workstreams.set(pair.workstream.id, pair.workstream);
+    blocks.set(pair.block.id, pair.block);
+  }
+  return {
+    workstreams: [...workstreams.values()],
+    blocks: [...blocks.values()],
+  };
+}
 
 type GateTargetDraft = {
   workstreamId: string;
@@ -157,18 +202,41 @@ function toggleBlockTarget(
   return [...targets, { workstreamId, blockId }];
 }
 
+/** Conflicto origen↔destino: mismo WS completo o el mismo bloque. */
+function isTargetBlocked(
+  workstreamId: string,
+  blockId: string | null,
+  blocked: GateTargetDraft[],
+) {
+  return blocked.some((item) => {
+    if (item.workstreamId !== workstreamId) return false;
+    if (item.blockId == null || blockId == null) return true;
+    return item.blockId === blockId;
+  });
+}
+
+function withoutBlockedTargets(
+  targets: GateTargetDraft[],
+  blocked: GateTargetDraft[],
+) {
+  return targets.filter(
+    (target) =>
+      !isTargetBlocked(target.workstreamId, target.blockId, blocked),
+  );
+}
+
 function TargetChecklist({
-  workstreams,
-  blocks,
+  designed,
   targets,
+  blockedTargets = [],
   onChange,
 }: {
-  workstreams: WorkstreamSummary[];
-  blocks: BlockSummary[];
+  designed: DesignedWorkstream[];
   targets: GateTargetDraft[];
+  /** Selección del otro lado (origen↔destino): no se puede repetir. */
+  blockedTargets?: GateTargetDraft[];
   onChange: (targets: GateTargetDraft[]) => void;
 }) {
-  const blockIds = blocks.map((block) => block.id);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
 
   function toggleExpanded(workstreamId: string) {
@@ -180,17 +248,24 @@ function TargetChecklist({
     });
   }
 
-  if (!workstreams.length) {
+  if (!designed.length) {
     return (
       <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        Aún no hay workstreams en el diseño.
+        Aún no hay workstreams/bloques diseñados. Crea actividades en Diseño
+        primero.
       </p>
     );
   }
 
   return (
     <div className="space-y-2 rounded-xl border">
-      {workstreams.map((workstream) => {
+      {designed.map(({ workstream, blocks }) => {
+        const blockIds = blocks.map((block) => block.id);
+        const wholeBlocked = isTargetBlocked(
+          workstream.id,
+          null,
+          blockedTargets,
+        );
         const whole = targets.some(
           (target) =>
             target.workstreamId === workstream.id && target.blockId == null,
@@ -204,7 +279,9 @@ function TargetChecklist({
           ? "Todo el WS"
           : selectedBlocks
             ? `${selectedBlocks} bloque${selectedBlocks === 1 ? "" : "s"}`
-            : "Ninguno";
+            : wholeBlocked
+              ? "En el otro lado"
+              : "Ninguno";
 
         return (
           <div key={workstream.id} className="border-b last:border-b-0">
@@ -212,6 +289,7 @@ function TargetChecklist({
               className={cn(
                 "flex items-center gap-2 px-2 py-2 hover:bg-muted/50",
                 (whole || selectedBlocks > 0) && "bg-muted/30",
+                wholeBlocked && !whole && "opacity-60",
               )}
             >
               <button
@@ -231,10 +309,21 @@ function TargetChecklist({
                   <ChevronRight className="size-4" />
                 )}
               </button>
-              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-0.5">
+              <label
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-3 py-0.5",
+                  wholeBlocked ? "cursor-not-allowed" : "cursor-pointer",
+                )}
+                title={
+                  wholeBlocked
+                    ? "Ya está en el otro lado del gate"
+                    : undefined
+                }
+              >
                 <input
                   type="checkbox"
                   checked={whole}
+                  disabled={wholeBlocked}
                   onChange={() =>
                     onChange(toggleWhole(targets, workstream.id))
                   }
@@ -251,9 +340,14 @@ function TargetChecklist({
             {expanded ? (
               <div className="space-y-0.5 border-t bg-muted/10 px-3 py-2 pl-11">
                 <p className="px-2 pb-1 text-[11px] text-muted-foreground">
-                  Bloques (o marca “todo el WS” arriba)
+                  Bloques diseñados (o marca “todo el WS” arriba)
                 </p>
                 {blocks.map((block) => {
+                  const blockBlocked = isTargetBlocked(
+                    workstream.id,
+                    block.id,
+                    blockedTargets,
+                  );
                   const checked =
                     whole ||
                     targets.some(
@@ -264,16 +358,24 @@ function TargetChecklist({
                   return (
                     <label
                       key={`${workstream.id}-${block.id}`}
+                      title={
+                        blockBlocked
+                          ? "Ya está en el otro lado del gate"
+                          : undefined
+                      }
                       className={cn(
-                        "flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/40",
+                        "flex items-center gap-3 rounded-md px-2 py-1.5",
+                        blockBlocked || whole
+                          ? "cursor-not-allowed"
+                          : "cursor-pointer hover:bg-muted/40",
                         checked && !whole && "bg-muted/30",
-                        whole && "opacity-60",
+                        (whole || blockBlocked) && "opacity-60",
                       )}
                     >
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={whole}
+                        disabled={whole || blockBlocked}
                         onChange={() =>
                           onChange(
                             toggleBlockTarget(
@@ -291,7 +393,7 @@ function TargetChecklist({
                 })}
                 {!blocks.length ? (
                   <p className="px-2 py-1 text-xs text-muted-foreground">
-                    Sin bloques en el catálogo.
+                    Sin bloques diseñados en este workstream.
                   </p>
                 ) : null}
               </div>
@@ -309,8 +411,7 @@ export function GatesManager({
   eventId,
   eventTimezone,
   gates,
-  workstreams,
-  blocks,
+  pairs,
   onGatesChange,
   onError,
 }: {
@@ -319,8 +420,7 @@ export function GatesManager({
   eventId: string;
   eventTimezone: string;
   gates: GateSummary[];
-  workstreams: WorkstreamSummary[];
-  blocks: BlockSummary[];
+  pairs: DesignPair[];
   onGatesChange: (gates: GateSummary[]) => void;
   onError: (message: string) => void;
 }) {
@@ -329,12 +429,10 @@ export function GatesManager({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
 
-  const sortedBlocks = useMemo(
-    () =>
-      [...blocks].sort(
-        (a, b) => a.order - b.order || a.name.localeCompare(b.name, "es"),
-      ),
-    [blocks],
+  const designed = useMemo(() => designedFromPairs(pairs), [pairs]);
+  const { workstreams, blocks } = useMemo(
+    () => catalogsFromPairs(pairs),
+    [pairs],
   );
 
   function startCreate() {
@@ -378,16 +476,65 @@ export function GatesManager({
       return;
     }
 
+    const opensTargets = withoutBlockedTargets(
+      editor.opensTargets,
+      editor.closesAfterTargets,
+    );
+    const closesAfterTargets = withoutBlockedTargets(
+      editor.closesAfterTargets,
+      opensTargets,
+    );
+    if (
+      opensTargets.length !== editor.opensTargets.length ||
+      closesAfterTargets.length !== editor.closesAfterTargets.length
+    ) {
+      setFormError(
+        "Hay solape entre origen y destino. Revisa los workstreams/bloques.",
+      );
+      onError("Un gate no puede requerir y abrir el mismo workstream/bloque.");
+      setEditor({ ...editor, opensTargets, closesAfterTargets });
+      return;
+    }
+
+    const designedPairs = designed.flatMap((entry) =>
+      entry.blocks.map((block) => ({
+        workstreamId: entry.workstream.id,
+        blockId: block.id,
+        workstreamName: entry.workstream.name,
+        blockName: block.name,
+      })),
+    );
+    const graphCheck = validateGateGraph({
+      gates: gates.map((gate) => ({
+        id: gate.id,
+        name: gate.name,
+        opensTargets: gate.opensTargets ?? [],
+        closesAfterTargets: gate.closesAfterTargets ?? [],
+      })),
+      draft: {
+        id: editor.id,
+        name,
+        opensTargets,
+        closesAfterTargets,
+      },
+      designedPairs,
+    });
+    if (!graphCheck.ok) {
+      setFormError(graphCheck.message);
+      onError(graphCheck.message);
+      return;
+    }
+
     setSaving(true);
     setFormError("");
     onError("");
     const body = {
       name,
       description: editor.description.trim(),
-      opensTargets: editor.opensTargets,
+      opensTargets,
       plannedOpenAt: editor.plannedOpenAt,
       approvalRoles: editor.approvalRoles,
-      closesAfterTargets: editor.closesAfterTargets,
+      closesAfterTargets,
     };
 
     const response = await fetch(
@@ -506,11 +653,18 @@ export function GatesManager({
                     </p>
                   </div>
                   <TargetChecklist
-                    workstreams={workstreams}
-                    blocks={sortedBlocks}
+                    designed={designed}
                     targets={editor.closesAfterTargets}
+                    blockedTargets={editor.opensTargets}
                     onChange={(closesAfterTargets) =>
-                      setEditor({ ...editor, closesAfterTargets })
+                      setEditor({
+                        ...editor,
+                        closesAfterTargets,
+                        opensTargets: withoutBlockedTargets(
+                          editor.opensTargets,
+                          closesAfterTargets,
+                        ),
+                      })
                     }
                   />
                 </section>
@@ -564,15 +718,22 @@ export function GatesManager({
                   <div>
                     <p className="text-sm font-medium">Workstreams que abre</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      WS/bloques que se liberan al activarse el gate.
+                      WS/bloques que libera (no pueden repetir el origen).
                     </p>
                   </div>
                   <TargetChecklist
-                    workstreams={workstreams}
-                    blocks={sortedBlocks}
+                    designed={designed}
                     targets={editor.opensTargets}
+                    blockedTargets={editor.closesAfterTargets}
                     onChange={(opensTargets) =>
-                      setEditor({ ...editor, opensTargets })
+                      setEditor({
+                        ...editor,
+                        opensTargets,
+                        closesAfterTargets: withoutBlockedTargets(
+                          editor.closesAfterTargets,
+                          opensTargets,
+                        ),
+                      })
                     }
                   />
                 </section>

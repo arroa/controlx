@@ -1,10 +1,10 @@
 "use client";
 
-import { SignIn } from "@clerk/nextjs";
 import { ArrowRight, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ControlXSignInForm } from "@/components/controlx-sign-in-form";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -81,63 +81,53 @@ export function LandingAccess({
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Ingresar a ControlX</DialogTitle>
+          <DialogDescription>
+            {bypassEnabled
+              ? "Acceso beta habilitado para usuarios autorizados."
+              : "Te enviaremos un código por email. Solo usuarios autorizados."}
+          </DialogDescription>
+        </DialogHeader>
         {bypassEnabled ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>Ingresar a ControlX</DialogTitle>
-              <DialogDescription>
-                Acceso beta habilitado para usuarios autorizados.
-              </DialogDescription>
-            </DialogHeader>
-            <form className="space-y-4" onSubmit={handleSubmit}>
-              <div className="space-y-2">
-                <Label htmlFor="access-email">Correo electrónico</Label>
-                <Input
-                  id="access-email"
-                  type="email"
-                  autoComplete="email"
-                  autoFocus
-                  required
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="nombre@empresa.com"
-                />
-              </div>
-              {error ? (
-                <p
-                  role="alert"
-                  className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-red-300"
-                >
-                  {error}
-                </p>
-              ) : null}
-              <Button className="w-full" type="submit" disabled={loading}>
-                {loading ? (
-                  <>
-                    <LoaderCircle className="size-4 animate-spin" />
-                    Validando…
-                  </>
-                ) : (
-                  "Continuar"
-                )}
-              </Button>
-              <p className="text-center text-xs text-muted-foreground">
-                ControlX Beta · Acceso administrado
-              </p>
-            </form>
-          </>
-        ) : (
-          <>
-            <DialogHeader>
-              <DialogTitle>Ingresar a ControlX</DialogTitle>
-              <DialogDescription>
-                Autenticación segura administrada por Clerk.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex justify-center">
-              <SignIn routing="hash" />
+          <form className="space-y-4" onSubmit={handleSubmit}>
+            <div className="space-y-2">
+              <Label htmlFor="access-email">Correo electrónico</Label>
+              <Input
+                id="access-email"
+                type="email"
+                autoComplete="email"
+                autoFocus
+                required
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="nombre@empresa.com"
+              />
             </div>
-          </>
+            {error ? (
+              <p
+                role="alert"
+                className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-red-300"
+              >
+                {error}
+              </p>
+            ) : null}
+            <Button className="w-full" type="submit" disabled={loading}>
+              {loading ? (
+                <>
+                  <LoaderCircle className="size-4 animate-spin" />
+                  Validando…
+                </>
+              ) : (
+                "Continuar"
+              )}
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">
+              ControlX Beta · Acceso administrado
+            </p>
+          </form>
+        ) : (
+          <ControlXSignInForm destination={destination} />
         )}
       </DialogContent>
     </Dialog>

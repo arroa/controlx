@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import {
   adminInputSchema,
-  canAccessEvent,
+  canManageEventAdmins,
   deactivateEventAdmin,
   updateEventAdmin,
 } from "@/lib/admin-data";
@@ -18,7 +18,7 @@ async function authorize(eventId: string) {
   if ("error" in authResult) return authResult;
   const canManage =
     authResult.user.isSuperAdmin ||
-    (await canAccessEvent(authResult.user.email, eventId));
+    (await canManageEventAdmins(authResult.user.email, eventId));
   return canManage
     ? authResult
     : {
