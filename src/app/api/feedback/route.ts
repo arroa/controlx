@@ -33,13 +33,13 @@ export async function POST(request: Request) {
   );
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Escribe un comentario (mín. 5 caracteres)." },
+      { error: "Revisa el comentario y el estado." },
       { status: 400 },
     );
   }
 
   try {
-    const item = await createFeedback(parsed.data.message, {
+    const item = await createFeedback(parsed.data, {
       id: authResult.user.id,
       email: authResult.user.email,
     });
