@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageSquareText } from "lucide-react";
+import { MessageSquareText, Newspaper } from "lucide-react";
 
 import { UserMenu } from "@/components/user-menu";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,12 @@ export async function AuthHeader() {
 
   return (
     <>
+      <Button variant="ghost" size="sm" asChild>
+        <Link href="/novedades" className="gap-1.5">
+          <Newspaper className="size-4" />
+          Novedades
+        </Link>
+      </Button>
       {showFeedback ? (
         <Button variant="ghost" size="sm" asChild>
           <Link href="/feedback" className="gap-1.5">

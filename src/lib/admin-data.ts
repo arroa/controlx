@@ -7,6 +7,23 @@ import { getDatabase, isMongoConfigured } from "@/lib/mongodb";
 import { validateGateGraph } from "@/lib/gate-validation";
 import { isSupportedTimezone } from "@/lib/timezones";
 import { approvalRoleSchema } from "@/domain/controlx";
+import {
+  EVENT_ACTOR_ROLE_OPTIONS,
+  emailLocalPart,
+  eventActorInputSchema,
+  eventActorRoleSchema,
+  type EventActorRole,
+  type EventActorSummary,
+} from "@/lib/event-actors";
+
+export {
+  EVENT_ACTOR_ROLE_OPTIONS,
+  emailLocalPart,
+  eventActorInputSchema,
+  eventActorRoleSchema,
+  type EventActorRole,
+  type EventActorSummary,
+} from "@/lib/event-actors";
 
 const timezoneSchema = z
   .string()
@@ -145,6 +162,35 @@ export const stepPlanningInputSchema = z.object({
     .default([]),
 });
 
+/** Asignar un ejecutor (actor del evento) a varios pasos sin ejecutor. */
+export const assignStepExecutorsSchema = z.object({
+  executorActorId: z.string().refine(ObjectId.isValid, "Ejecutor inválido"),
+  stepIds: z
+    .array(z.string().refine(ObjectId.isValid, "Paso inválido"))
+    .min(1, "Elige al menos un paso."),
+});
+
+export const unassignStepExecutorsSchema = z.object({
+  stepIds: z
+    .array(z.string().refine(ObjectId.isValid, "Paso inválido"))
+    .min(1, "Elige al menos un paso."),
+});
+
+/** Asignar un aprobador (APPROVER o STEERCO) a varios pasos. */
+export const assignStepApproversSchema = z.object({
+  approverActorId: z.string().refine(ObjectId.isValid, "Aprobador inválido"),
+  stepIds: z
+    .array(z.string().refine(ObjectId.isValid, "Paso inválido"))
+    .min(1, "Elige al menos un paso."),
+});
+
+export const unassignStepApproversSchema = z.object({
+  approverActorId: z.string().refine(ObjectId.isValid, "Aprobador inválido"),
+  stepIds: z
+    .array(z.string().refine(ObjectId.isValid, "Paso inválido"))
+    .min(1, "Elige al menos un paso."),
+});
+
 export type OrganizationSummary = {
   id: string;
   name: string;
@@ -253,6 +299,10 @@ export type DesignStepSummary = {
   approvalRoles: Array<
     "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
   >;
+  /** Actor del mapa con rol EXECUTOR. null = sin asignar. */
+  executorActorId: string | null;
+  /** Actores con rol APPROVER o STEERCO. Varios por paso. */
+  approverActorIds: string[];
   producesGateId: string | null;
   requiresGateIds: string[];
   createdAt: string;
@@ -324,7 +374,14 @@ type EventMembershipDocument = {
   eventId: ObjectId;
   organizationId: ObjectId;
   email: string;
-  role: "EVENT_ADMIN";
+  name?: string;
+  area?: string;
+  /**
+   * Legacy: memberships antiguos solo tenían `role: "EVENT_ADMIN"`.
+   * Fuente de verdad nueva: `roles`.
+   */
+  role?: "EVENT_ADMIN";
+  roles?: EventActorRole[];
   status: "ACTIVE" | "INACTIVE";
   createdBy: string;
   createdAt: Date;
@@ -333,6 +390,33 @@ type EventMembershipDocument = {
   deactivatedBy?: string;
   deactivatedAt?: Date;
 };
+
+function normalizeActorRoles(roles: EventActorRole[]): EventActorRole[] {
+  return EVENT_ACTOR_ROLE_OPTIONS.map((option) => option.value).filter((role) =>
+    roles.includes(role),
+  );
+}
+
+function membershipRoles(doc: EventMembershipDocument): EventActorRole[] {
+  if (doc.roles?.length) return normalizeActorRoles(doc.roles);
+  if (doc.role === "EVENT_ADMIN") return ["EVENT_ADMIN"];
+  return [];
+}
+
+function hasEventAdminRole(doc: EventMembershipDocument): boolean {
+  return membershipRoles(doc).includes("EVENT_ADMIN");
+}
+
+function toEventActorSummary(doc: EventMembershipDocument): EventActorSummary {
+  return {
+    id: doc._id!.toHexString(),
+    name: doc.name?.trim() || emailLocalPart(doc.email),
+    email: doc.email,
+    area: doc.area?.trim() || "",
+    roles: membershipRoles(doc),
+    createdAt: doc.createdAt.toISOString(),
+  };
+}
 
 type WorkstreamDocument = {
   _id?: ObjectId;
@@ -407,6 +491,8 @@ type DesignStepDocument = {
   approvalRoles?: Array<
     "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
   >;
+  executorActorId?: ObjectId | null;
+  approverActorIds?: ObjectId[];
   producesGateId?: ObjectId | null;
   requiresGateIds?: ObjectId[];
   createdBy: string;
@@ -545,12 +631,14 @@ export async function getEventWorkspace(eventId: string) {
       executionCount: executions.length,
       createdAt: event.createdAt.toISOString(),
     } satisfies EventSummary,
-    admins: admins.map((admin) => ({
-      id: admin._id!.toHexString(),
-      email: admin.email,
-      role: admin.role,
-      createdAt: admin.createdAt.toISOString(),
-    })) satisfies AdminSummary[],
+    admins: admins
+      .filter((admin) => hasEventAdminRole(admin))
+      .map((admin) => ({
+        id: admin._id!.toHexString(),
+        email: admin.email,
+        role: "EVENT_ADMIN" as const,
+        createdAt: admin.createdAt.toISOString(),
+      })) satisfies AdminSummary[],
     executions: executions.map((execution) => ({
       id: execution._id!.toHexString(),
       eventId: execution.eventId.toHexString(),
@@ -881,45 +969,22 @@ export async function addEventAdmin(
   email: string,
   actorId: string,
 ): Promise<AdminSummary> {
-  const database = await getDatabase();
-  const id = new ObjectId(eventId);
-  const event = await database
-    .collection<EventDocument>("events")
-    .findOne({ _id: id }, { projection: { organizationId: 1 } });
-  if (!event) throw new Error("El evento no existe.");
-
-  const { ensureClerkUser, normalizeEmail } = await import(
-    "@/lib/clerk-users"
-  );
-  const normalizedEmail = normalizeEmail(email);
-  await ensureClerkUser(normalizedEmail);
-
-  const now = new Date();
-  const collection =
-    database.collection<EventMembershipDocument>("eventMemberships");
-  await collection.updateOne(
-    { eventId: id, email: normalizedEmail, role: "EVENT_ADMIN" },
+  const actor = await upsertEventActor(
+    eventId,
     {
-      $set: { status: "ACTIVE" },
-      $setOnInsert: {
-        organizationId: event.organizationId,
-        createdBy: actorId,
-        createdAt: now,
-      },
+      email,
+      name: emailLocalPart(email),
+      area: "General",
+      roles: ["EVENT_ADMIN"],
     },
-    { upsert: true },
+    actorId,
+    { mergeRoles: true },
   );
-  const membership = await collection.findOne({
-    eventId: id,
-    email: normalizedEmail,
-    role: "EVENT_ADMIN",
-  });
-
   return {
-    id: membership!._id!.toHexString(),
-    email: normalizedEmail,
+    id: actor.id,
+    email: actor.email,
     role: "EVENT_ADMIN",
-    createdAt: membership!.createdAt.toISOString(),
+    createdAt: actor.createdAt,
   };
 }
 
@@ -1005,38 +1070,34 @@ export async function updateEventAdmin(
   if (!ObjectId.isValid(eventId) || !ObjectId.isValid(adminId)) {
     throw new Error("Administrador inválido.");
   }
-  const { ensureClerkUser, normalizeEmail } = await import(
-    "@/lib/clerk-users"
-  );
-  const normalizedEmail = normalizeEmail(email);
-  await ensureClerkUser(normalizedEmail);
-
   const database = await getDatabase();
-  const result = await database
+  const existing = await database
     .collection<EventMembershipDocument>("eventMemberships")
-    .findOneAndUpdate(
-      {
-        _id: new ObjectId(adminId),
-        eventId: new ObjectId(eventId),
-        role: "EVENT_ADMIN",
-        status: "ACTIVE",
-      },
-      {
-        $set: {
-          email: normalizedEmail,
-          updatedBy: actorId,
-          updatedAt: new Date(),
-        },
-      },
-      { returnDocument: "after" },
-    );
-  if (!result) throw new Error("El EventAdmin no existe.");
+    .findOne({
+      _id: new ObjectId(adminId),
+      eventId: new ObjectId(eventId),
+      status: "ACTIVE",
+    });
+  if (!existing || !hasEventAdminRole(existing)) {
+    throw new Error("El EventAdmin no existe.");
+  }
 
+  const actor = await updateEventActor(
+    eventId,
+    adminId,
+    {
+      email,
+      name: existing.name?.trim() || emailLocalPart(email),
+      area: existing.area?.trim() || "General",
+      roles: membershipRoles(existing),
+    },
+    actorId,
+  );
   return {
-    id: result._id!.toHexString(),
-    email: result.email,
-    role: result.role,
-    createdAt: result.createdAt.toISOString(),
+    id: actor.id,
+    email: actor.email,
+    role: "EVENT_ADMIN",
+    createdAt: actor.createdAt,
   };
 }
 
@@ -1049,38 +1110,52 @@ export async function deactivateEventAdmin(
     throw new Error("Administrador inválido.");
   }
   const database = await getDatabase();
-  const result = await database
+  const existing = await database
     .collection<EventMembershipDocument>("eventMemberships")
-    .updateOne(
-      {
-        _id: new ObjectId(adminId),
-        eventId: new ObjectId(eventId),
-        role: "EVENT_ADMIN",
-        status: "ACTIVE",
-      },
-      {
-        $set: {
-          status: "INACTIVE",
-          deactivatedBy: actorId,
-          deactivatedAt: new Date(),
-        },
-      },
-    );
-  if (!result.matchedCount) throw new Error("El EventAdmin no existe.");
+    .findOne({
+      _id: new ObjectId(adminId),
+      eventId: new ObjectId(eventId),
+      status: "ACTIVE",
+    });
+  if (!existing || !hasEventAdminRole(existing)) {
+    throw new Error("El EventAdmin no existe.");
+  }
+
+  const remaining = membershipRoles(existing).filter(
+    (role) => role !== "EVENT_ADMIN",
+  );
+  if (remaining.length === 0) {
+    await deactivateEventActor(eventId, adminId, actorId);
+    return;
+  }
+  await updateEventActor(
+    eventId,
+    adminId,
+    {
+      email: existing.email,
+      name: existing.name?.trim() || emailLocalPart(existing.email),
+      area: existing.area?.trim() || "General",
+      roles: remaining,
+    },
+    actorId,
+  );
 }
 
 export async function hasAssignedAccess(email: string): Promise<boolean> {
   if (!isMongoConfigured()) return false;
   const database = await getDatabase();
-  const [organizationAdmin, eventAdmin] = await Promise.all([
+  const [organizationAdmin, eventMemberships] = await Promise.all([
     database
       .collection<OrganizationMembershipDocument>("organizationMemberships")
       .findOne({ email, status: "ACTIVE" }, { projection: { _id: 1 } }),
     database
       .collection<EventMembershipDocument>("eventMemberships")
-      .findOne({ email, status: "ACTIVE" }, { projection: { _id: 1 } }),
+      .find({ email, status: "ACTIVE" })
+      .toArray(),
   ]);
-  return Boolean(organizationAdmin || eventAdmin);
+  return Boolean(
+    organizationAdmin || eventMemberships.some((doc) => hasEventAdminRole(doc)),
+  );
 }
 
 export async function getFirstAssignedPath(email: string): Promise<string> {
@@ -1093,9 +1168,12 @@ export async function getFirstAssignedPath(email: string): Promise<string> {
     return `/organizations/${organizationAdmin.organizationId.toHexString()}`;
   }
 
-  const eventAdmin = await database
+  const eventMemberships = await database
     .collection<EventMembershipDocument>("eventMemberships")
-    .findOne({ email, status: "ACTIVE" }, { sort: { createdAt: 1 } });
+    .find({ email, status: "ACTIVE" })
+    .sort({ createdAt: 1 })
+    .toArray();
+  const eventAdmin = eventMemberships.find((doc) => hasEventAdminRole(doc));
   return eventAdmin ? `/events/${eventAdmin.eventId.toHexString()}` : "/";
 }
 
@@ -1130,10 +1208,10 @@ export async function canAccessEvent(
     .findOne({ _id: id }, { projection: { organizationId: 1 } });
   if (!event) return false;
 
-  const [eventAdmin, organizationAdmin] = await Promise.all([
+  const [eventMembership, organizationAdmin] = await Promise.all([
     database
       .collection<EventMembershipDocument>("eventMemberships")
-      .findOne({ eventId: id, email, status: "ACTIVE" }, { projection: { _id: 1 } }),
+      .findOne({ eventId: id, email, status: "ACTIVE" }),
     database
       .collection<OrganizationMembershipDocument>("organizationMemberships")
       .findOne(
@@ -1141,7 +1219,10 @@ export async function canAccessEvent(
         { projection: { _id: 1 } },
       ),
   ]);
-  return Boolean(eventAdmin || organizationAdmin);
+  return Boolean(
+    organizationAdmin ||
+      (eventMembership && hasEventAdminRole(eventMembership)),
+  );
 }
 
 /** Asignar/editar EventAdmins: solo SuperAdmin u OrgAdmin de la org del evento. */
@@ -1177,7 +1258,7 @@ export async function getEventWorkspaceRole(
     .findOne({ _id: id }, { projection: { organizationId: 1 } });
   if (!event) return null;
 
-  const [organizationAdmin, eventAdmin] = await Promise.all([
+  const [organizationAdmin, eventMembership] = await Promise.all([
     database
       .collection<OrganizationMembershipDocument>("organizationMemberships")
       .findOne(
@@ -1190,15 +1271,220 @@ export async function getEventWorkspaceRole(
       ),
     database
       .collection<EventMembershipDocument>("eventMemberships")
-      .findOne(
-        { eventId: id, email, status: "ACTIVE" },
-        { projection: { _id: 1 } },
-      ),
+      .findOne({ eventId: id, email, status: "ACTIVE" }),
   ]);
 
   if (organizationAdmin) return "OrgAdmin";
-  if (eventAdmin) return "EventAdmin";
+  if (eventMembership && hasEventAdminRole(eventMembership)) {
+    return "EventAdmin";
+  }
   return null;
+}
+
+export async function listEventActors(
+  eventId: string,
+): Promise<EventActorSummary[]> {
+  if (!ObjectId.isValid(eventId)) return [];
+  const database = await getDatabase();
+  const actors = await database
+    .collection<EventMembershipDocument>("eventMemberships")
+    .find({ eventId: new ObjectId(eventId), status: "ACTIVE" })
+    .sort({ createdAt: 1 })
+    .toArray();
+  return actors
+    .map(toEventActorSummary)
+    .filter((actor) => actor.roles.length > 0);
+}
+
+export async function upsertEventActor(
+  eventId: string,
+  input: z.infer<typeof eventActorInputSchema>,
+  actorId: string,
+  options?: { mergeRoles?: boolean },
+): Promise<EventActorSummary> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const roles = normalizeActorRoles(input.roles);
+  if (!roles.length) throw new Error("Elige al menos un rol.");
+
+  const database = await getDatabase();
+  const id = new ObjectId(eventId);
+  const event = await database
+    .collection<EventDocument>("events")
+    .findOne({ _id: id }, { projection: { organizationId: 1 } });
+  if (!event) throw new Error("El evento no existe.");
+
+  const { ensureClerkUser, normalizeEmail } = await import(
+    "@/lib/clerk-users"
+  );
+  const normalizedEmail = normalizeEmail(input.email);
+
+  const collection =
+    database.collection<EventMembershipDocument>("eventMemberships");
+  const existing = await collection.findOne({
+    eventId: id,
+    email: normalizedEmail,
+  });
+
+  const nextRoles = normalizeActorRoles(
+    options?.mergeRoles && existing
+      ? [...membershipRoles(existing), ...roles]
+      : roles,
+  );
+  if (!nextRoles.length) throw new Error("Elige al menos un rol.");
+
+  const nextName =
+    options?.mergeRoles && existing?.name?.trim()
+      ? existing.name.trim()
+      : input.name.trim();
+  const nextArea =
+    options?.mergeRoles && existing?.area?.trim()
+      ? existing.area.trim()
+      : input.area.trim();
+
+  const now = new Date();
+  if (existing) {
+    // Solo sincroniza Clerk al crear/reactivar, no en cada cambio de roles.
+    if (existing.status !== "ACTIVE") {
+      await ensureClerkUser(normalizedEmail);
+    }
+    const result = await collection.findOneAndUpdate(
+      { _id: existing._id },
+      {
+        $set: {
+          email: normalizedEmail,
+          name: nextName,
+          area: nextArea,
+          roles: nextRoles,
+          status: "ACTIVE",
+          updatedBy: actorId,
+          updatedAt: now,
+          ...(nextRoles.includes("EVENT_ADMIN")
+            ? { role: "EVENT_ADMIN" as const }
+            : {}),
+        },
+        ...(nextRoles.includes("EVENT_ADMIN")
+          ? {}
+          : { $unset: { role: "" } }),
+      },
+      { returnDocument: "after" },
+    );
+    if (!result) throw new Error("No fue posible guardar el actor.");
+    return toEventActorSummary(result);
+  }
+
+  await ensureClerkUser(normalizedEmail);
+  const document: EventMembershipDocument = {
+    eventId: id,
+    organizationId: event.organizationId,
+    email: normalizedEmail,
+    name: nextName,
+    area: nextArea,
+    roles: nextRoles,
+    ...(nextRoles.includes("EVENT_ADMIN")
+      ? { role: "EVENT_ADMIN" as const }
+      : {}),
+    status: "ACTIVE",
+    createdBy: actorId,
+    createdAt: now,
+  };
+  const inserted = await collection.insertOne(document);
+  return toEventActorSummary({ ...document, _id: inserted.insertedId });
+}
+
+export async function updateEventActor(
+  eventId: string,
+  actorId: string,
+  input: z.infer<typeof eventActorInputSchema>,
+  updatedBy: string,
+): Promise<EventActorSummary> {
+  if (!ObjectId.isValid(eventId) || !ObjectId.isValid(actorId)) {
+    throw new Error("Actor inválido.");
+  }
+  const roles = normalizeActorRoles(input.roles);
+  if (!roles.length) throw new Error("Elige al menos un rol.");
+
+  const { ensureClerkUser, normalizeEmail } = await import(
+    "@/lib/clerk-users"
+  );
+  const normalizedEmail = normalizeEmail(input.email);
+
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const collection =
+    database.collection<EventMembershipDocument>("eventMemberships");
+
+  const current = await collection.findOne({
+    _id: new ObjectId(actorId),
+    eventId: eventObjectId,
+    status: "ACTIVE",
+  });
+  if (!current) throw new Error("El actor no existe.");
+
+  const emailChanged = current.email !== normalizedEmail;
+  if (emailChanged) {
+    const duplicate = await collection.findOne({
+      eventId: eventObjectId,
+      email: normalizedEmail,
+      status: "ACTIVE",
+      _id: { $ne: new ObjectId(actorId) },
+    });
+    if (duplicate) {
+      throw new Error("Ese correo ya está en el mapa de actores.");
+    }
+    await ensureClerkUser(normalizedEmail);
+  }
+
+  const unsetRole = !roles.includes("EVENT_ADMIN");
+  const result = await collection.findOneAndUpdate(
+    {
+      _id: new ObjectId(actorId),
+      eventId: eventObjectId,
+      status: "ACTIVE",
+    },
+    {
+      $set: {
+        email: normalizedEmail,
+        name: input.name.trim(),
+        area: input.area.trim(),
+        roles,
+        ...(roles.includes("EVENT_ADMIN") ? { role: "EVENT_ADMIN" as const } : {}),
+        updatedBy,
+        updatedAt: new Date(),
+      },
+      ...(unsetRole ? { $unset: { role: "" } } : {}),
+    },
+    { returnDocument: "after" },
+  );
+  if (!result) throw new Error("El actor no existe.");
+  return toEventActorSummary(result);
+}
+
+export async function deactivateEventActor(
+  eventId: string,
+  actorId: string,
+  deactivatedBy: string,
+): Promise<void> {
+  if (!ObjectId.isValid(eventId) || !ObjectId.isValid(actorId)) {
+    throw new Error("Actor inválido.");
+  }
+  const database = await getDatabase();
+  const result = await database
+    .collection<EventMembershipDocument>("eventMemberships")
+    .updateOne(
+      {
+        _id: new ObjectId(actorId),
+        eventId: new ObjectId(eventId),
+        status: "ACTIVE",
+      },
+      {
+        $set: {
+          status: "INACTIVE",
+          deactivatedBy,
+          deactivatedAt: new Date(),
+        },
+      },
+    );
+  if (!result.matchedCount) throw new Error("El actor no existe.");
 }
 
 export async function createWorkstream(
@@ -1522,6 +1808,8 @@ export async function createDesignStep(
     estimatedDurationMinutes: null,
     dependencyStepIds: [],
     approvalRoles: [],
+    executorActorId: null,
+    approverActorIds: [],
     producesGateId: null,
     requiresGateIds: [],
     createdBy: actorId,
@@ -1543,6 +1831,8 @@ export async function createDesignStep(
     estimatedDurationMinutes: null,
     dependencyStepIds: [],
     approvalRoles: [],
+    executorActorId: null,
+    approverActorIds: [],
     producesGateId: null,
     requiresGateIds: [],
     createdAt: now.toISOString(),
@@ -1673,6 +1963,14 @@ async function resolveGateTargets(
   return normalized;
 }
 
+function objectIdToString(
+  value: ObjectId | string | null | undefined,
+): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") return value;
+  return value.toHexString();
+}
+
 function toDesignStepSummary(
   eventId: string,
   step: DesignStepDocument,
@@ -1691,11 +1989,182 @@ function toDesignStepSummary(
     dependencyStepIds:
       step.dependencyStepIds?.map((id) => id.toHexString()) ?? [],
     approvalRoles: step.approvalRoles ?? [],
-    producesGateId: step.producesGateId?.toHexString() ?? null,
+    executorActorId: objectIdToString(step.executorActorId),
+    approverActorIds:
+      step.approverActorIds?.map((id) => id.toHexString()) ?? [],
+    producesGateId: objectIdToString(step.producesGateId),
     requiresGateIds:
       step.requiresGateIds?.map((id) => id.toHexString()) ?? [],
     createdAt: step.createdAt.toISOString(),
   };
+}
+
+export async function assignStepsExecutor(
+  eventId: string,
+  input: z.infer<typeof assignStepExecutorsSchema>,
+): Promise<DesignStepSummary[]> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const executorId = new ObjectId(input.executorActorId);
+  const stepObjectIds = input.stepIds.map((id) => new ObjectId(id));
+
+  const actor = await database
+    .collection<EventMembershipDocument>("eventMemberships")
+    .findOne({
+      _id: executorId,
+      eventId: eventObjectId,
+      status: "ACTIVE",
+    });
+  if (!actor || !membershipRoles(actor).includes("EXECUTOR")) {
+    throw new Error("El actor no es Ejecutor de este evento.");
+  }
+
+  const collection = database.collection<DesignStepDocument>("designSteps");
+  const matched = await collection.countDocuments({
+    eventId: eventObjectId,
+    _id: { $in: stepObjectIds },
+  });
+  if (matched !== stepObjectIds.length) {
+    throw new Error("Uno o más pasos no pertenecen a este evento.");
+  }
+
+  const now = new Date();
+  await collection.updateMany(
+    {
+      eventId: eventObjectId,
+      _id: { $in: stepObjectIds },
+      $or: [
+        { executorActorId: null },
+        { executorActorId: { $exists: false } },
+      ],
+    },
+    { $set: { executorActorId: executorId, updatedAt: now } },
+  );
+
+  const steps = await collection
+    .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
+    .toArray();
+  return steps.map((step) => toDesignStepSummary(eventId, step));
+}
+
+export async function unassignStepsExecutor(
+  eventId: string,
+  input: z.infer<typeof unassignStepExecutorsSchema>,
+): Promise<DesignStepSummary[]> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const stepObjectIds = input.stepIds.map((id) => new ObjectId(id));
+
+  const collection = database.collection<DesignStepDocument>("designSteps");
+  const now = new Date();
+  await collection.updateMany(
+    {
+      eventId: eventObjectId,
+      _id: { $in: stepObjectIds },
+    },
+    { $set: { executorActorId: null, updatedAt: now } },
+  );
+
+  const steps = await collection
+    .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
+    .toArray();
+  return steps.map((step) => toDesignStepSummary(eventId, step));
+}
+
+function isApproverActor(doc: EventMembershipDocument): boolean {
+  const roles = membershipRoles(doc);
+  return roles.includes("APPROVER") || roles.includes("STEERCO");
+}
+
+export async function assignStepsApprover(
+  eventId: string,
+  input: z.infer<typeof assignStepApproversSchema>,
+): Promise<DesignStepSummary[]> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const approverId = new ObjectId(input.approverActorId);
+  const stepObjectIds = input.stepIds.map((id) => new ObjectId(id));
+
+  const actor = await database
+    .collection<EventMembershipDocument>("eventMemberships")
+    .findOne({
+      _id: approverId,
+      eventId: eventObjectId,
+      status: "ACTIVE",
+    });
+  if (!actor || !isApproverActor(actor)) {
+    throw new Error("El actor no es Aprobador ni SteerCo de este evento.");
+  }
+
+  const collection = database.collection<DesignStepDocument>("designSteps");
+  const matched = await collection.countDocuments({
+    eventId: eventObjectId,
+    _id: { $in: stepObjectIds },
+  });
+  if (matched !== stepObjectIds.length) {
+    throw new Error("Uno o más pasos no pertenecen a este evento.");
+  }
+
+  const now = new Date();
+  await collection.updateMany(
+    {
+      eventId: eventObjectId,
+      _id: { $in: stepObjectIds },
+      approverActorIds: { $ne: approverId },
+    },
+    {
+      $addToSet: { approverActorIds: approverId },
+      $set: { updatedAt: now },
+    },
+  );
+  // Pasos legacy sin el campo
+  await collection.updateMany(
+    {
+      eventId: eventObjectId,
+      _id: { $in: stepObjectIds },
+      approverActorIds: { $exists: false },
+    },
+    {
+      $set: { approverActorIds: [approverId], updatedAt: now },
+    },
+  );
+
+  const steps = await collection
+    .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
+    .toArray();
+  return steps.map((step) => toDesignStepSummary(eventId, step));
+}
+
+export async function unassignStepsApprover(
+  eventId: string,
+  input: z.infer<typeof unassignStepApproversSchema>,
+): Promise<DesignStepSummary[]> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const approverId = new ObjectId(input.approverActorId);
+  const stepObjectIds = input.stepIds.map((id) => new ObjectId(id));
+
+  const collection = database.collection<DesignStepDocument>("designSteps");
+  const now = new Date();
+  await collection.updateMany(
+    {
+      eventId: eventObjectId,
+      _id: { $in: stepObjectIds },
+    },
+    {
+      $pull: { approverActorIds: approverId },
+      $set: { updatedAt: now },
+    },
+  );
+
+  const steps = await collection
+    .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
+    .toArray();
+  return steps.map((step) => toDesignStepSummary(eventId, step));
 }
 
 export async function updateActivity(

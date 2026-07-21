@@ -3,10 +3,11 @@
 import {
   Boxes,
   CalendarClock,
-  Layers3,
   LoaderCircle,
   PencilRuler,
   Play,
+  UsersRound,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -74,14 +75,14 @@ export function EventWorkspace({
         <div className="mb-4">
           <h2 className="text-xl font-semibold">Preparación del evento</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Configura el esqueleto, diseña el trabajo y luego planifícalo.
+            Setup, diseño, roles y planificador.
           </p>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <PreparationCard
             number="1"
             title="Setup"
-            description="Catálogos cerrados de workstreams y bloques."
+            description="Actores, Día D, workstreams y bloques."
             href={`/events/${event.id}/setup`}
             icon={Boxes}
           />
@@ -94,6 +95,13 @@ export function EventWorkspace({
           />
           <PreparationCard
             number="3"
+            title="Roles"
+            description="Asigna ejecutores y aprobadores a los pasos."
+            href={`/events/${event.id}/roles`}
+            icon={UsersRound}
+          />
+          <PreparationCard
+            number="4"
             title="Planificador"
             description="Horarios y dependencias entre pasos."
             href={`/events/${event.id}/plan`}
@@ -157,7 +165,7 @@ function PreparationCard({
   title: string;
   description: string;
   href: string;
-  icon: typeof Layers3;
+  icon: LucideIcon;
 }) {
   return (
     <Card>
@@ -167,7 +175,7 @@ function PreparationCard({
             <Icon className="size-5" />
           </div>
           <span className="font-mono text-xs text-muted-foreground">
-            {number}/3
+            {number}/4
           </span>
         </div>
         <CardTitle className="pt-2">{title}</CardTitle>

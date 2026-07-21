@@ -1,6 +1,7 @@
 import { Command, LockKeyhole, Network, RadioTower } from "lucide-react";
 
 import { LandingAccess } from "@/components/landing-access";
+import { LoginChangelogModal } from "@/components/login-changelog-modal";
 import { Badge } from "@/components/ui/badge";
 import { getFirstAssignedPath } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
@@ -16,6 +17,7 @@ export default async function Home() {
 
   return (
     <main className="relative min-h-screen overflow-hidden">
+      {!currentUser ? <LoginChangelogModal /> : null}
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,oklch(1_0_0/0.035)_1px,transparent_1px),linear-gradient(to_bottom,oklch(1_0_0/0.035)_1px,transparent_1px)] bg-[size:48px_48px]" />
       <div className="pointer-events-none absolute left-1/2 top-0 h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-primary/10 blur-[140px]" />
 

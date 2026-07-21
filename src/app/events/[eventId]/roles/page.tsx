@@ -3,16 +3,16 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
-import { EventSetup } from "@/components/event-setup";
+import { EventRoles } from "@/components/event-roles";
 import {
   canAccessEvent,
-  canManageEventAdmins,
   getEventDesign,
   listEventActors,
 } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
+import { pairsToRoleSteps } from "@/lib/role-steps";
 
-export default async function EventSetupPage({
+export default async function EventRolesPage({
   params,
 }: {
   params: Promise<{ eventId: string }>;
@@ -24,19 +24,17 @@ export default async function EventSetupPage({
     user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
   if (!canAccess) redirect("/");
 
-  const [setup, actors] = await Promise.all([
+  const [design, actors] = await Promise.all([
     getEventDesign(eventId),
     listEventActors(eventId),
   ]);
-  if (!setup) notFound();
+  if (!design) notFound();
 
-  const canManageEventAdminRole =
-    user.isSuperAdmin ||
-    (await canManageEventAdmins(user.email, eventId));
+  const steps = pairsToRoleSteps(design.pairs);
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-background/90 backdrop-blur">
+    <div className="flex h-dvh flex-col overflow-hidden">
+      <header className="shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
           <Link
             href={user.isSuperAdmin ? "/dashboard" : "/"}
@@ -48,36 +46,34 @@ export default async function EventSetupPage({
             href={`/events/${eventId}`}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            {setup.event.name}
+            {design.event.name}
           </Link>
           <ChevronRight className="size-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Setup</span>
+          <span className="text-sm font-medium">Roles</span>
           <div className="ml-auto">
             <AuthHeader />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 py-10">
-        <section className="mb-8">
-          <p className="text-sm text-muted-foreground">Paso 1 de 4</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight">
-            Setup del evento
+      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 py-4">
+        <section className="mb-4 shrink-0">
+          <p className="text-sm text-muted-foreground">Paso 3 de 4</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+            Roles del evento
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Define actores, el inicio del Día D y los catálogos cerrados de
-            workstreams y bloques.
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Una sola lista de pasos: elige un actor y asígnalo como ejecutor o
+            aprobador.
           </p>
         </section>
-        <EventSetup
-          eventId={eventId}
-          eventTimezone={setup.event.timezone}
-          initialDayDStartAt={setup.event.dayDStartAt}
-          initialWorkstreams={setup.workstreams}
-          initialBlocks={setup.blocks}
-          initialActors={actors}
-          canManageEventAdminRole={canManageEventAdminRole}
-        />
+        <div className="min-h-0 flex-1">
+          <EventRoles
+            eventId={eventId}
+            initialActors={actors}
+            initialSteps={steps}
+          />
+        </div>
       </main>
     </div>
   );

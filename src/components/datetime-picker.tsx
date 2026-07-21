@@ -113,6 +113,10 @@ type DateTimePickerProps = {
   value: string | null;
   timezone: string;
   onChange: (iso: string | null) => void;
+  /** Si se define, se llama al confirmar (botón principal) con el valor actual. */
+  onConfirm?: (iso: string | null) => void | Promise<void>;
+  confirmLabel?: string;
+  confirming?: boolean;
   placeholder?: string;
   className?: string;
   disabled?: boolean;
@@ -122,6 +126,9 @@ export function DateTimePicker({
   value,
   timezone,
   onChange,
+  onConfirm,
+  confirmLabel = "Listo",
+  confirming = false,
   placeholder = "Elegir fecha y hora",
   className,
   disabled,
@@ -181,6 +188,33 @@ export function DateTimePicker({
     commit({ ...base, hour, minute: Number(nextMinute) });
   }
 
+  async function handleConfirm() {
+    if (onConfirm) {
+      try {
+        await onConfirm(value);
+        setOpen(false);
+      } catch {
+        // El padre muestra el error; la modal permanece abierta.
+      }
+      return;
+    }
+    setOpen(false);
+  }
+
+  async function handleClear() {
+    onChange(null);
+    if (onConfirm) {
+      try {
+        await onConfirm(null);
+        setOpen(false);
+      } catch {
+        // El padre muestra el error; la modal permanece abierta.
+      }
+      return;
+    }
+    setOpen(false);
+  }
+
   const hours = Array.from({ length: 24 }, (_, index) => index);
   const minutes = Array.from(
     { length: 60 / MINUTE_STEP },
@@ -193,7 +227,7 @@ export function DateTimePicker({
         <Button
           type="button"
           variant="outline"
-          disabled={disabled}
+          disabled={disabled || confirming}
           className={cn(
             "h-8 w-full justify-start gap-2 font-normal",
             !value && "text-muted-foreground",
@@ -262,11 +296,8 @@ export function DateTimePicker({
                 variant="ghost"
                 size="sm"
                 className="flex-1"
-                disabled={!value}
-                onClick={() => {
-                  onChange(null);
-                  setOpen(false);
-                }}
+                disabled={!value || confirming}
+                onClick={() => void handleClear()}
               >
                 <X className="size-3.5" />
                 Borrar
@@ -275,9 +306,10 @@ export function DateTimePicker({
                 type="button"
                 size="sm"
                 className="flex-1"
-                onClick={() => setOpen(false)}
+                disabled={confirming || (Boolean(onConfirm) && !value)}
+                onClick={() => void handleConfirm()}
               >
-                Listo
+                {confirmLabel}
               </Button>
             </div>
           </div>

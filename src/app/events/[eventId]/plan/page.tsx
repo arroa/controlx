@@ -48,7 +48,7 @@ export default async function EventPlanPage({
 
       <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 py-4">
         <section className="mb-4 shrink-0">
-          <p className="text-sm text-muted-foreground">Paso 3 de 3</p>
+          <p className="text-sm text-muted-foreground">Paso 4 de 4</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">
             Planificador
           </h1>
