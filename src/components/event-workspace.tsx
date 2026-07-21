@@ -10,9 +10,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AdminManager } from "@/components/admin-manager";
+import { EventReadinessBoard } from "@/components/event-readiness-board";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,19 +47,24 @@ import type {
   EventSummary,
   ExecutionSummary,
 } from "@/lib/admin-data";
+import type { EventReadiness } from "@/lib/event-readiness-types";
 
 export function EventWorkspace({
   event,
   initialAdmins,
   initialExecutions,
+  readiness: initialReadiness,
   canManageAdmins,
 }: {
   event: EventSummary;
   initialAdmins: AdminSummary[];
   initialExecutions: ExecutionSummary[];
+  readiness: EventReadiness;
   canManageAdmins: boolean;
 }) {
   const [executions, setExecutions] = useState(initialExecutions);
+  const [readiness, setReadiness] = useState(initialReadiness);
+  const router = useRouter();
 
   return (
     <div className="space-y-10">
@@ -70,6 +77,11 @@ export function EventWorkspace({
           initialAdmins={initialAdmins}
         />
       ) : null}
+
+      <EventReadinessBoard
+        readiness={readiness}
+        onReadinessChange={setReadiness}
+      />
 
       <section>
         <div className="mb-4">
@@ -120,15 +132,20 @@ export function EventWorkspace({
           </div>
           <ExecutionDialog
             event={event}
-            onCreated={(execution) =>
-              setExecutions((current) => [execution, ...current])
-            }
+            readiness={readiness}
+            onCreated={(execution) => {
+              setExecutions((current) => [execution, ...current]);
+              router.push(`/events/${event.id}/executions/${execution.id}`);
+            }}
           />
         </div>
         {executions.length ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {executions.map((execution) => (
-              <Card key={execution.id}>
+              <Card
+                key={execution.id}
+                className="transition hover:border-primary/40"
+              >
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <Badge
@@ -143,6 +160,15 @@ export function EventWorkspace({
                   <CardTitle className="pt-3">{execution.name}</CardTitle>
                   <CardDescription>{execution.timezone}</CardDescription>
                 </CardHeader>
+                <CardContent>
+                  <Button variant="outline" className="w-full" asChild>
+                    <Link
+                      href={`/events/${event.id}/executions/${execution.id}`}
+                    >
+                      Abrir consola
+                    </Link>
+                  </Button>
+                </CardContent>
               </Card>
             ))}
           </div>
@@ -192,9 +218,11 @@ function PreparationCard({
 
 function ExecutionDialog({
   event,
+  readiness,
   onCreated,
 }: {
   event: EventSummary;
+  readiness: EventReadiness;
   onCreated: (execution: ExecutionSummary) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -202,6 +230,8 @@ function ExecutionDialog({
   const [timezone, setTimezone] = useState(event.timezone);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const blocked = !readiness.canStart || readiness.stale;
 
   async function handleSubmit(formEvent: React.FormEvent<HTMLFormElement>) {
     formEvent.preventDefault();
@@ -246,7 +276,8 @@ function ExecutionDialog({
         <DialogHeader>
           <DialogTitle>Nueva ejecución</DialogTitle>
           <DialogDescription>
-            Crea una instancia de {event.name}.
+            Instancia {event.name} en estado Preparado con todos los pasos
+            Planificados.
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={handleSubmit}>
@@ -266,6 +297,20 @@ function ExecutionDialog({
                 <SelectItem value="REAL">Ejecución real</SelectItem>
               </SelectContent>
             </Select>
+            {blocked ? (
+              <p className="text-xs text-amber-300">
+                {readiness.stale
+                  ? "Recalcula el readiness en el hub antes de crear la ejecución."
+                  : readiness.blockers.join(" · ") ||
+                    "Completa el readiness para crear simulacro o real."}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {type === "SIMULACRO"
+                  ? "Simulacro: permite Simulado/Omitido y evidencia opcional."
+                  : "Real: sin Simulado/Omitido; evidencia obligatoria al cerrar el paso."}
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="execution-name">Nombre (opcional)</Label>
@@ -273,15 +318,12 @@ function ExecutionDialog({
           </div>
           <div className="space-y-2">
             <Label>Zona horaria</Label>
-            <TimezoneCombobox
-              value={timezone}
-              onValueChange={setTimezone}
-            />
+            <TimezoneCombobox value={timezone} onValueChange={setTimezone} />
           </div>
           <FormError message={error} />
-          <Button className="w-full" disabled={loading}>
+          <Button className="w-full" disabled={loading || blocked}>
             {loading ? <LoaderCircle className="size-4 animate-spin" /> : null}
-            {loading ? "Creando…" : "Crear ejecución"}
+            {loading ? "Creando…" : "Crear e ir a consola"}
           </Button>
         </form>
       </DialogContent>

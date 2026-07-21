@@ -10,14 +10,15 @@ export const eventStatusSchema = z.enum([
   "CANCELADO",
 ]);
 export const stepStatusSchema = z.enum([
-  "PENDIENTE",
-  "DISPONIBLE",
-  "EN_EJECUCION",
+  "PLANIFICADO",
+  "INICIADO",
+  "EXITOSO",
   "FALLIDO",
-  "FINALIZADO",
   "OMITIDO",
   "SIMULADO",
-  "CANCELADO",
+  "PENDIENTE_APROBACION",
+  "APROBADO",
+  "RECHAZADO",
 ]);
 export const executionModeSchema = z.enum(["EJECUTAR", "SIMULAR", "OMITIR"]);
 export const iterationResultSchema = z.enum([
@@ -84,6 +85,9 @@ export const iterationSchema = z.object({
   result: iterationResultSchema.optional(),
   executorClerkUserId: z.string().min(1),
   comments: z.string().max(4000).optional(),
+  /** Evidencias (URLs Blob + metadatos). */
+  evidenceUrls: z.array(z.string().url()).default([]),
+  forced: z.boolean().default(false),
   createdAt: z.date(),
 });
 

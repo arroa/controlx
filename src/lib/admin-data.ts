@@ -25,6 +25,14 @@ export {
   type EventActorSummary,
 } from "@/lib/event-actors";
 
+/** Cualquier cambio de preparación invalida el readiness cacheado. */
+async function touchPrepReadiness(eventId: string) {
+  const { markEventReadinessStale } = await import(
+    "@/lib/event-readiness-store"
+  );
+  await markEventReadinessStale(eventId);
+}
+
 const timezoneSchema = z
   .string()
   .trim()
@@ -219,7 +227,13 @@ export type ExecutionSummary = {
   name: string;
   type: "SIMULACRO" | "REAL";
   timezone: string;
-  status: "BORRADOR" | "PREPARADO" | "EN_EJECUCION" | "FINALIZADO";
+  status:
+    | "BORRADOR"
+    | "PREPARADO"
+    | "EN_EJECUCION"
+    | "PAUSADO"
+    | "FINALIZADO"
+    | "CANCELADO";
   createdAt: string;
 };
 
@@ -337,6 +351,12 @@ type EventDocument = {
   timezone: string;
   dayDStartAt?: Date | null;
   status: "BORRADOR" | "ACTIVO";
+  readiness?: {
+    stale: boolean;
+    computedAt: Date | null;
+    canStart: boolean;
+    blockers: string[];
+  };
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -349,7 +369,7 @@ type ExecutionDocument = {
   name: string;
   type: "SIMULACRO" | "REAL";
   timezone: string;
-  status: "BORRADOR" | "PREPARADO" | "EN_EJECUCION" | "FINALIZADO";
+  status: ExecutionSummary["status"];
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -813,6 +833,12 @@ export async function createEvent(
     timezone: input.timezone,
     dayDStartAt: input.dayDStartAt ? new Date(input.dayDStartAt) : null,
     status: "BORRADOR",
+    readiness: {
+      stale: true,
+      computedAt: null,
+      canStart: false,
+      blockers: ["Pendiente calcular readiness"],
+    },
     createdBy: actorId,
     createdAt: now,
     updatedAt: now,
@@ -859,6 +885,8 @@ export async function updateEvent(
     .findOneAndUpdate({ _id: id }, { $set }, { returnDocument: "after" });
   if (!result) throw new Error("El evento no existe.");
 
+  await touchPrepReadiness(eventId);
+
   const executionCount = await database
     .collection<ExecutionDocument>("eventInstances")
     .countDocuments({ eventId: id });
@@ -880,6 +908,11 @@ export async function createExecution(
   input: z.infer<typeof executionInputSchema>,
   actorId: string,
 ): Promise<ExecutionSummary> {
+  const { assertCanCreateExecution, materializeExecutionSteps } = await import(
+    "@/lib/execution-runtime"
+  );
+  await assertCanCreateExecution(input.eventId, input.type);
+
   const database = await getDatabase();
   const eventId = new ObjectId(input.eventId);
   const event = await database
@@ -898,7 +931,7 @@ export async function createExecution(
     name: input.name?.trim() || `${event.name} · ${typeLabel}`,
     type: input.type,
     timezone: input.timezone?.trim() || event.timezone,
-    status: "BORRADOR",
+    status: "PREPARADO",
     createdBy: actorId,
     createdAt: now,
     updatedAt: now,
@@ -906,6 +939,12 @@ export async function createExecution(
   const result = await database
     .collection<ExecutionDocument>("eventInstances")
     .insertOne(document);
+
+  await materializeExecutionSteps({
+    executionId: result.insertedId,
+    eventId: input.eventId,
+    actorId,
+  });
 
   return {
     id: result.insertedId.toHexString(),
@@ -1388,6 +1427,8 @@ export async function upsertEventActor(
     createdAt: now,
   };
   const inserted = await collection.insertOne(document);
+  await touchPrepReadiness(eventId);
+
   return toEventActorSummary({ ...document, _id: inserted.insertedId });
 }
 
@@ -1456,6 +1497,8 @@ export async function updateEventActor(
     { returnDocument: "after" },
   );
   if (!result) throw new Error("El actor no existe.");
+  await touchPrepReadiness(eventId);
+
   return toEventActorSummary(result);
 }
 
@@ -1485,6 +1528,7 @@ export async function deactivateEventActor(
       },
     );
   if (!result.matchedCount) throw new Error("El actor no existe.");
+  await touchPrepReadiness(eventId);
 }
 
 export async function createWorkstream(
@@ -1517,6 +1561,8 @@ export async function createWorkstream(
     updatedAt: now,
   };
   const result = await collection.insertOne(document);
+
+  await touchPrepReadiness(eventId);
 
   return {
     id: result.insertedId.toHexString(),
@@ -1563,6 +1609,8 @@ export async function createBlock(
   };
   const result = await collection.insertOne(document);
 
+  await touchPrepReadiness(eventId);
+
   return {
     id: result.insertedId.toHexString(),
     eventId,
@@ -1604,6 +1652,8 @@ export async function updateWorkstream(
     { returnDocument: "after" },
   );
   if (!result) throw new Error("El workstream no existe.");
+  await touchPrepReadiness(eventId);
+
   return {
     id: result._id!.toHexString(),
     eventId,
@@ -1645,6 +1695,7 @@ export async function deleteWorkstream(
     .collection<WorkstreamDocument>("workstreams")
     .deleteOne({ _id: id, eventId: eventObjectId });
   if (!result.deletedCount) throw new Error("El workstream no existe.");
+  await touchPrepReadiness(eventId);
 }
 
 export async function updateBlock(
@@ -1678,6 +1729,8 @@ export async function updateBlock(
     { returnDocument: "after" },
   );
   if (!result) throw new Error("El bloque no existe.");
+  await touchPrepReadiness(eventId);
+
   return {
     id: result._id!.toHexString(),
     eventId,
@@ -1719,6 +1772,7 @@ export async function deleteBlock(
     .collection<BlockDocument>("blocks")
     .deleteOne({ _id: id, eventId: eventObjectId });
   if (!result.deletedCount) throw new Error("El bloque no existe.");
+  await touchPrepReadiness(eventId);
 }
 
 export async function createActivity(
@@ -1762,6 +1816,8 @@ export async function createActivity(
     updatedAt: now,
   };
   const result = await collection.insertOne(document);
+
+  await touchPrepReadiness(eventId);
 
   return {
     id: result.insertedId.toHexString(),
@@ -1817,6 +1873,8 @@ export async function createDesignStep(
     updatedAt: now,
   };
   const result = await collection.insertOne(document);
+
+  await touchPrepReadiness(eventId);
 
   return {
     id: result.insertedId.toHexString(),
@@ -2045,6 +2103,8 @@ export async function assignStepsExecutor(
   const steps = await collection
     .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
     .toArray();
+  await touchPrepReadiness(eventId);
+
   return steps.map((step) => toDesignStepSummary(eventId, step));
 }
 
@@ -2070,6 +2130,7 @@ export async function unassignStepsExecutor(
   const steps = await collection
     .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
     .toArray();
+  await touchPrepReadiness(eventId);
   return steps.map((step) => toDesignStepSummary(eventId, step));
 }
 
@@ -2135,6 +2196,8 @@ export async function assignStepsApprover(
   const steps = await collection
     .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
     .toArray();
+  await touchPrepReadiness(eventId);
+
   return steps.map((step) => toDesignStepSummary(eventId, step));
 }
 
@@ -2164,6 +2227,8 @@ export async function unassignStepsApprover(
   const steps = await collection
     .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
     .toArray();
+  await touchPrepReadiness(eventId);
+
   return steps.map((step) => toDesignStepSummary(eventId, step));
 }
 
@@ -2190,6 +2255,8 @@ export async function updateActivity(
       { returnDocument: "after" },
     );
   if (!result) throw new Error("La actividad no existe.");
+  await touchPrepReadiness(eventId);
+
   return toActivitySummary(eventId, result);
 }
 
@@ -2214,6 +2281,7 @@ export async function deleteActivity(
   await database
     .collection<ActivityDocument>("activities")
     .deleteOne({ _id: id, eventId: eventObjectId });
+  await touchPrepReadiness(eventId);
 }
 
 export async function moveActivity(
@@ -2268,6 +2336,8 @@ export async function moveActivity(
     })
     .sort({ order: 1, createdAt: 1 })
     .toArray();
+  await touchPrepReadiness(eventId);
+
   return refreshed.map((item) => toActivitySummary(eventId, item));
 }
 
@@ -2294,6 +2364,8 @@ export async function updateDesignStep(
       { returnDocument: "after" },
     );
   if (!result) throw new Error("El paso no existe.");
+  await touchPrepReadiness(eventId);
+
   return toDesignStepSummary(eventId, result);
 }
 
@@ -2330,6 +2402,8 @@ export async function deleteDesignStep(
     eventId: eventObjectId,
   });
   if (!result.deletedCount) throw new Error("El paso no existe.");
+  await touchPrepReadiness(eventId);
+
   return { deletedActivityId: null };
 }
 
@@ -2404,6 +2478,8 @@ async function loadDesignedPairRefs(
     seen.add(key);
     pairs.push({ workstreamId, blockId });
   }
+  await touchPrepReadiness(eventId);
+
   return pairs;
 }
 
@@ -2497,6 +2573,8 @@ export async function createGate(
     updatedAt: now,
   };
   const result = await collection.insertOne(document);
+  await touchPrepReadiness(eventId);
+
   return toGateSummary(eventId, { ...document, _id: result.insertedId });
 }
 
@@ -2549,6 +2627,8 @@ export async function updateGate(
     { returnDocument: "after" },
   );
   if (!result) throw new Error("El gate no existe.");
+  await touchPrepReadiness(eventId);
+
   return toGateSummary(eventId, result);
 }
 
@@ -2576,6 +2656,7 @@ export async function deleteGate(
     { eventId: eventObjectId, requiresGateIds: id },
     { $pull: { requiresGateIds: id }, $set: { updatedAt: new Date() } },
   );
+  await touchPrepReadiness(eventId);
 }
 
 export async function updateStepPlanning(

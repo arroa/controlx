@@ -16,6 +16,7 @@ import {
   getEventWorkspaceRole,
 } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
+import { getEventReadinessSnapshot } from "@/lib/event-readiness";
 
 export default async function EventPage({
   params,
@@ -35,6 +36,9 @@ export default async function EventPage({
 
   const workspace = await getEventWorkspace(eventId);
   if (!workspace) notFound();
+
+  const readiness = await getEventReadinessSnapshot(eventId);
+  if (!readiness) notFound();
 
   const canManageAdmins = role === "SuperAdmin" || role === "OrgAdmin";
   const RoleIcon =
@@ -107,6 +111,7 @@ export default async function EventPage({
           event={workspace.event}
           initialAdmins={workspace.admins}
           initialExecutions={workspace.executions}
+          readiness={readiness}
           canManageAdmins={canManageAdmins}
         />
       </main>
