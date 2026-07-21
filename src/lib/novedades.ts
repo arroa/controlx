@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ObjectId } from "mongodb";
+import { ObjectId, type Collection } from "mongodb";
 import { z } from "zod";
 
 import {
@@ -9,6 +9,11 @@ import {
   type NovedadItem,
 } from "@/lib/novedades-types";
 import { getDatabase, isMongoConfigured } from "@/lib/mongodb";
+import {
+  RELEASE_NOTES,
+  RELEASE_NOTES_VERSION,
+  releaseNotesChangesText,
+} from "@/lib/release-notes";
 
 export type { NovedadIcon, NovedadItem } from "@/lib/novedades-types";
 export { NOVEDAD_ICON_LABELS, NOVEDAD_ICONS } from "@/lib/novedades-types";
@@ -29,6 +34,8 @@ export const novedadUpdateSchema = z.object({
 
 type NovedadDocument = {
   _id?: ObjectId;
+  /** Idempotencia del seed por versión de release notes. */
+  seedKey?: string;
   title: string;
   changes: string;
   icon: NovedadIcon;
@@ -56,27 +63,44 @@ export function canManageNovedades(user: {
   return user.isSuperAdmin;
 }
 
+async function ensureReleaseNotesNovedad(
+  collection: Collection<NovedadDocument>,
+) {
+  const existing = await collection.findOne({
+    seedKey: RELEASE_NOTES_VERSION,
+  });
+  if (existing) return;
+
+  const now = new Date();
+  const payload: NovedadDocument = {
+    seedKey: RELEASE_NOTES_VERSION,
+    title: RELEASE_NOTES.novedadTitle,
+    changes: releaseNotesChangesText(),
+    icon: RELEASE_NOTES.novedadIcon,
+    publishedAt: now,
+    createdBy: "system",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  // Actualiza el seed legacy (sin seedKey) si es el del sistema.
+  const legacy = await collection.findOne({
+    createdBy: "system",
+    seedKey: { $exists: false },
+  });
+  if (legacy?._id) {
+    await collection.updateOne({ _id: legacy._id }, { $set: payload });
+    return;
+  }
+
+  await collection.insertOne(payload);
+}
+
 export async function listNovedades(limit = 200): Promise<NovedadItem[]> {
   if (!isMongoConfigured()) return [];
   const database = await getDatabase();
   const collection = database.collection<NovedadDocument>("novedades");
-  const count = await collection.countDocuments();
-  if (count === 0) {
-    const now = new Date();
-    await collection.insertOne({
-      title: "Actores, Roles y preparación del evento",
-      changes: [
-        "Mapa de actores en Setup (nombre, email, área y roles múltiples).",
-        "Nueva estación Roles entre Diseño y Plan: asignación de ejecutores a pasos.",
-        "Tabla de pasos con Workstream / Actividad / Paso, filtros pendientes/asignados y ABM.",
-        "Mejoras de UX en Tiempos del planificador y guardado del Día D.",
-      ].join("\n"),
-      icon: "roles",
-      publishedAt: now,
-      createdBy: "system",
-      createdAt: now,
-    });
-  }
+  await ensureReleaseNotesNovedad(collection);
   const rows = await collection
     .find({})
     .sort({ publishedAt: -1 })
