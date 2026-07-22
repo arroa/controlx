@@ -16,6 +16,16 @@ export default function manifest(): MetadataRoute.Manifest {
         src: "/icon.svg",
         sizes: "any",
         type: "image/svg+xml",
+        purpose: "any",
+      },
+    ],
+    shortcuts: [
+      {
+        name: "Mi turno",
+        short_name: "Ejecutar",
+        description: "Abrir el cockpit de ejecutor",
+        url: "/",
+        icons: [{ src: "/icon.svg", sizes: "any" }],
       },
     ],
   };

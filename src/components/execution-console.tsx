@@ -31,8 +31,8 @@ const STATUS_TONE: Record<RuntimeStepStatus, string> = {
   INICIADO: "border-sky-500/40 bg-sky-500/15 text-sky-200",
   EXITOSO: "border-emerald-500/40 bg-emerald-500/15 text-emerald-200",
   FALLIDO: "border-rose-500/40 bg-rose-500/15 text-rose-200",
-  OMITIDO: "border-zinc-500/40 bg-zinc-500/15 text-zinc-300",
-  SIMULADO: "border-violet-500/40 bg-violet-500/15 text-violet-200",
+  OMITIDO: "border-emerald-500/40 bg-emerald-500/15 text-emerald-200",
+  SIMULADO: "border-emerald-500/40 bg-emerald-500/15 text-emerald-200",
   PENDIENTE_APROBACION: "border-amber-500/40 bg-amber-500/15 text-amber-200",
   APROBADO: "border-emerald-500/40 bg-emerald-500/15 text-emerald-200",
   RECHAZADO: "border-orange-500/40 bg-orange-500/15 text-orange-200",
@@ -188,8 +188,6 @@ export function ExecutionConsole({
     window.setTimeout(() => setToast(""), 2000);
   }
 
-  const isSimulacro = detail.type === "SIMULACRO";
-
   return (
     <div className="relative flex min-h-0 flex-1 flex-col gap-4">
       {toast ? (
@@ -203,6 +201,16 @@ export function ExecutionConsole({
           {detail.type}
         </Badge>
         <Badge variant="outline">{detail.status}</Badge>
+        {detail.anchorStartAt ? (
+          <Badge variant="outline">
+            T0{" "}
+            {new Date(detail.anchorStartAt).toLocaleString("es", {
+              dateStyle: "short",
+              timeStyle: "short",
+            })}
+            {detail.iteration > 1 ? ` · #${detail.iteration}` : ""}
+          </Badge>
+        ) : null}
         {!detail.blobConfigured ? (
           <Badge variant="outline" className="text-amber-300">
             Blob no configurado
@@ -286,8 +294,13 @@ export function ExecutionConsole({
               <div>
                 <h2 className="text-lg font-semibold">{selected.name}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {selected.description || "Sin descripción"}
+                  {selected.description || "Sin descripción corta"}
                 </p>
+                {selected.longDescription ? (
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                    {selected.longDescription}
+                  </p>
+                ) : null}
                 <p className="mt-2 text-xs text-muted-foreground">
                   Ejecutor: {selected.executorName ?? "—"}
                   {selected.approverActorIds.length
@@ -339,28 +352,6 @@ export function ExecutionConsole({
                     </Button>
                   </>
                 )}
-                {isSimulacro &&
-                  (selected.status === "PLANIFICADO" ||
-                    selected.status === "INICIADO") && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={() => void runAction("simulate")}
-                      >
-                        Simulado
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => void runAction("omit")}
-                      >
-                        Omitido
-                      </Button>
-                    </>
-                  )}
                 {selected.status === "PENDIENTE_APROBACION" && (
                   <>
                     <Button

@@ -10,7 +10,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -113,7 +119,7 @@ function summarizeChecks(
         "Hay bloqueos")
       : warn > 0
         ? (checks.find((check) => check.tone === "warn")?.detail ??
-          "Hay avisos")
+          "Hay avisos (no bloquean)")
         : total > 0
           ? "Estación en verde"
           : "Sin datos";
@@ -148,17 +154,24 @@ function globalStats(data: EventReadiness) {
     ...data.plan,
   ];
   const checksReady = checks.filter((check) => check.tone === "ready").length;
+  const checksWarn = checks.filter((check) => check.tone === "warn").length;
+  const checksBlocked = checks.filter(
+    (check) => check.tone === "blocked",
+  ).length;
+  // Avisos no penalizan: el % mide qué tan “ejecutable” está (no la perfección).
+  const scoreBasis = checksReady + checksWarn + checksBlocked;
+  const scorePass = checksReady + checksWarn;
   return {
     stationsReady,
     stationsBlocked,
     stationsWarn,
     stationsTotal: 4,
     checksReady,
+    checksWarn,
+    checksBlocked,
     checksTotal: checks.length,
     score:
-      checks.length === 0
-        ? 0
-        : Math.round((checksReady / checks.length) * 100),
+      scoreBasis === 0 ? 0 : Math.round((scorePass / scoreBasis) * 100),
   };
 }
 
@@ -238,13 +251,20 @@ function StationTicket({
   );
 }
 
-export function EventReadinessBoard({
-  readiness: initial,
-  onReadinessChange,
-}: {
-  readiness: EventReadiness;
-  onReadinessChange?: (next: EventReadiness) => void;
-}) {
+export type EventReadinessBoardHandle = {
+  recompute: () => void;
+};
+
+export const EventReadinessBoard = forwardRef<
+  EventReadinessBoardHandle,
+  {
+    readiness: EventReadiness;
+    onReadinessChange?: (next: EventReadiness) => void;
+  }
+>(function EventReadinessBoard(
+  { readiness: initial, onReadinessChange },
+  ref,
+) {
   const [readiness, setReadiness] = useState(initial);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -337,6 +357,12 @@ export function EventReadinessBoard({
     setBusy(false);
   }
 
+  useImperativeHandle(ref, () => ({
+    recompute: () => {
+      void recompute();
+    },
+  }));
+
   function closeModal(nextOpen: boolean) {
     if (busy) return;
     setOpen(nextOpen);
@@ -348,6 +374,7 @@ export function EventReadinessBoard({
   }
 
   const totals = result ? globalStats(result) : null;
+  const boardTotals = globalStats(readiness);
 
   return (
     <section className="space-y-4">
@@ -360,6 +387,19 @@ export function EventReadinessBoard({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <p
+            className={cn(
+              "mr-1 font-mono text-2xl font-semibold tabular-nums",
+              readiness.stale
+                ? "text-amber-200"
+                : readiness.canStart
+                  ? "text-emerald-300"
+                  : "text-rose-300",
+            )}
+          >
+            {boardTotals.score}
+            <span className="text-sm font-medium text-muted-foreground">%</span>
+          </p>
           <Badge
             variant={
               readiness.canStart && !readiness.stale ? "default" : "outline"
@@ -393,20 +433,11 @@ export function EventReadinessBoard({
           Hay cambios de preparación. Recalcula el readiness antes de crear
           simulacro o ejecución real.
         </div>
-      ) : readiness.canStart ? (
-        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-100">
-          Preparación completa. Puedes crear simulacro o ejecución real.
-          {readiness.computedAt ? (
-            <span className="mt-1 block text-xs text-emerald-200/70">
-              Calculado {new Date(readiness.computedAt).toLocaleString("es")}
-            </span>
-          ) : null}
-        </div>
-      ) : (
+      ) : !readiness.canStart ? (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-100">
           {readiness.blockers.join(" · ")}
         </div>
-      )}
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StationTicket
@@ -622,14 +653,15 @@ export function EventReadinessBoard({
                 </div>
                 <div className="rounded-md border bg-background/40 px-2 py-1.5">
                   <p className="font-mono text-sm tabular-nums">
-                    {totals.checksReady}/{totals.checksTotal}
+                    {totals.checksReady + totals.checksWarn}/
+                    {totals.checksTotal}
                   </p>
                   <p className="text-muted-foreground">checks OK</p>
                 </div>
                 <div className="rounded-md border bg-background/40 px-2 py-1.5">
                   <p className="font-mono text-sm tabular-nums">
-                    {totals.stationsBlocked}
-                    {totals.stationsWarn ? `+${totals.stationsWarn}` : ""}
+                    {totals.checksBlocked}
+                    {totals.checksWarn ? `+${totals.checksWarn}` : ""}
                   </p>
                   <p className="text-muted-foreground">bloqueo/aviso</p>
                 </div>
@@ -662,4 +694,4 @@ export function EventReadinessBoard({
       </Dialog>
     </section>
   );
-}
+});

@@ -1,5 +1,7 @@
+import type { NovedadIcon } from "@/lib/novedades-types";
+
 /** Bump this when you want the login modal (and seed de novedades) to refrescarse. */
-export const RELEASE_NOTES_VERSION = "2026-07-20-roles";
+export const RELEASE_NOTES_VERSION = "2026-07-21-cockpit";
 
 export const RELEASE_NOTES_STORAGE_KEY = `controlx:release-notes-dismissed:${RELEASE_NOTES_VERSION}`;
 
@@ -13,39 +15,49 @@ export const RELEASE_NOTES: {
   summary: string;
   /** Título en la tabla de /novedades */
   novedadTitle: string;
-  novedadIcon: "roles";
+  novedadIcon: NovedadIcon;
   items: ReleaseNoteItem[];
 } = {
   title: "Hay cambios nuevos en ControlX",
   summary:
-    "Actualizamos la preparación del evento: actores, roles y un canal de novedades.",
-  novedadTitle: "Actores, Roles, aprobadores y canal de novedades",
-  novedadIcon: "roles",
+    "Llegó el cockpit del ejecutor en el Día D: mapa vertical, acciones claras y evidencias opcionales.",
+  novedadTitle: "Cockpit del ejecutor y mapa del Día D",
+  novedadIcon: "planner",
   items: [
     {
-      title: "Mapa de actores (Setup)",
+      title: "Cockpit PWA (/run)",
       detail:
-        "Alta, edición y baja de actores con nombre, email, área y roles del evento (incluye Clerk en el alta).",
+        "Vista móvil para el ejecutor: dónde estás en el Día D, filtros por workstream y Solo míos.",
     },
     {
-      title: "Roles",
+      title: "Mapa de tiempos vertical",
       detail:
-        "Nueva estación entre Diseño y Plan: una sola lista de pasos con columnas de ejecutor y aprobadores.",
+        "Horas hacia abajo, columnas por paso, columna de horas y fila del día fijas al desplazar.",
     },
     {
-      title: "Ejecutores y aprobadores",
+      title: "Acciones del paso",
       detail:
-        "Toggle en el mapa de actores para filtrar Ejecutores / Aprobadores (SteerCo incluido). Un ejecutor por paso; varios aprobadores.",
+        "Botón ? con flor de acciones: Info, Iniciar, Exitoso y Fallido. Adjuntos opcionales al cerrar.",
     },
     {
-      title: "Novedades",
+      title: "Descripciones corta y larga",
       detail:
-        "Historial de cambios del producto en el menú superior (ABM solo SuperAdmin).",
+        "En Diseño cada paso tiene descripción corta y larga; Info las muestra en ejecución.",
     },
     {
-      title: "Planificador",
+      title: "Colores del mapa",
       detail:
-        "Ajustes de UX en Tiempos y guardado del Día D.",
+        "Azul pendiente, azul claro siguiente, gris ajeno, verde exitoso, rojo fallido.",
+    },
+    {
+      title: "Simulacro simplificado",
+      detail:
+        "Sin botones Omitido/Simulado en la flor: el tipo de ejecución ya indica que es simulacro.",
+    },
+    {
+      title: "Impersonación de actor (dev)",
+      detail:
+        "Mock para actuar como un actor del mapa (CONTROLX_DEV_ACTOR_IMPERSONATION).",
     },
   ],
 };

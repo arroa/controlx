@@ -153,7 +153,7 @@ export async function computeEventReadiness(
           ? "Sin pasos"
           : withoutApprover === 0
             ? "Todos los pasos tienen aprobador"
-            : `${withoutApprover} pasos sin aprobador`,
+            : `Aviso: ${withoutApprover} pasos sin aprobador (opcional)`,
       tone:
         stepCount === 0
           ? "empty"

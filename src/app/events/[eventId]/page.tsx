@@ -9,13 +9,19 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
+import { DevActorSwitcher } from "@/components/dev-actor-switcher";
 import { EventWorkspace } from "@/components/event-workspace";
 import { Badge } from "@/components/ui/badge";
 import {
   getEventWorkspace,
   getEventWorkspaceRole,
+  listEventActors,
 } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
+import {
+  canUseDevActorImpersonation,
+  getEffectiveEventActor,
+} from "@/lib/dev-impersonation";
 import { getEventReadinessSnapshot } from "@/lib/event-readiness";
 
 export default async function EventPage({
@@ -47,6 +53,12 @@ export default async function EventPage({
       : role === "OrgAdmin"
         ? Building2
         : CalendarRange;
+
+  const showImpersonation = canUseDevActorImpersonation(user);
+  const actors = showImpersonation ? await listEventActors(eventId) : [];
+  const { actor, impersonating } = showImpersonation
+    ? await getEffectiveEventActor(eventId, user)
+    : { actor: null, impersonating: false };
 
   return (
     <div className="min-h-screen">
@@ -87,6 +99,13 @@ export default async function EventPage({
               <RoleIcon className="size-3" />
               {role}
             </Badge>
+            {showImpersonation ? (
+              <DevActorSwitcher
+                eventId={eventId}
+                actors={actors}
+                selectedActorId={impersonating && actor ? actor.id : null}
+              />
+            ) : null}
             <AuthHeader />
           </div>
         </div>

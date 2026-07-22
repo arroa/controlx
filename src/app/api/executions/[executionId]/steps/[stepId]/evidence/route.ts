@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { canAccessEvent } from "@/lib/admin-data";
 import { requireUser } from "@/lib/api-auth";
+import { canAttachStepEvidence, canViewExecution } from "@/lib/execution-auth";
 import {
   addStepEvidence,
   getExecutionDetail,
@@ -21,11 +21,26 @@ export async function POST(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "No encontrada." }, { status: 404 });
   }
 
-  const canManage =
-    authResult.user.isSuperAdmin ||
-    (await canAccessEvent(authResult.user.email, existing.eventId));
-  if (!canManage) {
+  const canView = await canViewExecution(authResult.user, existing.eventId);
+  if (!canView) {
     return NextResponse.json({ error: "Sin acceso." }, { status: 403 });
+  }
+
+  const step = existing.steps.find((item) => item.id === stepId);
+  if (!step) {
+    return NextResponse.json({ error: "Paso no encontrado." }, { status: 404 });
+  }
+
+  const canAttach = await canAttachStepEvidence({
+    user: authResult.user,
+    eventId: existing.eventId,
+    step,
+  });
+  if (!canAttach) {
+    return NextResponse.json(
+      { error: "No puedes adjuntar evidencia a este paso." },
+      { status: 403 },
+    );
   }
 
   const form = await request.formData().catch(() => null);
@@ -38,7 +53,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     typeof captionRaw === "string" ? captionRaw : undefined;
 
   try {
-    const step = await addStepEvidence({
+    const next = await addStepEvidence({
       executionId,
       stepId,
       file,
@@ -46,7 +61,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       actorId: authResult.user.id,
       actorLabel: authResult.user.email,
     });
-    return NextResponse.json({ step });
+    return NextResponse.json({ step: next });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No fue posible." },

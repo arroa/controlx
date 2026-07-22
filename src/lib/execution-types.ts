@@ -88,7 +88,10 @@ export type RuntimeStepSummary = {
   activityId: string;
   activityName: string;
   name: string;
+  /** Descripción corta (tarjeta / resumen). */
   description: string;
+  /** Descripción larga (instrucciones del ejecutor). */
+  longDescription: string;
   order: number;
   plannedStartAt: string | null;
   estimatedDurationMinutes: number | null;
@@ -111,6 +114,8 @@ export type ExecutionDetail = {
   name: string;
   type: "SIMULACRO" | "REAL";
   timezone: string;
+  anchorStartAt: string | null;
+  iteration: number;
   status: ExecutionInstanceStatus;
   createdAt: string;
   steps: RuntimeStepSummary[];
@@ -122,8 +127,9 @@ export const RUNTIME_STEP_STATUS_LABELS: Record<RuntimeStepStatus, string> = {
   INICIADO: "Iniciado",
   EXITOSO: "Exitoso",
   FALLIDO: "Fallido",
-  OMITIDO: "Omitido",
-  SIMULADO: "Simulado",
+  /** Legacy / raro: se muestra como omitido simulando el éxito. */
+  OMITIDO: "Omitido · simulando éxito",
+  SIMULADO: "Omitido · simulando éxito",
   PENDIENTE_APROBACION: "Pendiente aprobación",
   APROBADO: "Aprobado",
   RECHAZADO: "Rechazado",

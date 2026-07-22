@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { canAccessEvent } from "@/lib/admin-data";
 import { requireUser } from "@/lib/api-auth";
+import { canViewExecution } from "@/lib/execution-auth";
 import { getExecutionDetail } from "@/lib/execution-runtime";
 
 type RouteParams = {
@@ -18,10 +18,8 @@ export async function GET(_request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "No encontrada." }, { status: 404 });
   }
 
-  const canManage =
-    authResult.user.isSuperAdmin ||
-    (await canAccessEvent(authResult.user.email, detail.eventId));
-  if (!canManage) {
+  const canView = await canViewExecution(authResult.user, detail.eventId);
+  if (!canView) {
     return NextResponse.json({ error: "Sin acceso." }, { status: 403 });
   }
 

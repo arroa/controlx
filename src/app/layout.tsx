@@ -21,6 +21,14 @@ export const metadata: Metadata = {
   description:
     "Orquestación, ejecución y gobierno de eventos operativos críticos.",
   applicationName: "ControlX",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "ControlX",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export default function RootLayout({

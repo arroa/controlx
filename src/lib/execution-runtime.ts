@@ -6,9 +6,11 @@ import { z } from "zod";
 import { getEventDesign } from "@/lib/admin-data";
 import {
   EVIDENCE_MAX_PER_STEP,
+  isBlobConfigured,
   uploadEvidenceBlob,
 } from "@/lib/evidence-blob";
 import { assertCanCreateExecution } from "@/lib/event-readiness";
+import { computeRuntimePlannedStarts } from "@/lib/execution-schedule";
 import {
   runtimeStepActionSchema,
   stepIsOverdue,
@@ -31,6 +33,9 @@ type ExecutionDoc = {
   name: string;
   type: "SIMULACRO" | "REAL";
   timezone: string;
+  anchorStartAt?: Date | null;
+  anchorDayKey?: string | null;
+  iteration?: number;
   status: ExecutionDetail["status"];
   createdBy: string;
   createdAt: Date;
@@ -50,6 +55,7 @@ type RuntimeStepDoc = {
   activityName: string;
   name: string;
   description: string;
+  longDescription?: string;
   order: number;
   plannedStartAt: Date | null;
   estimatedDurationMinutes: number | null;
@@ -85,6 +91,7 @@ function toStepSummary(doc: RuntimeStepDoc): RuntimeStepSummary {
     activityName: doc.activityName,
     name: doc.name,
     description: doc.description,
+    longDescription: doc.longDescription ?? "",
     order: doc.order,
     plannedStartAt,
     estimatedDurationMinutes: doc.estimatedDurationMinutes,
@@ -105,34 +112,19 @@ function requireComment(
   action: RuntimeStepAction,
   comment: string | undefined,
 ) {
-  const needs = new Set<RuntimeStepAction>([
-    "complete_fail",
-    "omit",
-    "simulate",
-    "reject",
-    "force_success",
-  ]);
+  // Fail/omit/simulate: comentario opcional por ahora (adjuntos también).
+  const needs = new Set<RuntimeStepAction>(["reject", "force_success"]);
   if (needs.has(action) && !comment?.trim()) {
     throw new Error("Este cambio de estado requiere un comentario.");
   }
 }
 
-function requireEvidenceForReal(input: {
+function requireEvidenceForReal(_input: {
   action: RuntimeStepAction;
   executionType: "SIMULACRO" | "REAL";
   evidenceCount: number;
 }) {
-  if (input.executionType !== "REAL") return;
-  if (
-    input.action === "complete_success" ||
-    input.action === "complete_fail"
-  ) {
-    if (input.evidenceCount < 1) {
-      throw new Error(
-        "En ejecución real debes adjuntar al menos una evidencia antes de cerrar el paso.",
-      );
-    }
-  }
+  // Obligatoriedad de evidencias pendiente de decisión de producto.
 }
 
 function nextStatus(input: {
@@ -223,6 +215,8 @@ export async function materializeExecutionSteps(input: {
   executionId: ObjectId;
   eventId: string;
   actorId: string;
+  anchorStartAt: Date;
+  designDayDStartAt: string | null;
 }) {
   const design = await getEventDesign(input.eventId);
   if (!design) throw new Error("No hay diseño para materializar.");
@@ -248,6 +242,25 @@ export async function materializeExecutionSteps(input: {
     designRows.map((row) => [row.step.id, row.runtimeId]),
   );
 
+  const plannedByDesignId = computeRuntimePlannedStarts({
+    steps: designRows.map(({ step }) => ({
+      id: step.id,
+      plannedStartAt: step.plannedStartAt,
+      estimatedDurationMinutes: step.estimatedDurationMinutes,
+      dependencyStepIds: step.dependencyStepIds,
+      producesGateId: step.producesGateId,
+      requiresGateIds: step.requiresGateIds,
+      workstreamId: step.workstreamId,
+      blockId: step.blockId,
+    })),
+    gates: design.gates.map((gate) => ({
+      id: gate.id,
+      plannedOpenAt: gate.plannedOpenAt,
+    })),
+    designDayDStartAt: input.designDayDStartAt,
+    instanceAnchorStartAt: input.anchorStartAt,
+  });
+
   const docs: RuntimeStepDoc[] = designRows.map(
     ({ pair, activity, step, runtimeId }) => ({
       _id: runtimeId,
@@ -262,10 +275,9 @@ export async function materializeExecutionSteps(input: {
       activityName: activity.name,
       name: step.name,
       description: step.description,
+      longDescription: step.longDescription ?? "",
       order: step.order,
-      plannedStartAt: step.plannedStartAt
-        ? new Date(step.plannedStartAt)
-        : null,
+      plannedStartAt: plannedByDesignId.get(step.id) ?? input.anchorStartAt,
       estimatedDurationMinutes: step.estimatedDurationMinutes,
       dependencyStepIds: step.dependencyStepIds
         .map((id) => designToRuntime.get(id))
@@ -356,10 +368,12 @@ export async function getExecutionDetail(
     name: execution.name,
     type: execution.type,
     timezone: execution.timezone,
+    anchorStartAt: execution.anchorStartAt?.toISOString() ?? null,
+    iteration: execution.iteration ?? 1,
     status: execution.status,
     createdAt: execution.createdAt.toISOString(),
     steps: steps.map(toStepSummary),
-    blobConfigured: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+    blobConfigured: isBlobConfigured(),
   };
 }
 

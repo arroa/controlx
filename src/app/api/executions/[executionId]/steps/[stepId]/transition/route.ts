@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { canAccessEvent } from "@/lib/admin-data";
 import { requireUser } from "@/lib/api-auth";
+import { canOperateExecutionStep, canViewExecution } from "@/lib/execution-auth";
 import {
   getExecutionDetail,
   stepTransitionSchema,
@@ -22,11 +22,14 @@ export async function POST(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "No encontrada." }, { status: 404 });
   }
 
-  const canManage =
-    authResult.user.isSuperAdmin ||
-    (await canAccessEvent(authResult.user.email, existing.eventId));
-  if (!canManage) {
+  const canView = await canViewExecution(authResult.user, existing.eventId);
+  if (!canView) {
     return NextResponse.json({ error: "Sin acceso." }, { status: 403 });
+  }
+
+  const step = existing.steps.find((item) => item.id === stepId);
+  if (!step) {
+    return NextResponse.json({ error: "Paso no encontrado." }, { status: 404 });
   }
 
   const parsed = stepTransitionSchema.safeParse(
@@ -39,8 +42,21 @@ export async function POST(request: Request, { params }: RouteParams) {
     );
   }
 
+  const allowed = await canOperateExecutionStep({
+    user: authResult.user,
+    eventId: existing.eventId,
+    step,
+    action: parsed.data.action,
+  });
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "No puedes operar este paso con tu rol." },
+      { status: 403 },
+    );
+  }
+
   try {
-    const step = await transitionRuntimeStep({
+    const next = await transitionRuntimeStep({
       executionId,
       stepId,
       action: parsed.data.action,
@@ -48,7 +64,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       actorId: authResult.user.id,
       actorLabel: authResult.user.email,
     });
-    return NextResponse.json({ step });
+    return NextResponse.json({ step: next });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No fue posible." },

@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -76,6 +77,7 @@ type EditorState = {
   activityDescription: string;
   stepName: string;
   stepDescription: string;
+  stepLongDescription: string;
 };
 
 function emptyEditor(
@@ -92,6 +94,7 @@ function emptyEditor(
     activityDescription: "",
     stepName: "",
     stepDescription: "",
+    stepLongDescription: "",
   };
 }
 
@@ -377,6 +380,7 @@ export function EventDesign({
       activityDescription: activity.description,
       stepName: "",
       stepDescription: "",
+      stepLongDescription: "",
     });
   }
 
@@ -391,6 +395,7 @@ export function EventDesign({
       activityDescription: activity.description,
       stepName: "",
       stepDescription: "",
+      stepLongDescription: "",
     });
   }
 
@@ -405,6 +410,7 @@ export function EventDesign({
       activityDescription: workstream.description,
       stepName: "",
       stepDescription: "",
+      stepLongDescription: "",
     });
   }
 
@@ -419,6 +425,7 @@ export function EventDesign({
       activityDescription: block.description,
       stepName: "",
       stepDescription: "",
+      stepLongDescription: "",
     });
   }
 
@@ -433,6 +440,7 @@ export function EventDesign({
       activityDescription: activity.description,
       stepName: step.name,
       stepDescription: step.description,
+      stepLongDescription: step.longDescription ?? "",
     });
   }
 
@@ -535,6 +543,7 @@ export function EventDesign({
             body: JSON.stringify({
               name: editor.stepName,
               description: editor.stepDescription,
+              longDescription: editor.stepLongDescription,
             }),
           },
         );
@@ -599,6 +608,7 @@ export function EventDesign({
           activityId,
           name: editor.stepName,
           description: editor.stepDescription,
+          longDescription: editor.stepLongDescription,
         }),
       });
       const stepPayload = (await stepResponse.json()) as {
@@ -1552,13 +1562,24 @@ function DesignEditorDialog({
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label>Descripción</Label>
+                <Label>Descripción corta</Label>
                 <Input
                   value={editor.stepDescription}
                   onChange={(event) =>
                     patch({ stepDescription: event.target.value })
                   }
-                  placeholder="Opcional"
+                  placeholder="Resumen breve"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Descripción larga</Label>
+                <Textarea
+                  value={editor.stepLongDescription}
+                  onChange={(event) =>
+                    patch({ stepLongDescription: event.target.value })
+                  }
+                  placeholder="Instrucciones para el ejecutor"
+                  rows={4}
                 />
               </div>
             </>
@@ -1574,12 +1595,22 @@ function DesignEditorDialog({
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label>Descripción</Label>
+                <Label>Descripción corta</Label>
                 <Input
                   value={editor.stepDescription}
                   onChange={(event) =>
                     patch({ stepDescription: event.target.value })
                   }
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Descripción larga</Label>
+                <Textarea
+                  value={editor.stepLongDescription}
+                  onChange={(event) =>
+                    patch({ stepLongDescription: event.target.value })
+                  }
+                  rows={4}
                 />
               </div>
             </>

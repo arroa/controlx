@@ -1,12 +1,23 @@
-import { ChevronRight, Command } from "lucide-react";
+import { ChevronRight, Command, Smartphone } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
+import { DevActorSwitcher } from "@/components/dev-actor-switcher";
 import { ExecutionConsole } from "@/components/execution-console";
 import { Badge } from "@/components/ui/badge";
-import { canAccessEvent } from "@/lib/admin-data";
+import { Button } from "@/components/ui/button";
+import {
+  canAccessEvent,
+  getEventActorByEmail,
+  listEventActors,
+} from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
+import {
+  canUseDevActorImpersonation,
+  getEffectiveEventActor,
+} from "@/lib/dev-impersonation";
+import { canViewExecution } from "@/lib/execution-auth";
 import { getExecutionDetail } from "@/lib/execution-runtime";
 
 export default async function ExecutionPage({
@@ -18,12 +29,26 @@ export default async function ExecutionPage({
   const user = await getCurrentUser();
   if (!user) redirect("/");
 
-  const canAccess =
-    user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
-  if (!canAccess) redirect("/");
-
   const detail = await getExecutionDetail(executionId);
   if (!detail || detail.eventId !== eventId) notFound();
+
+  const canView = await canViewExecution(user, eventId);
+  if (!canView) redirect("/");
+
+  const isAdmin =
+    user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
+  const showImpersonation = canUseDevActorImpersonation(user);
+  const actors = showImpersonation ? await listEventActors(eventId) : [];
+  const { actor, impersonating } = await getEffectiveEventActor(eventId, user);
+  const realActor = await getEventActorByEmail(eventId, user.email);
+
+  // Ejecutor puro (sin ser admin) → cockpit.
+  if (!isAdmin && realActor?.roles.includes("EXECUTOR")) {
+    redirect(`/run/${executionId}`);
+  }
+
+  const canOpenCockpit =
+    Boolean(actor?.roles.includes("EXECUTOR")) || showImpersonation;
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -45,6 +70,21 @@ export default async function ExecutionPage({
           <span className="truncate text-sm font-medium">{detail.name}</span>
           <div className="ml-auto flex items-center gap-2">
             <Badge variant="outline">{detail.type}</Badge>
+            {showImpersonation ? (
+              <DevActorSwitcher
+                eventId={eventId}
+                actors={actors}
+                selectedActorId={impersonating && actor ? actor.id : null}
+              />
+            ) : null}
+            {canOpenCockpit ? (
+              <Button size="sm" variant="secondary" asChild>
+                <Link href={`/run/${executionId}`}>
+                  <Smartphone className="size-3.5" />
+                  Mi turno
+                </Link>
+              </Button>
+            ) : null}
             <AuthHeader />
           </div>
         </div>

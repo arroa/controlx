@@ -60,12 +60,23 @@ export const eventUpdateSchema = z.object({
 });
 
 /** Ejecución = instancia del evento (simulacro o real). */
-export const executionInputSchema = z.object({
-  eventId: z.string().refine(ObjectId.isValid, "Evento inválido"),
-  name: z.string().trim().min(3).max(160).optional(),
-  type: z.enum(["SIMULACRO", "REAL"]),
-  timezone: timezoneSchema.optional(),
-});
+export const executionInputSchema = z
+  .object({
+    eventId: z.string().refine(ObjectId.isValid, "Evento inválido"),
+    type: z.enum(["SIMULACRO", "REAL"]),
+    timezone: timezoneSchema.optional(),
+    /** Obligatorio en simulacro: T0 simulado de esta instancia. */
+    simulatedDayDStartAt: z.iso.datetime().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.type === "SIMULACRO" && !value.simulatedDayDStartAt) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Indica el día de arranque simulado.",
+        path: ["simulatedDayDStartAt"],
+      });
+    }
+  });
 
 export const adminInputSchema = z.object({
   email: z.string().trim().email().transform((email) => email.toLowerCase()),
@@ -91,7 +102,10 @@ export const activityInputSchema = z.object({
 export const designStepInputSchema = z.object({
   activityId: z.string().refine(ObjectId.isValid, "Actividad inválida"),
   name: z.string().trim().min(2).max(160),
+  /** Descripción corta. */
   description: z.string().trim().max(1000).default(""),
+  /** Descripción larga / instrucciones. */
+  longDescription: z.string().trim().max(4000).default(""),
 });
 
 export const activityUpdateSchema = z.object({
@@ -102,6 +116,7 @@ export const activityUpdateSchema = z.object({
 export const designStepUpdateSchema = z.object({
   name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(1000).default(""),
+  longDescription: z.string().trim().max(4000).default(""),
 });
 
 export const moveDirectionSchema = z.object({
@@ -227,6 +242,10 @@ export type ExecutionSummary = {
   name: string;
   type: "SIMULACRO" | "REAL";
   timezone: string;
+  /** T0 de esta instancia (día simulado o Día D real). */
+  anchorStartAt: string | null;
+  /** Iteración dentro del mismo día de ancla. */
+  iteration: number;
   status:
     | "BORRADOR"
     | "PREPARADO"
@@ -306,6 +325,7 @@ export type DesignStepSummary = {
   activityId: string;
   name: string;
   description: string;
+  longDescription: string;
   order: number;
   plannedStartAt: string | null;
   estimatedDurationMinutes: number | null;
@@ -369,6 +389,11 @@ type ExecutionDocument = {
   name: string;
   type: "SIMULACRO" | "REAL";
   timezone: string;
+  /** T0 de la instancia. */
+  anchorStartAt?: Date | null;
+  /** Día civil YYYY-MM-DD en la TZ de la ejecución (para iteraciones). */
+  anchorDayKey?: string | null;
+  iteration?: number;
   status: ExecutionSummary["status"];
   createdBy: string;
   createdAt: Date;
@@ -504,6 +529,7 @@ type DesignStepDocument = {
   activityId: ObjectId;
   name: string;
   description: string;
+  longDescription?: string;
   order: number;
   plannedStartAt?: Date | null;
   estimatedDurationMinutes?: number | null;
@@ -666,6 +692,8 @@ export async function getEventWorkspace(eventId: string) {
       name: execution.name,
       type: execution.type,
       timezone: execution.timezone,
+      anchorStartAt: execution.anchorStartAt?.toISOString() ?? null,
+      iteration: execution.iteration ?? 1,
       status: execution.status,
       createdAt: execution.createdAt.toISOString(),
     })) satisfies ExecutionSummary[],
@@ -911,6 +939,9 @@ export async function createExecution(
   const { assertCanCreateExecution, materializeExecutionSteps } = await import(
     "@/lib/execution-runtime"
   );
+  const { calendarDayKey, formatDayLabel } = await import(
+    "@/lib/execution-schedule"
+  );
   await assertCanCreateExecution(input.eventId, input.type);
 
   const database = await getDatabase();
@@ -923,27 +954,58 @@ export async function createExecution(
     throw new Error("El evento seleccionado no existe.");
   }
 
+  const timezone = input.timezone?.trim() || event.timezone;
   const now = new Date();
-  const typeLabel = input.type === "SIMULACRO" ? "Simulacro" : "Ejecución real";
+
+  let anchorStartAt: Date;
+  if (input.type === "SIMULACRO") {
+    if (!input.simulatedDayDStartAt) {
+      throw new Error("Indica el día de arranque simulado.");
+    }
+    anchorStartAt = new Date(input.simulatedDayDStartAt);
+  } else {
+    if (!event.dayDStartAt) {
+      throw new Error(
+        "Define el Día D del evento antes de crear una ejecución real.",
+      );
+    }
+    anchorStartAt = event.dayDStartAt;
+  }
+
+  const dayKey = calendarDayKey(anchorStartAt, timezone);
+  const collection = database.collection<ExecutionDocument>("eventInstances");
+  const sameDayCount = await collection.countDocuments({
+    eventId,
+    type: input.type,
+    anchorDayKey: dayKey,
+  });
+  const iteration = sameDayCount + 1;
+  const typeLabel = input.type === "SIMULACRO" ? "Simulacro" : "Real";
+  const dayLabel = formatDayLabel(anchorStartAt, timezone);
+  const name = `${typeLabel} · ${dayLabel} · #${iteration}`;
+
   const document: ExecutionDocument = {
     eventId,
     organizationId: event.organizationId,
-    name: input.name?.trim() || `${event.name} · ${typeLabel}`,
+    name,
     type: input.type,
-    timezone: input.timezone?.trim() || event.timezone,
+    timezone,
+    anchorStartAt,
+    anchorDayKey: dayKey,
+    iteration,
     status: "PREPARADO",
     createdBy: actorId,
     createdAt: now,
     updatedAt: now,
   };
-  const result = await database
-    .collection<ExecutionDocument>("eventInstances")
-    .insertOne(document);
+  const result = await collection.insertOne(document);
 
   await materializeExecutionSteps({
     executionId: result.insertedId,
     eventId: input.eventId,
     actorId,
+    anchorStartAt,
+    designDayDStartAt: event.dayDStartAt?.toISOString() ?? null,
   });
 
   return {
@@ -953,6 +1015,8 @@ export async function createExecution(
     name: document.name,
     type: document.type,
     timezone: document.timezone,
+    anchorStartAt: anchorStartAt.toISOString(),
+    iteration,
     status: document.status,
     createdAt: now.toISOString(),
   };
@@ -1262,6 +1326,51 @@ export async function canAccessEvent(
     organizationAdmin ||
       (eventMembership && hasEventAdminRole(eventMembership)),
   );
+}
+
+/** Cualquier actor activo del mapa (o OrgAdmin) puede entrar a la ejecución. */
+export async function canAccessEventAsMember(
+  email: string,
+  eventId: string,
+): Promise<boolean> {
+  if (!ObjectId.isValid(eventId)) return false;
+  const database = await getDatabase();
+  const id = new ObjectId(eventId);
+  const event = await database
+    .collection<EventDocument>("events")
+    .findOne({ _id: id }, { projection: { organizationId: 1 } });
+  if (!event) return false;
+
+  const [eventMembership, organizationAdmin] = await Promise.all([
+    database
+      .collection<EventMembershipDocument>("eventMemberships")
+      .findOne({ eventId: id, email, status: "ACTIVE" }),
+    database
+      .collection<OrganizationMembershipDocument>("organizationMemberships")
+      .findOne(
+        { organizationId: event.organizationId, email, status: "ACTIVE" },
+        { projection: { _id: 1 } },
+      ),
+  ]);
+  return Boolean(organizationAdmin || eventMembership);
+}
+
+/** Membership del mapa de actores por email (null si no está en el evento). */
+export async function getEventActorByEmail(
+  eventId: string,
+  email: string,
+): Promise<EventActorSummary | null> {
+  if (!ObjectId.isValid(eventId)) return null;
+  const database = await getDatabase();
+  const doc = await database
+    .collection<EventMembershipDocument>("eventMemberships")
+    .findOne({
+      eventId: new ObjectId(eventId),
+      email: email.toLowerCase(),
+      status: "ACTIVE",
+    });
+  if (!doc) return null;
+  return toEventActorSummary(doc);
 }
 
 /** Asignar/editar EventAdmins: solo SuperAdmin u OrgAdmin de la org del evento. */
@@ -1859,6 +1968,7 @@ export async function createDesignStep(
     activityId,
     name: input.name,
     description: input.description,
+    longDescription: input.longDescription,
     order: (last?.order ?? 0) + 1,
     plannedStartAt: null,
     estimatedDurationMinutes: null,
@@ -1876,25 +1986,10 @@ export async function createDesignStep(
 
   await touchPrepReadiness(eventId);
 
-  return {
-    id: result.insertedId.toHexString(),
-    eventId,
-    workstreamId: activity.workstreamId.toHexString(),
-    blockId: activity.blockId.toHexString(),
-    activityId: input.activityId,
-    name: document.name,
-    description: document.description,
-    order: document.order,
-    plannedStartAt: null,
-    estimatedDurationMinutes: null,
-    dependencyStepIds: [],
-    approvalRoles: [],
-    executorActorId: null,
-    approverActorIds: [],
-    producesGateId: null,
-    requiresGateIds: [],
-    createdAt: now.toISOString(),
-  };
+  return toDesignStepSummary(eventId, {
+    ...document,
+    _id: result.insertedId,
+  });
 }
 
 function toActivitySummary(
@@ -2041,6 +2136,7 @@ function toDesignStepSummary(
     activityId: step.activityId.toHexString(),
     name: step.name,
     description: step.description,
+    longDescription: step.longDescription ?? "",
     order: step.order,
     plannedStartAt: step.plannedStartAt?.toISOString() ?? null,
     estimatedDurationMinutes: step.estimatedDurationMinutes ?? null,
@@ -2358,6 +2454,7 @@ export async function updateDesignStep(
         $set: {
           name: input.name,
           description: input.description,
+          longDescription: input.longDescription,
           updatedAt: new Date(),
         },
       },
