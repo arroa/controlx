@@ -125,6 +125,10 @@ export default async function ExecutorRunPage({
           initial={detail}
           actorId={actor.id}
           actorName={actor.name}
+          canForceSuccess={
+            (!impersonating && user.isSuperAdmin) ||
+            Boolean(actor.roles.includes("EVENT_ADMIN"))
+          }
           title="Mi turno"
         />
       </main>

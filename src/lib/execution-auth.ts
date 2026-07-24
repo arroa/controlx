@@ -59,6 +59,15 @@ export async function canOperateExecutionStep(input: {
   const isAdmin =
     user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
 
+  // Forzar: solo Event Admin (o SuperAdmin de plataforma). No OrgAdmin genérico.
+  if (action === "force_success") {
+    if (impersonating) {
+      return Boolean(actor?.roles.includes("EVENT_ADMIN"));
+    }
+    if (user.isSuperAdmin) return true;
+    return Boolean(actor?.roles.includes("EVENT_ADMIN"));
+  }
+
   if (isAdmin && !impersonating) return true;
   if (!actor) return false;
   return actorCanDoAction(actor, step, action);

@@ -1,7 +1,7 @@
 "use client";
 
 import { BadgeInfo, ChevronDown, ChevronRight } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -19,7 +19,8 @@ import type { GateSummary } from "@/lib/admin-data";
 import { cn } from "@/lib/utils";
 
 export const DEFAULT_DURATION_MINUTES = 30;
-const PIXELS_PER_MINUTE = 2.4;
+/** Densidad mínima del eje; si el viewport es más ancho, se escala para llenarlo. */
+const MIN_PIXELS_PER_MINUTE = 2.4;
 const GATE_COLORS = [
   "border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-300",
   "border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300",
@@ -546,7 +547,25 @@ export function TimesView({
   }, [allRows, rows, items]);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  const chartWidth = Math.max(960, totalMin * PIXELS_PER_MINUTE);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+
+  useEffect(() => {
+    const node = scrollerRef.current;
+    if (!node) return;
+    const update = () => setViewportWidth(node.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  // Si el plan es más corto que el viewport, estira el eje; si es más largo, scroll horizontal.
+  const chartWidth = Math.max(
+    viewportWidth || 960,
+    totalMin * MIN_PIXELS_PER_MINUTE,
+  );
+  const pxPerMin = chartWidth / Math.max(totalMin, 1);
   const ticks = buildTicks(totalMin);
   const useClockLabels = Boolean(dayDStartAt && t0Ms != null);
 
@@ -579,7 +598,10 @@ export function TimesView({
   }
 
   return (
-    <div className="h-full min-h-0 overflow-auto rounded-xl border">
+    <div
+      ref={scrollerRef}
+      className="h-full min-h-0 overflow-auto rounded-xl border"
+    >
       <div style={{ width: chartWidth }} className="min-w-full">
         {!dayDStartAt ? (
           <div className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
@@ -597,7 +619,7 @@ export function TimesView({
                 <div
                   key={`head-${marker.id}`}
                   className="absolute top-1 bottom-1 z-[1]"
-                  style={{ left: marker.openMin * PIXELS_PER_MINUTE }}
+                  style={{ left: marker.openMin * pxPerMin }}
                   title={`${marker.name} · ${formatAxisLabel(marker.openMin, t0Ms, eventTimezone, useClockLabels)}`}
                 >
                   <div
@@ -624,7 +646,7 @@ export function TimesView({
               <div
                 key={tick}
                 className="absolute top-0 bottom-0 border-l border-border/60"
-                style={{ left: tick * PIXELS_PER_MINUTE }}
+                style={{ left: tick * pxPerMin }}
               >
                 <span className="ml-1 text-[10px] text-muted-foreground">
                   {formatAxisLabel(
@@ -683,7 +705,7 @@ export function TimesView({
                                 <div
                                   key={`${laneKey}-${tick}`}
                                   className="absolute inset-y-0 border-l border-border/40"
-                                  style={{ left: tick * PIXELS_PER_MINUTE }}
+                                  style={{ left: tick * pxPerMin }}
                                 />
                               ))}
                               {gateMarkers.map((marker) => (
@@ -696,7 +718,7 @@ export function TimesView({
                                     )[0],
                                   )}
                                   style={{
-                                    left: marker.openMin * PIXELS_PER_MINUTE,
+                                    left: marker.openMin * pxPerMin,
                                   }}
                                 />
                               ))}
@@ -705,10 +727,10 @@ export function TimesView({
                                 if (!item) return null;
                                 const top = 2 + index * 30;
                                 const left =
-                                  item.startMin * PIXELS_PER_MINUTE;
+                                  item.startMin * pxPerMin;
                                 const width = Math.max(
                                   8,
-                                  item.durationMin * PIXELS_PER_MINUTE,
+                                  item.durationMin * pxPerMin,
                                 );
                                 const active = selectedId === row.id;
                                 const flowerOpen = flowerOpenId === row.id;

@@ -6,9 +6,10 @@ import {
   CircleX,
   Layers,
   Paperclip,
+  ShieldAlert,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 
 import type { OutcomeAction } from "@/components/executor-times-map";
 import { ExecutorTimesMap } from "@/components/executor-times-map";
@@ -32,6 +33,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import type { GateSummary } from "@/lib/admin-data";
 import {
   EXECUTION_FOCUS_OPTIONS,
   filterStepsByFocus,
@@ -42,6 +44,7 @@ import {
 } from "@/lib/execution-focus";
 import {
   RUNTIME_STEP_STATUS_LABELS,
+  unmetStepDependencies,
   type ExecutionDetail,
   type RuntimeStepAction,
   type RuntimeStepStatus,
@@ -67,6 +70,8 @@ function toTimesViewRow(
     plannedStartAt: step.plannedStartAt,
     estimatedDurationMinutes: step.estimatedDurationMinutes,
     dependencyStepIds: step.dependencyStepIds,
+    producesGateId: step.producesGateId,
+    requiresGateIds: step.requiresGateIds,
     order: step.order,
     status: step.status,
     mine,
@@ -74,6 +79,16 @@ function toTimesViewRow(
     // Siempre se puede abrir la flor; las acciones de guardar se deshabilitan aparte.
     operable: true,
   };
+}
+
+function startBlockedLabel(step: RuntimeStepSummary, all: RuntimeStepSummary[]) {
+  const blockers = unmetStepDependencies(step, all);
+  if (!blockers.length) return null;
+  const failed = blockers.filter((item) => item.reason === "failed");
+  if (failed.length) {
+    return `Deps fallidas — Event Admin debe Forzar: ${failed.map((item) => item.name).join(", ")}`;
+  }
+  return `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`;
 }
 
 type WorkstreamOption = {
@@ -86,7 +101,24 @@ type WorkstreamOption = {
 const OUTCOME_LABELS: Record<OutcomeAction, string> = {
   complete_success: "Exitoso",
   complete_fail: "Fallido",
+  force_success: "Forzado OK",
 };
+
+const MOBILE_MQ = "(max-width: 767px)";
+
+function subscribeMobile(onChange: () => void) {
+  const mq = window.matchMedia(MOBILE_MQ);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+function getMobileSnapshot() {
+  return window.matchMedia(MOBILE_MQ).matches;
+}
+
+function getServerMobileSnapshot() {
+  return false;
+}
 
 function patchStep(
   detail: ExecutionDetail,
@@ -98,7 +130,15 @@ function patchStep(
       detail.status === "PREPARADO" || detail.status === "BORRADOR"
         ? "EN_EJECUCION"
         : detail.status,
-    steps: detail.steps.map((item) => (item.id === step.id ? step : item)),
+    steps: detail.steps.map((item) => {
+      if (item.id !== step.id) return item;
+      // Las transiciones no reenvían metadatos de gates; se conservan.
+      return {
+        ...step,
+        producesGateId: item.producesGateId,
+        requiresGateIds: item.requiresGateIds,
+      };
+    }),
   };
 }
 
@@ -107,6 +147,7 @@ export function ExecutionTimesPanel({
   actorId,
   actorName,
   canOperateAny = false,
+  canForceSuccess = false,
   title = "Panel de tiempos",
 }: {
   initial: ExecutionDetail;
@@ -114,9 +155,16 @@ export function ExecutionTimesPanel({
   actorName?: string | null;
   /** Admin sin impersonar: puede operar cualquier paso. */
   canOperateAny?: boolean;
+  /** Event Admin (o SuperAdmin): puede Forzar un paso Fallido. */
+  canForceSuccess?: boolean;
   title?: string;
 }) {
   const hasActor = Boolean(actorId);
+  const isMobile = useSyncExternalStore(
+    subscribeMobile,
+    getMobileSnapshot,
+    getServerMobileSnapshot,
+  );
   const [detail, setDetail] = useState(initial);
   const [focusMode, setFocusMode] = useState<ExecutionFocusMode>(
     hasActor ? "highlight-mine" : "all",
@@ -207,6 +255,23 @@ export function ExecutionTimesPanel({
     [detail.steps, actorId, nextId],
   );
 
+  const timesGates = useMemo<GateSummary[]>(
+    () =>
+      detail.gates.map((gate) => ({
+        id: gate.id,
+        eventId: detail.eventId,
+        name: gate.name,
+        description: "",
+        order: gate.order,
+        opensTargets: gate.opensTargets,
+        plannedOpenAt: gate.plannedOpenAt,
+        approvalRoles: gate.approvalRoles,
+        closesAfterTargets: gate.closesAfterTargets,
+        createdAt: detail.createdAt,
+      })),
+    [detail.gates, detail.eventId, detail.createdAt],
+  );
+
   const visibleTimesRows = useMemo(() => {
     const wsSet = workstreamIds == null ? null : new Set(workstreamIds);
     const focusedIds = new Set(
@@ -241,14 +306,22 @@ export function ExecutionTimesPanel({
     const canAct = Boolean(row.mine) || canOperateAny;
     const actions: FlowerAction[] = [];
     if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
+      const blocked = startBlockedLabel(step, detail.steps);
       actions.push({
         key: "start",
-        label: canAct ? "Iniciar" : "Iniciar (solo lectura)",
+        label: blocked
+          ? canAct
+            ? "Iniciar (deps)"
+            : "Iniciar (solo lectura)"
+          : canAct
+            ? "Iniciar"
+            : "Iniciar (solo lectura)",
         icon: CirclePlay,
         tone: "go",
-        disabled: busy || !canAct,
+        disabled: busy || !canAct || Boolean(blocked),
+        title: blocked ?? undefined,
         onClick: () => {
-          if (!canAct) return;
+          if (!canAct || blocked) return;
           setSelectedId(null);
           void runAction(step.id, "start");
         },
@@ -287,6 +360,23 @@ export function ExecutionTimesPanel({
           },
         },
       );
+    }
+    if (step.status === "FALLIDO" && canForceSuccess) {
+      actions.push({
+        key: "force",
+        label: "Forzar OK",
+        icon: ShieldAlert,
+        tone: "neutral",
+        disabled: busy,
+        title: "Requiere comentario. Desbloquea dependientes.",
+        onClick: () => {
+          setSelectedId(null);
+          setError("");
+          setComment("");
+          setFiles([]);
+          setOutcome({ stepId: step.id, action: "force_success" });
+        },
+      });
     }
     return actions;
   }
@@ -332,8 +422,12 @@ export function ExecutionTimesPanel({
   async function runAction(stepId: string, action: RuntimeStepAction) {
     const step = detail.steps.find((item) => item.id === stepId);
     if (!step) return;
-    const canAct = isMineStep(step, actorId) || canOperateAny;
-    if (!canAct) return;
+    if (action === "force_success") {
+      if (!canForceSuccess) return;
+    } else {
+      const canAct = isMineStep(step, actorId) || canOperateAny;
+      if (!canAct) return;
+    }
     setBusy(true);
     setError("");
     const response = await fetch(
@@ -363,8 +457,17 @@ export function ExecutionTimesPanel({
 
   async function confirmOutcome() {
     if (!outcome || !outcomeStep) return;
-    const canAct = isMineStep(outcomeStep, actorId) || canOperateAny;
-    if (!canAct) return;
+    const isForce = outcome.action === "force_success";
+    if (isForce) {
+      if (!canForceSuccess) return;
+      if (!comment.trim()) {
+        setError("Forzar requiere un comentario con el motivo.");
+        return;
+      }
+    } else {
+      const canAct = isMineStep(outcomeStep, actorId) || canOperateAny;
+      if (!canAct) return;
+    }
     setBusy(true);
     setError("");
 
@@ -430,7 +533,7 @@ export function ExecutionTimesPanel({
         </div>
       ) : null}
 
-      <div className="shrink-0 space-y-2 border-b px-3 py-3 md:px-4">
+      <div className="shrink-0 space-y-2 border-b py-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
@@ -490,46 +593,48 @@ export function ExecutionTimesPanel({
         ) : null}
       </div>
 
-      {/* Portrait: tiempo hacia abajo */}
-      <div className="flex min-h-0 flex-1 flex-col md:hidden">
-        <ExecutorTimesMap
-          steps={detail.steps}
-          actorId={actorId}
-          timezone={detail.timezone}
-          anchorStartAt={detail.anchorStartAt}
-          workstreamIds={workstreamIds}
-          focusMode={effectiveFocus}
-          canOperateAny={canOperateAny}
-          selectedId={selectedId}
-          busy={busy}
-          onSelect={setSelectedId}
-          onAction={(stepId, action) => void runAction(stepId, action)}
-          onOutcome={(stepId, action) => {
-            setError("");
-            setComment("");
-            setFiles([]);
-            setOutcome({ stepId, action });
-          }}
-          onOpenInfo={setInfoId}
-        />
-      </div>
-
-      {/* Desktop: Times panorámico (mismo que planificador) */}
-      <div className="hidden min-h-0 flex-1 flex-col p-2 md:flex md:p-3">
-        <TimesView
-          rows={visibleTimesRows}
-          allRows={allTimesRows}
-          gates={[]}
-          eventTimezone={detail.timezone}
-          dayDStartAt={detail.anchorStartAt}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          getBarClass={getBarClass}
-          getFlowerActions={getFlowerActions}
-          onOpenInfo={(row) => setInfoId(row.id)}
-          showBuiltInInfoDialog={false}
-        />
-      </div>
+      {/* Una sola vista montada: el mapa móvil oculto con CSS robaba clics al ?. */}
+      {isMobile ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ExecutorTimesMap
+            steps={detail.steps}
+            actorId={actorId}
+            timezone={detail.timezone}
+            anchorStartAt={detail.anchorStartAt}
+            workstreamIds={workstreamIds}
+            focusMode={effectiveFocus}
+            canOperateAny={canOperateAny}
+            canForceSuccess={canForceSuccess}
+            selectedId={selectedId}
+            busy={busy}
+            onSelect={setSelectedId}
+            onAction={(stepId, action) => void runAction(stepId, action)}
+            onOutcome={(stepId, action) => {
+              setError("");
+              setComment("");
+              setFiles([]);
+              setOutcome({ stepId, action });
+            }}
+            onOpenInfo={setInfoId}
+          />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col pt-2 md:pt-3">
+          <TimesView
+            rows={visibleTimesRows}
+            allRows={allTimesRows}
+            gates={timesGates}
+            eventTimezone={detail.timezone}
+            dayDStartAt={detail.anchorStartAt}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            getBarClass={getBarClass}
+            getFlowerActions={getFlowerActions}
+            onOpenInfo={(row) => setInfoId(row.id)}
+            showBuiltInInfoDialog={false}
+          />
+        </div>
+      )}
 
       <Dialog open={wsModalOpen} onOpenChange={setWsModalOpen}>
         <DialogContent className="sm:max-w-md">
@@ -683,7 +788,9 @@ export function ExecutionTimesPanel({
               Marcar como {outcome ? OUTCOME_LABELS[outcome.action] : ""}
             </DialogTitle>
             <DialogDescription>
-              {outcomeStep?.name ?? "Paso"} · adjuntos opcionales.
+              {outcome?.action === "force_success"
+                ? `${outcomeStep?.name ?? "Paso"} · el Forzado requiere motivo y desbloquea dependientes.`
+                : `${outcomeStep?.name ?? "Paso"} · adjuntos opcionales.`}
             </DialogDescription>
           </DialogHeader>
 
@@ -691,7 +798,11 @@ export function ExecutionTimesPanel({
             <Textarea
               value={comment}
               onChange={(event) => setComment(event.target.value)}
-              placeholder="Nota opcional…"
+              placeholder={
+                outcome?.action === "force_success"
+                  ? "Motivo del forzado (obligatorio)…"
+                  : "Nota opcional…"
+              }
               rows={2}
             />
 
@@ -757,7 +868,10 @@ export function ExecutionTimesPanel({
             </Button>
             <Button
               type="button"
-              disabled={busy}
+              disabled={
+                busy ||
+                (outcome?.action === "force_success" && !comment.trim())
+              }
               variant={
                 outcome?.action === "complete_fail" ? "destructive" : "default"
               }

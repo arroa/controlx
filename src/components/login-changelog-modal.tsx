@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  hasReleaseNotes,
   RELEASE_NOTES,
   RELEASE_NOTES_STORAGE_KEY,
 } from "@/lib/release-notes";
@@ -23,6 +24,7 @@ export function LoginChangelogModal() {
   const dontShowAgainRef = useRef(false);
 
   useEffect(() => {
+    if (!hasReleaseNotes()) return;
     try {
       if (window.localStorage.getItem(RELEASE_NOTES_STORAGE_KEY) === "1") {
         return;
@@ -56,6 +58,8 @@ export function LoginChangelogModal() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open]);
+
+  if (!hasReleaseNotes()) return null;
 
   function persistIfNeeded() {
     if (!dontShowAgainRef.current) return;

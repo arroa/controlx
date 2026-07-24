@@ -96,6 +96,9 @@ export type RuntimeStepSummary = {
   plannedStartAt: string | null;
   estimatedDurationMinutes: number | null;
   dependencyStepIds: string[];
+  /** Desde el diseño; sirve para calendarizar como el planificador. */
+  producesGateId: string | null;
+  requiresGateIds: string[];
   executorActorId: string | null;
   executorName: string | null;
   approverActorIds: string[];
@@ -105,6 +108,24 @@ export type RuntimeStepSummary = {
   comments: StepComment[];
   evidence: EvidenceMeta[];
   updatedAt: string;
+};
+
+export type ExecutionGateSummary = {
+  id: string;
+  name: string;
+  order: number;
+  plannedOpenAt: string | null;
+  opensTargets: Array<{
+    workstreamId: string;
+    blockId: string | null;
+  }>;
+  closesAfterTargets: Array<{
+    workstreamId: string;
+    blockId: string | null;
+  }>;
+  approvalRoles: Array<
+    "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
+  >;
 };
 
 export type ExecutionDetail = {
@@ -119,6 +140,8 @@ export type ExecutionDetail = {
   status: ExecutionInstanceStatus;
   createdAt: string;
   steps: RuntimeStepSummary[];
+  /** Gates del diseño, con horas alineadas al ancla de esta ejecución. */
+  gates: ExecutionGateSummary[];
   blobConfigured: boolean;
 };
 
@@ -146,6 +169,53 @@ export function isTerminalStepStatus(
     return status === "OMITIDO" || status === "SIMULADO";
   }
   return false;
+}
+
+/**
+ * ¿Este cierre desbloquea pasos dependientes?
+ * Solo Exitoso / Aprobado (incluye Forzado). Fallido no desbloquea.
+ * Omitido/Simulado quedan fuera de la ecuación operativa.
+ */
+export function stepUnlocksDependents(status: RuntimeStepStatus): boolean {
+  return status === "EXITOSO" || status === "APROBADO";
+}
+
+export type DependencyBlocker = {
+  id: string;
+  name: string;
+  status: RuntimeStepStatus;
+  reason: "pending" | "failed";
+};
+
+/** Deps explícitas que aún no permiten iniciar el paso. */
+export function unmetStepDependencies(
+  step: Pick<RuntimeStepSummary, "dependencyStepIds">,
+  allSteps: Array<
+    Pick<RuntimeStepSummary, "id" | "name" | "status">
+  >,
+): DependencyBlocker[] {
+  const byId = new Map(allSteps.map((item) => [item.id, item]));
+  const blockers: DependencyBlocker[] = [];
+  for (const depId of step.dependencyStepIds) {
+    const dep = byId.get(depId);
+    if (!dep) {
+      blockers.push({
+        id: depId,
+        name: "Dependencia faltante",
+        status: "PLANIFICADO",
+        reason: "pending",
+      });
+      continue;
+    }
+    if (stepUnlocksDependents(dep.status)) continue;
+    blockers.push({
+      id: dep.id,
+      name: dep.name,
+      status: dep.status,
+      reason: dep.status === "FALLIDO" ? "failed" : "pending",
+    });
+  }
+  return blockers;
 }
 
 export function isSimulacroOnlyStatus(status: RuntimeStepStatus): boolean {

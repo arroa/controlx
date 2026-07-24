@@ -6,6 +6,7 @@ import {
   CircleCheck,
   CirclePlay,
   CircleX,
+  ShieldAlert,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -21,13 +22,17 @@ import {
   type ExecutionFocusMode,
 } from "@/lib/execution-focus";
 import {
+  unmetStepDependencies,
   type RuntimeStepAction,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
 import { cn } from "@/lib/utils";
 
 /** Acciones de cierre que abren el diálogo con adjuntos opcionales. */
-export type OutcomeAction = "complete_success" | "complete_fail";
+export type OutcomeAction =
+  | "complete_success"
+  | "complete_fail"
+  | "force_success";
 
 const DEFAULT_DURATION_MINUTES = 30;
 const SLOT_MINUTES = 15;
@@ -40,7 +45,6 @@ const STEP_COL_MAX_PX = 96;
  * Por debajo de esto el scroll horizontal es mejor que aplastar más.
  */
 const STEP_COL_MIN_PX = 64;
-const MAX_COLUMNS = 10;
 
 function computeStepColPx(containerWidth: number, columnCount: number) {
   if (columnCount <= 0) return STEP_COL_MAX_PX;
@@ -114,15 +118,39 @@ function barTone(
   return runtimeBarTone({ status, mine, isNext, dimOthers });
 }
 
+function startBlockedLabel(
+  step: RuntimeStepSummary,
+  all: RuntimeStepSummary[],
+) {
+  const blockers = unmetStepDependencies(step, all);
+  if (!blockers.length) return null;
+  const failed = blockers.filter((item) => item.reason === "failed");
+  if (failed.length) {
+    return `Deps fallidas — Event Admin debe Forzar: ${failed.map((item) => item.name).join(", ")}`;
+  }
+  return `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`;
+}
+
 function flowerActionsFor(input: {
   step: RuntimeStepSummary;
+  allSteps: RuntimeStepSummary[];
   busy: boolean;
   canAct: boolean;
+  canForceSuccess: boolean;
   onAction: (action: RuntimeStepAction) => void;
   onOutcome: (action: OutcomeAction) => void;
   onInfo: () => void;
 }): FlowerAction[] {
-  const { step, busy, canAct, onAction, onOutcome, onInfo } = input;
+  const {
+    step,
+    allSteps,
+    busy,
+    canAct,
+    canForceSuccess,
+    onAction,
+    onOutcome,
+    onInfo,
+  } = input;
   const actions: FlowerAction[] = [
     {
       key: "info",
@@ -134,14 +162,22 @@ function flowerActionsFor(input: {
   ];
 
   if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
+    const blocked = startBlockedLabel(step, allSteps);
     actions.push({
       key: "start",
-      label: canAct ? "Iniciar" : "Iniciar (solo lectura)",
+      label: blocked
+        ? canAct
+          ? "Iniciar (deps)"
+          : "Iniciar (solo lectura)"
+        : canAct
+          ? "Iniciar"
+          : "Iniciar (solo lectura)",
       icon: CirclePlay,
       tone: "go",
-      disabled: busy || !canAct,
+      disabled: busy || !canAct || Boolean(blocked),
+      title: blocked ?? undefined,
       onClick: () => {
-        if (!canAct) return;
+        if (!canAct || blocked) return;
         onAction("start");
       },
     });
@@ -174,10 +210,22 @@ function flowerActionsFor(input: {
     );
   }
 
+  if (step.status === "FALLIDO" && canForceSuccess) {
+    actions.push({
+      key: "force",
+      label: "Forzar OK",
+      icon: ShieldAlert,
+      tone: "neutral",
+      disabled: busy,
+      title: "Requiere comentario. Desbloquea dependientes.",
+      onClick: () => onOutcome("force_success"),
+    });
+  }
+
   return actions;
 }
 
-/** Empaqueta pasos en columnas sin solape (máx. MAX_COLUMNS). */
+/** Empaqueta pasos en columnas sin solape. Sin tope: el scroll horizontal cubre el resto. */
 function assignColumns(items: Omit<TimedStep, "column">[]): TimedStep[] {
   const sorted = [...items].sort(
     (a, b) => a.startMs - b.startMs || a.endMs - b.endMs,
@@ -188,7 +236,6 @@ function assignColumns(items: Omit<TimedStep, "column">[]): TimedStep[] {
   for (const item of sorted) {
     let col = colEnds.findIndex((end) => end <= item.startMs);
     if (col === -1) {
-      if (colEnds.length >= MAX_COLUMNS) continue;
       col = colEnds.length;
       colEnds.push(item.endMs);
     } else {
@@ -209,6 +256,8 @@ export function ExecutorTimesMap({
   focusMode = "all",
   /** Si true, se pueden operar pasos ajenos (admin). */
   canOperateAny = false,
+  /** Event Admin: Forzar OK en Fallido. */
+  canForceSuccess = false,
   selectedId,
   busy,
   onSelect,
@@ -223,6 +272,7 @@ export function ExecutorTimesMap({
   workstreamIds: string[] | null;
   focusMode?: ExecutionFocusMode;
   canOperateAny?: boolean;
+  canForceSuccess?: boolean;
   selectedId: string | null;
   busy: boolean;
   onSelect: (stepId: string | null) => void;
@@ -264,15 +314,24 @@ export function ExecutorTimesMap({
     };
   }, []);
 
-  /** Click fuera del paso seleccionado: apaga el ? y cierra la flor. */
+  /**
+   * Click fuera del paso seleccionado (solo dentro de este mapa): apaga el ?
+   * y cierra la flor. No escuchar clics globales: en desktop este mapa sigue
+   * montado con md:hidden y robaba el pointerdown del Times panorámico,
+   * deseleccionando el paso al pulsar el ?.
+   */
   useEffect(() => {
     if (!selectedId) {
       setFlowerOpenId(null);
       return;
     }
+    const root = scrollerRef.current;
+    if (!root) return;
+
     function onPointerDown(event: PointerEvent) {
       const target = event.target as HTMLElement | null;
-      if (!target) return;
+      if (!target || !root) return;
+      if (!root.contains(target)) return;
       if (target.closest(`[data-step-card="${selectedId}"]`)) return;
       setFlowerOpenId(null);
       onSelect(null);
@@ -551,8 +610,10 @@ export function ExecutorTimesMap({
                             onClose={() => setFlowerOpenId(null)}
                             actions={flowerActionsFor({
                               step: item.step,
+                              allSteps: steps,
                               busy,
                               canAct: item.mine || canOperateAny,
+                              canForceSuccess,
                               onAction: (action) => {
                                 setFlowerOpenId(null);
                                 onSelect(null);

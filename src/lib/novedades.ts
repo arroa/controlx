@@ -10,6 +10,7 @@ import {
 } from "@/lib/novedades-types";
 import { getDatabase, isMongoConfigured } from "@/lib/mongodb";
 import {
+  hasReleaseNotes,
   RELEASE_NOTES,
   RELEASE_NOTES_VERSION,
   releaseNotesChangesText,
@@ -66,6 +67,8 @@ export function canManageNovedades(user: {
 async function ensureReleaseNotesNovedad(
   collection: Collection<NovedadDocument>,
 ) {
+  if (!hasReleaseNotes()) return;
+
   const existing = await collection.findOne({
     seedKey: RELEASE_NOTES_VERSION,
   });

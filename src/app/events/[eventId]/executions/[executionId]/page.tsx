@@ -96,12 +96,16 @@ export default async function ExecutionPage({
           </div>
         </div>
       </header>
-      <main className="mx-auto flex min-h-0 w-full flex-1 flex-col">
+      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 pb-4">
         <ExecutionTimesPanel
           initial={detail}
           actorId={actor?.id ?? null}
           actorName={actor?.name ?? null}
           canOperateAny={isAdmin && !impersonating}
+          canForceSuccess={
+            (!impersonating && user.isSuperAdmin) ||
+            Boolean(actor?.roles.includes("EVENT_ADMIN"))
+          }
           title="Consola"
         />
       </main>

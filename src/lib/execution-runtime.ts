@@ -14,6 +14,7 @@ import { computeRuntimePlannedStarts } from "@/lib/execution-schedule";
 import {
   runtimeStepActionSchema,
   stepIsOverdue,
+  unmetStepDependencies,
   type EvidenceMeta,
   type ExecutionDetail,
   type RuntimeStepAction,
@@ -76,7 +77,13 @@ export const stepTransitionSchema = z.object({
   comment: z.string().trim().max(4000).optional(),
 });
 
-function toStepSummary(doc: RuntimeStepDoc): RuntimeStepSummary {
+function toStepSummary(
+  doc: RuntimeStepDoc,
+  gateMeta?: {
+    producesGateId: string | null;
+    requiresGateIds: string[];
+  },
+): RuntimeStepSummary {
   const plannedStartAt = doc.plannedStartAt?.toISOString() ?? null;
   return {
     id: doc._id!.toHexString(),
@@ -96,6 +103,8 @@ function toStepSummary(doc: RuntimeStepDoc): RuntimeStepSummary {
     plannedStartAt,
     estimatedDurationMinutes: doc.estimatedDurationMinutes,
     dependencyStepIds: doc.dependencyStepIds.map((id) => id.toHexString()),
+    producesGateId: gateMeta?.producesGateId ?? null,
+    requiresGateIds: gateMeta?.requiresGateIds ?? [],
     executorActorId: doc.executorActorId?.toHexString() ?? null,
     executorName: doc.executorName,
     approverActorIds: doc.approverActorIds.map((id) => id.toHexString()),
@@ -106,6 +115,49 @@ function toStepSummary(doc: RuntimeStepDoc): RuntimeStepSummary {
     evidence: doc.evidence ?? [],
     updatedAt: doc.updatedAt.toISOString(),
   };
+}
+
+/** Alinea plannedOpenAt de gates al ancla de la instancia (mismo delta que los pasos). */
+function shiftGatesToAnchor(input: {
+  gates: Array<{
+    id: string;
+    name: string;
+    order: number;
+    plannedOpenAt: string | null;
+    opensTargets: Array<{ workstreamId: string; blockId: string | null }>;
+    closesAfterTargets: Array<{ workstreamId: string; blockId: string | null }>;
+    approvalRoles: Array<
+      "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
+    >;
+  }>;
+  designDayDStartAt: string | null;
+  instanceAnchorStartAt: Date | null;
+}) {
+  const { gates, designDayDStartAt, instanceAnchorStartAt } = input;
+  if (!designDayDStartAt || !instanceAnchorStartAt) {
+    return gates.map((gate) => ({
+      id: gate.id,
+      name: gate.name,
+      order: gate.order,
+      plannedOpenAt: gate.plannedOpenAt,
+      opensTargets: gate.opensTargets,
+      closesAfterTargets: gate.closesAfterTargets,
+      approvalRoles: gate.approvalRoles,
+    }));
+  }
+  const delta =
+    instanceAnchorStartAt.getTime() - new Date(designDayDStartAt).getTime();
+  return gates.map((gate) => ({
+    id: gate.id,
+    name: gate.name,
+    order: gate.order,
+    plannedOpenAt: gate.plannedOpenAt
+      ? new Date(new Date(gate.plannedOpenAt).getTime() + delta).toISOString()
+      : null,
+    opensTargets: gate.opensTargets,
+    closesAfterTargets: gate.closesAfterTargets,
+    approvalRoles: gate.approvalRoles,
+  }));
 }
 
 function requireComment(
@@ -344,6 +396,280 @@ export async function materializeExecutionSteps(input: {
   return docs.length;
 }
 
+function sameObjectIdList(a: ObjectId[], b: ObjectId[]) {
+  if (a.length !== b.length) return false;
+  const keys = new Set(a.map((id) => id.toHexString()));
+  return b.every((id) => keys.has(id.toHexString()));
+}
+
+function sameInstant(a: Date | null | undefined, b: Date | null | undefined) {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return a.getTime() === b.getTime();
+}
+
+async function resolveExecutorNames(
+  docs: Array<{ executorActorId: ObjectId | null; executorName: string | null }>,
+) {
+  const actorIds = [
+    ...new Set(
+      docs
+        .map((doc) => doc.executorActorId?.toHexString())
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ].map((id) => new ObjectId(id));
+  if (!actorIds.length) return;
+
+  const database = await getDatabase();
+  const actors = await database
+    .collection<{ _id: ObjectId; name?: string; email: string }>(
+      "eventMemberships",
+    )
+    .find({ _id: { $in: actorIds } })
+    .toArray();
+  const nameById = new Map(
+    actors.map((actor) => [
+      actor._id.toHexString(),
+      actor.name?.trim() || actor.email,
+    ]),
+  );
+  for (const doc of docs) {
+    if (doc.executorActorId) {
+      doc.executorName =
+        nameById.get(doc.executorActorId.toHexString()) ?? null;
+    }
+  }
+}
+
+/**
+ * Sincroniza una ejecución abierta con el diseño actual:
+ * - añade pasos nuevos del plan;
+ * - si refreshPlan, actualiza duración/deps/texto/horario de los ya materializados
+ *   (simulacro abierto o REAL aún PREPARADO).
+ * No toca status, comentarios ni evidencias.
+ */
+export async function syncExecutionPlanFromDesign(input: {
+  executionId: ObjectId;
+  eventId: string;
+  anchorStartAt: Date;
+  designDayDStartAt: string | null;
+  /** Releer plan del diseño sobre pasos existentes. */
+  refreshPlan: boolean;
+}): Promise<{ added: number; refreshed: number }> {
+  const design = await getEventDesign(input.eventId);
+  if (!design) return { added: 0, refreshed: 0 };
+
+  const database = await getDatabase();
+  const stepsCollection =
+    database.collection<RuntimeStepDoc>("executionSteps");
+  const existing = await stepsCollection
+    .find({ eventInstanceId: input.executionId })
+    .toArray();
+  const existingByDesignId = new Map(
+    existing.map((doc) => [doc.designStepId.toHexString(), doc]),
+  );
+
+  const designRows = design.pairs.flatMap((pair) =>
+    pair.activities.flatMap((activity) =>
+      activity.steps.map((step) => ({ pair, activity, step })),
+    ),
+  );
+  const missing = designRows.filter(
+    (row) => !existingByDesignId.has(row.step.id),
+  );
+
+  const designToRuntime = new Map(
+    [...existingByDesignId.entries()].map(([designId, doc]) => [
+      designId,
+      doc._id!,
+    ]),
+  );
+  for (const row of missing) {
+    designToRuntime.set(row.step.id, new ObjectId());
+  }
+
+  const plannedByDesignId = computeRuntimePlannedStarts({
+    steps: designRows.map(({ step }) => ({
+      id: step.id,
+      plannedStartAt: step.plannedStartAt,
+      estimatedDurationMinutes: step.estimatedDurationMinutes,
+      dependencyStepIds: step.dependencyStepIds,
+      producesGateId: step.producesGateId,
+      requiresGateIds: step.requiresGateIds,
+      workstreamId: step.workstreamId,
+      blockId: step.blockId,
+    })),
+    gates: design.gates.map((gate) => ({
+      id: gate.id,
+      plannedOpenAt: gate.plannedOpenAt,
+    })),
+    designDayDStartAt: input.designDayDStartAt,
+    instanceAnchorStartAt: input.anchorStartAt,
+  });
+
+  const now = new Date();
+  let added = 0;
+  let refreshed = 0;
+
+  if (missing.length) {
+    const docs: RuntimeStepDoc[] = missing.map(({ pair, activity, step }) => ({
+      _id: designToRuntime.get(step.id)!,
+      eventInstanceId: input.executionId,
+      eventId: new ObjectId(input.eventId),
+      designStepId: new ObjectId(step.id),
+      workstreamId: new ObjectId(pair.workstream.id),
+      workstreamName: pair.workstream.name,
+      blockId: new ObjectId(pair.block.id),
+      blockName: pair.block.name,
+      activityId: new ObjectId(activity.id),
+      activityName: activity.name,
+      name: step.name,
+      description: step.description,
+      longDescription: step.longDescription ?? "",
+      order: step.order,
+      plannedStartAt: plannedByDesignId.get(step.id) ?? input.anchorStartAt,
+      estimatedDurationMinutes: step.estimatedDurationMinutes,
+      dependencyStepIds: step.dependencyStepIds
+        .map((id) => designToRuntime.get(id))
+        .filter((id): id is ObjectId => Boolean(id)),
+      executorActorId: step.executorActorId
+        ? new ObjectId(step.executorActorId)
+        : null,
+      executorName: null,
+      approverActorIds: (step.approverActorIds ?? []).map(
+        (id) => new ObjectId(id),
+      ),
+      status: "PLANIFICADO",
+      forced: false,
+      comments: [],
+      evidence: [],
+      createdAt: now,
+      updatedAt: now,
+    }));
+    await resolveExecutorNames(docs);
+    await stepsCollection.insertMany(docs);
+    added = docs.length;
+  }
+
+  if (input.refreshPlan) {
+    const updates: Array<{
+      _id: ObjectId;
+      $set: Partial<RuntimeStepDoc>;
+    }> = [];
+
+    for (const { pair, activity, step } of designRows) {
+      const current = existingByDesignId.get(step.id);
+      if (!current?._id) continue;
+
+      const dependencyStepIds = step.dependencyStepIds
+        .map((id) => designToRuntime.get(id))
+        .filter((id): id is ObjectId => Boolean(id));
+      const plannedStartAt =
+        plannedByDesignId.get(step.id) ?? input.anchorStartAt;
+      const executorActorId = step.executorActorId
+        ? new ObjectId(step.executorActorId)
+        : null;
+      const approverActorIds = (step.approverActorIds ?? []).map(
+        (id) => new ObjectId(id),
+      );
+      const longDescription = step.longDescription ?? "";
+
+      const planChanged =
+        current.name !== step.name ||
+        current.description !== step.description ||
+        (current.longDescription ?? "") !== longDescription ||
+        current.order !== step.order ||
+        current.estimatedDurationMinutes !== step.estimatedDurationMinutes ||
+        !sameObjectIdList(current.dependencyStepIds ?? [], dependencyStepIds) ||
+        !sameInstant(current.plannedStartAt, plannedStartAt) ||
+        (current.executorActorId?.toHexString() ?? null) !==
+          (executorActorId?.toHexString() ?? null) ||
+        !sameObjectIdList(current.approverActorIds ?? [], approverActorIds) ||
+        current.workstreamName !== pair.workstream.name ||
+        current.blockName !== pair.block.name ||
+        current.activityName !== activity.name;
+
+      if (!planChanged) continue;
+
+      updates.push({
+        _id: current._id,
+        $set: {
+          workstreamName: pair.workstream.name,
+          blockName: pair.block.name,
+          activityName: activity.name,
+          name: step.name,
+          description: step.description,
+          longDescription,
+          order: step.order,
+          plannedStartAt,
+          estimatedDurationMinutes: step.estimatedDurationMinutes,
+          dependencyStepIds,
+          executorActorId,
+          approverActorIds,
+          updatedAt: now,
+        },
+      });
+    }
+
+    if (updates.length) {
+      const withNames = updates.map((item) => ({
+        executorActorId: item.$set.executorActorId ?? null,
+        executorName: null as string | null,
+        _id: item._id,
+        $set: item.$set,
+      }));
+      await resolveExecutorNames(withNames);
+      await stepsCollection.bulkWrite(
+        withNames.map((item) => ({
+          updateOne: {
+            filter: { _id: item._id },
+            update: {
+              $set: {
+                ...item.$set,
+                executorName: item.executorName,
+              },
+            },
+          },
+        })),
+      );
+      refreshed = updates.length;
+    }
+  }
+
+  if (added || refreshed) {
+    const parts: string[] = [];
+    if (added) parts.push(`${added} nuevo(s)`);
+    if (refreshed) parts.push(`${refreshed} actualizado(s) desde el diseño`);
+    await database.collection("timelineEntries").insertOne({
+      eventInstanceId: input.executionId,
+      occurredAt: now,
+      actorClerkUserId: "system",
+      action: refreshed
+        ? "EXECUTION_PLAN_REFRESHED"
+        : "EXECUTION_STEPS_SYNCED",
+      entityType: "execution",
+      entityId: input.executionId.toHexString(),
+      description: `Plan de ejecución: ${parts.join(", ")}.`,
+    });
+  }
+
+  return { added, refreshed };
+}
+
+/** @deprecated Usar syncExecutionPlanFromDesign. */
+export async function syncMissingExecutionSteps(input: {
+  executionId: ObjectId;
+  eventId: string;
+  anchorStartAt: Date;
+  designDayDStartAt: string | null;
+}): Promise<number> {
+  const result = await syncExecutionPlanFromDesign({
+    ...input,
+    refreshPlan: false,
+  });
+  return result.added;
+}
+
 export async function getExecutionDetail(
   executionId: string,
 ): Promise<ExecutionDetail | null> {
@@ -355,11 +681,52 @@ export async function getExecutionDetail(
     .findOne({ _id: id });
   if (!execution) return null;
 
+  const design = await getEventDesign(execution.eventId.toHexString());
+  const designDayDStartAt = design?.event.dayDStartAt ?? null;
+
+  const openStatuses = new Set(["PREPARADO", "EN_EJECUCION", "PAUSADO"]);
+  if (openStatuses.has(execution.status) && execution.anchorStartAt) {
+    // Simulacro abierto: relee el plan (duraciones/deps/horas). REAL en marcha:
+    // solo pasos nuevos (el snapshot del día real no se reescribe).
+    const refreshPlan =
+      execution.type === "SIMULACRO" || execution.status === "PREPARADO";
+    await syncExecutionPlanFromDesign({
+      executionId: id,
+      eventId: execution.eventId.toHexString(),
+      anchorStartAt: execution.anchorStartAt,
+      designDayDStartAt,
+      refreshPlan,
+    });
+  }
+
   const steps = await database
     .collection<RuntimeStepDoc>("executionSteps")
     .find({ eventInstanceId: id })
     .sort({ workstreamName: 1, order: 1, name: 1 })
     .toArray();
+
+  const gateMetaByDesignStep = new Map<
+    string,
+    { producesGateId: string | null; requiresGateIds: string[] }
+  >();
+  if (design) {
+    for (const pair of design.pairs) {
+      for (const activity of pair.activities) {
+        for (const step of activity.steps) {
+          gateMetaByDesignStep.set(step.id, {
+            producesGateId: step.producesGateId ?? null,
+            requiresGateIds: step.requiresGateIds ?? [],
+          });
+        }
+      }
+    }
+  }
+
+  const gates = shiftGatesToAnchor({
+    gates: design?.gates ?? [],
+    designDayDStartAt,
+    instanceAnchorStartAt: execution.anchorStartAt ?? null,
+  });
 
   return {
     id: execution._id!.toHexString(),
@@ -372,7 +739,13 @@ export async function getExecutionDetail(
     iteration: execution.iteration ?? 1,
     status: execution.status,
     createdAt: execution.createdAt.toISOString(),
-    steps: steps.map(toStepSummary),
+    steps: steps.map((doc) =>
+      toStepSummary(
+        doc,
+        gateMetaByDesignStep.get(doc.designStepId.toHexString()),
+      ),
+    ),
+    gates,
     blobConfigured: isBlobConfigured(),
   };
 }
@@ -451,6 +824,43 @@ export async function transitionRuntimeStep(input: {
     execution.type === "REAL"
   ) {
     throw new Error("Omitido y Simulado solo aplican en simulacro.");
+  }
+
+  if (input.action === "start") {
+    const siblings = await steps
+      .find({ eventInstanceId: executionId })
+      .toArray();
+    const summaries = siblings.map((doc) => toStepSummary(doc));
+    const blockers = unmetStepDependencies(
+      {
+        dependencyStepIds: step.dependencyStepIds.map((id) =>
+          id.toHexString(),
+        ),
+      },
+      summaries,
+    );
+    if (blockers.length) {
+      const failed = blockers.filter((item) => item.reason === "failed");
+      const pending = blockers.filter((item) => item.reason === "pending");
+      const parts: string[] = [];
+      if (pending.length) {
+        parts.push(
+          `pendiente(s): ${pending.map((item) => item.name).join(", ")}`,
+        );
+      }
+      if (failed.length) {
+        parts.push(
+          `fallido(s) — un Event Admin debe Forzar: ${failed.map((item) => item.name).join(", ")}`,
+        );
+      }
+      throw new Error(
+        `No se puede iniciar: dependencias sin cierre OK (${parts.join("; ")}).`,
+      );
+    }
+  }
+
+  if (input.action === "force_success" && step.status !== "FALLIDO") {
+    throw new Error("Solo se puede forzar un paso Fallido.");
   }
 
   const status = nextStatus({

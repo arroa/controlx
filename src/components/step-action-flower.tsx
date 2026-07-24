@@ -13,6 +13,8 @@ export type FlowerAction = {
   icon: LucideIcon;
   onClick: () => void;
   disabled?: boolean;
+  /** Tooltip nativo del botón. */
+  title?: string;
   /** @deprecated prefer `tone` */
   danger?: boolean;
   tone?: FlowerTone;
@@ -105,7 +107,7 @@ export function StepActionFlower({
               <button
                 key={action.key}
                 type="button"
-                title={action.label}
+                title={action.title ?? action.label}
                 aria-label={action.label}
                 disabled={action.disabled}
                 onClick={(event) => {
