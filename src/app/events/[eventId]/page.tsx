@@ -9,6 +9,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
+import { ControlXGuideChat } from "@/components/controlx-guide-chat";
 import { DevActorSwitcher } from "@/components/dev-actor-switcher";
 import { EventWorkspace } from "@/components/event-workspace";
 import { Badge } from "@/components/ui/badge";
@@ -152,6 +153,13 @@ export default async function EventPage({
           readOnly={workspace.event.status === "ARCHIVED"}
         />
       </main>
+
+      <ControlXGuideChat
+        zone="overview"
+        organizationId={workspace.organization?.id}
+        eventId={eventId}
+        eventName={workspace.event.name}
+      />
     </div>
   );
 }

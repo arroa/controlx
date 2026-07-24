@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageSquareText, Newspaper } from "lucide-react";
+import { MessageSquareText, Newspaper, ScrollText } from "lucide-react";
 
 import { UserMenu } from "@/components/user-menu";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,14 @@ export async function AuthHeader() {
           <Link href="/feedback" className="gap-1.5">
             <MessageSquareText className="size-4" />
             Mejoras
+          </Link>
+        </Button>
+      ) : null}
+      {user.isSuperAdmin ? (
+        <Button variant="ghost" size="sm" asChild>
+          <Link href="/admin/ai-audit" className="gap-1.5">
+            <ScrollText className="size-4" />
+            Auditoría IA
           </Link>
         </Button>
       ) : null}

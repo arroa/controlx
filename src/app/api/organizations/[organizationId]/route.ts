@@ -98,7 +98,7 @@ export async function DELETE(_: Request, { params }: RouteParams) {
             ? error.message
             : "No fue posible eliminar la organización.",
       },
-      { status: 409 },
+      { status: 500 },
     );
   }
 }

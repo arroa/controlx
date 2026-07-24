@@ -181,11 +181,8 @@ export function AdminDashboard({
         open={editorOpen}
         organizationId={editingId}
         onOpenChange={setEditorOpen}
-        onSaved={(organization, options) => {
+        onSaved={(organization) => {
           upsertOrganization(organization);
-          if (options?.continueEditing) {
-            setEditingId(organization.id);
-          }
         }}
         onDeleted={removeOrganization}
       />
@@ -266,10 +263,7 @@ function OrganizationEditorDialog({
   open: boolean;
   organizationId: string | null;
   onOpenChange: (open: boolean) => void;
-  onSaved: (
-    organization: OrganizationSummary,
-    options?: { continueEditing?: boolean },
-  ) => void;
+  onSaved: (organization: OrganizationSummary) => void;
   onDeleted: (organizationId: string) => void;
 }) {
   const isCreate = !organizationId;
@@ -357,15 +351,8 @@ function OrganizationEditorDialog({
           setError(payload.error ?? "No fue posible crear la organización.");
           return;
         }
-        onSaved(payload.organization, { continueEditing: true });
-        setAdmins([]);
-        setUsage({
-          eventCount: 0,
-          adminCount: 0,
-          executionCount: 0,
-          isEmpty: true,
-        });
-        setStatus(payload.organization.status);
+        onSaved(payload.organization);
+        onOpenChange(false);
         return;
       }
 
@@ -383,7 +370,7 @@ function OrganizationEditorDialog({
         return;
       }
       onSaved(payload.organization);
-      setStatus(payload.organization.status);
+      onOpenChange(false);
     } catch {
       setError("No fue posible conectar con ControlX.");
     } finally {
@@ -719,7 +706,7 @@ function OrganizationEditorDialog({
                   <Button
                     type="button"
                     variant="destructive"
-                    disabled={loading || (usage ? !usage.isEmpty : true)}
+                    disabled={loading}
                   >
                     <Trash2 className="size-4" />
                     Eliminar
@@ -727,16 +714,19 @@ function OrganizationEditorDialog({
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>¿Eliminar definitivamente?</AlertDialogTitle>
+                    <AlertDialogTitle>
+                      ¿Borrar organización por completo?
+                    </AlertDialogTitle>
                     <AlertDialogDescription>
-                      Solo disponible si no hay eventos ni ejecuciones. Esta
-                      acción no se puede deshacer.
+                      Acción irreversible de SuperAdmin: borra la organización,
+                      sus eventos, diseño, actores, simulacros/ejecuciones y
+                      evidencias asociadas. No hay deshacer.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
                     <AlertDialogAction onClick={hardDelete}>
-                      Eliminar
+                      Sí, borrar todo
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>

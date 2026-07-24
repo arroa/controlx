@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
+import { ControlXGuideChat } from "@/components/controlx-guide-chat";
 import { EventPlanner } from "@/components/event-planner";
 import { canAccessEvent, getEventDesign } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
@@ -67,6 +68,13 @@ export default async function EventPlanPage({
         />
         </div>
       </main>
+
+      <ControlXGuideChat
+        zone="plan"
+        organizationId={design.organization?.id}
+        eventId={eventId}
+        eventName={design.event.name}
+      />
     </div>
   );
 }

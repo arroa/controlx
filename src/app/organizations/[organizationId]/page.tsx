@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
+import { ControlXGuideChat } from "@/components/controlx-guide-chat";
 import { OrganizationWorkspace } from "@/components/organization-workspace";
 import { Badge } from "@/components/ui/badge";
 import { canAccessOrganization, getOrganizationWorkspace } from "@/lib/admin-data";
@@ -77,6 +78,11 @@ export default async function OrganizationPage({
           readOnly={workspace.organization.status === "ARCHIVED"}
         />
       </main>
+
+      <ControlXGuideChat
+        zone="events"
+        organizationId={organizationId}
+      />
     </div>
   );
 }

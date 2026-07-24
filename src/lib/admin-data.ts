@@ -1009,24 +1009,62 @@ export async function deleteOrganization(organizationId: string): Promise<void> 
     throw new Error("Organización inválida.");
   }
 
-  const usage = await getOrganizationUsage(organizationId);
-  if (!usage) throw new Error("La organización no existe.");
-  if (!usage.isEmpty) {
-    throw new Error(
-      "La organización tiene eventos o ejecuciones. Archívala o elimina ese contenido primero.",
-    );
-  }
-
   const database = await getDatabase();
   const id = new ObjectId(organizationId);
-  const deleted = await database
+  const organization = await database
     .collection<OrganizationDocument>("organizations")
-    .deleteOne({ _id: id });
-  if (!deleted.deletedCount) throw new Error("La organización no existe.");
+    .findOne({ _id: id }, { projection: { _id: 1 } });
+  if (!organization) throw new Error("La organización no existe.");
+
+  const events = await database
+    .collection<EventDocument>("events")
+    .find({ organizationId: id }, { projection: { _id: 1 } })
+    .toArray();
+  const eventIds = events.map((event) => event._id!);
+
+  if (eventIds.length) {
+    const instances = await database
+      .collection<ExecutionDocument>("eventInstances")
+      .find({ eventId: { $in: eventIds } }, { projection: { _id: 1 } })
+      .toArray();
+    const instanceIds = instances.map((doc) => doc._id!);
+
+    if (instanceIds.length) {
+      await Promise.all([
+        database
+          .collection("executionSteps")
+          .deleteMany({ eventInstanceId: { $in: instanceIds } }),
+        database
+          .collection("timelineEntries")
+          .deleteMany({ eventInstanceId: { $in: instanceIds } }),
+      ]);
+    }
+
+    await Promise.all([
+      database
+        .collection("eventInstances")
+        .deleteMany({ eventId: { $in: eventIds } }),
+      database
+        .collection("eventMemberships")
+        .deleteMany({ eventId: { $in: eventIds } }),
+      database.collection("workstreams").deleteMany({ eventId: { $in: eventIds } }),
+      database.collection("blocks").deleteMany({ eventId: { $in: eventIds } }),
+      database.collection("activities").deleteMany({ eventId: { $in: eventIds } }),
+      database.collection("designSteps").deleteMany({ eventId: { $in: eventIds } }),
+      database.collection("gates").deleteMany({ eventId: { $in: eventIds } }),
+      database.collection("phases").deleteMany({ eventId: { $in: eventIds } }),
+      database.collection("events").deleteMany({ _id: { $in: eventIds } }),
+    ]);
+  }
 
   await database
     .collection<OrganizationMembershipDocument>("organizationMemberships")
     .deleteMany({ organizationId: id });
+
+  const deleted = await database
+    .collection<OrganizationDocument>("organizations")
+    .deleteOne({ _id: id });
+  if (!deleted.deletedCount) throw new Error("La organización no existe.");
 }
 
 async function requireActiveOrganization(organizationId: ObjectId) {

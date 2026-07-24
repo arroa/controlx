@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
+import { ControlXGuideChat } from "@/components/controlx-guide-chat";
 import { EventExecutions } from "@/components/event-executions";
 import {
   canAccessEvent,
@@ -72,6 +73,13 @@ export default async function EventExecutionsPage({
           />
         </div>
       </main>
+
+      <ControlXGuideChat
+        zone="executions"
+        organizationId={workspace.organization?.id}
+        eventId={eventId}
+        eventName={workspace.event.name}
+      />
     </div>
   );
 }

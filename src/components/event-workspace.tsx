@@ -35,13 +35,6 @@ export function EventWorkspace({
 
   return (
     <div className="space-y-10">
-      {!readOnly ? (
-        <EventReadinessBoard
-          readiness={readiness}
-          onReadinessChange={setReadiness}
-        />
-      ) : null}
-
       <section>
         <div className="mb-4">
           <h2 className="text-xl font-semibold">Preparación del evento</h2>
@@ -86,6 +79,13 @@ export function EventWorkspace({
           />
         </div>
       </section>
+
+      {!readOnly ? (
+        <EventReadinessBoard
+          readiness={readiness}
+          onReadinessChange={setReadiness}
+        />
+      ) : null}
     </div>
   );
 }

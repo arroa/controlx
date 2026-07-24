@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
+import { ControlXGuideChat } from "@/components/controlx-guide-chat";
 import { EventSetup } from "@/components/event-setup";
 import {
   canAccessEvent,
@@ -79,6 +80,13 @@ export default async function EventSetupPage({
           canManageEventAdminRole={canManageEventAdminRole}
         />
       </main>
+
+      <ControlXGuideChat
+        zone="setup"
+        organizationId={setup.organization?.id}
+        eventId={eventId}
+        eventName={setup.event.name}
+      />
     </div>
   );
 }
