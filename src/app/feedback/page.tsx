@@ -34,7 +34,7 @@ export default async function FeedbackPage() {
           <div className="ml-auto flex items-center gap-2">
             <Badge variant="outline" className="gap-1.5">
               <MessageSquareText className="size-3" />
-              OrgAdmin+
+              Todos
             </Badge>
             <AuthHeader />
           </div>

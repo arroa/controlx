@@ -56,13 +56,12 @@ export async function isOrgAdmin(email: string): Promise<boolean> {
   return Boolean(membership);
 }
 
-/** Beta feedback: SuperAdmin u OrgAdmin. */
-export async function canAccessFeedback(user: {
+/** Beta feedback: cualquier usuario autenticado. */
+export async function canAccessFeedback(_user: {
   email: string;
   isSuperAdmin: boolean;
 }): Promise<boolean> {
-  if (user.isSuperAdmin) return true;
-  return isOrgAdmin(user.email);
+  return true;
 }
 
 export async function listFeedback(limit = 100): Promise<FeedbackItem[]> {

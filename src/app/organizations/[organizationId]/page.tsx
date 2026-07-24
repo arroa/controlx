@@ -1,11 +1,10 @@
-import { Building2, ChevronRight, Command, ShieldCheck } from "lucide-react";
+import { ChevronRight, Command } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
 import { ControlXGuideChat } from "@/components/controlx-guide-chat";
 import { OrganizationWorkspace } from "@/components/organization-workspace";
-import { Badge } from "@/components/ui/badge";
 import { canAccessOrganization, getOrganizationWorkspace } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 
@@ -42,14 +41,6 @@ export default async function OrganizationPage({
             {workspace.organization.name}
           </span>
           <div className="ml-auto flex items-center gap-2">
-            <Badge variant="outline" className="gap-1.5">
-              {user.isSuperAdmin ? (
-                <ShieldCheck className="size-3" />
-              ) : (
-                <Building2 className="size-3" />
-              )}
-              {user.isSuperAdmin ? "SuperAdmin" : "OrgAdmin"}
-            </Badge>
             <AuthHeader />
           </div>
         </div>

@@ -1,10 +1,4 @@
-import {
-  Building2,
-  CalendarRange,
-  ChevronRight,
-  Command,
-  ShieldCheck,
-} from "lucide-react";
+import { ChevronRight, Command } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -48,13 +42,6 @@ export default async function EventPage({
   const readiness = await getEventReadinessSnapshot(eventId);
   if (!readiness) notFound();
 
-  const RoleIcon =
-    role === "SuperAdmin"
-      ? ShieldCheck
-      : role === "OrgAdmin"
-        ? Building2
-        : CalendarRange;
-
   const showImpersonation = canUseDevActorImpersonation(user);
   const actors = showImpersonation ? await listEventActors(eventId) : [];
   const { actor, impersonating } = showImpersonation
@@ -96,10 +83,6 @@ export default async function EventPage({
           ) : null}
           <span className="text-sm font-medium">{workspace.event.name}</span>
           <div className="ml-auto flex items-center gap-2">
-            <Badge variant="outline" className="gap-1.5">
-              <RoleIcon className="size-3" />
-              {role}
-            </Badge>
             {showImpersonation ? (
               <DevActorSwitcher
                 eventId={eventId}

@@ -1,10 +1,9 @@
-import { Command, ShieldCheck, ScrollText } from "lucide-react";
+import { Command, ScrollText } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AiAuditBoard } from "@/components/ai-audit-board";
 import { AuthHeader } from "@/components/auth-header";
-import { Badge } from "@/components/ui/badge";
 import { listGuideAudits } from "@/lib/ai/guide-audit";
 import {
   GUIDE_MAX_MESSAGE_CHARS,
@@ -37,10 +36,6 @@ export default async function AiAuditPage() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <Badge variant="outline" className="gap-1.5">
-              <ShieldCheck className="size-3" />
-              SuperAdmin
-            </Badge>
             <AuthHeader />
           </div>
         </div>

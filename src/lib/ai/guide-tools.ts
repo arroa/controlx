@@ -9,7 +9,6 @@ import {
   getEventDesign,
   getEventWorkspace,
   getOrganizationWorkspace,
-  listEventActors,
 } from "@/lib/admin-data";
 import type { GuideZone } from "@/lib/ai/guide-zones";
 import {
@@ -56,7 +55,44 @@ function resolveEventId(ctx: GuideToolContext, eventId?: string) {
   return eventId?.trim() || ctx.eventId || null;
 }
 
-function compactDesign(design: NonNullable<Awaited<ReturnType<typeof getEventDesign>>>) {
+/** Diseño sin PII: sin nombres, emails ni ids de actores. */
+function compactDesign(
+  design: NonNullable<Awaited<ReturnType<typeof getEventDesign>>>,
+) {
+  let stepsWithoutExecutor = 0;
+  let stepsWithoutApprover = 0;
+  let stepCount = 0;
+
+  const matrix = design.pairs.map((pair) => ({
+    workstream: { id: pair.workstream.id, name: pair.workstream.name },
+    block: { id: pair.block.id, name: pair.block.name },
+    activities: pair.activities.map((activity) => ({
+      id: activity.id,
+      name: activity.name,
+      description: activity.description || null,
+      steps: activity.steps.map((step) => {
+        stepCount += 1;
+        const hasExecutor = Boolean(step.executorActorId);
+        const approverCount = step.approverActorIds?.length ?? 0;
+        if (!hasExecutor) stepsWithoutExecutor += 1;
+        if (approverCount === 0) stepsWithoutApprover += 1;
+        return {
+          id: step.id,
+          name: step.name,
+          description: step.description || null,
+          estimatedDurationMinutes: step.estimatedDurationMinutes,
+          plannedStartAt: step.plannedStartAt,
+          dependencyStepIds: step.dependencyStepIds,
+          requiresGateIds: step.requiresGateIds,
+          producesGateId: step.producesGateId,
+          hasExecutor,
+          approverCount,
+          approvalRoles: step.approvalRoles,
+        };
+      }),
+    })),
+  }));
+
   return {
     event: {
       id: design.event.id,
@@ -66,7 +102,9 @@ function compactDesign(design: NonNullable<Awaited<ReturnType<typeof getEventDes
       dayDStartAt: design.event.dayDStartAt,
       description: design.event.description || null,
     },
-    organization: design.organization,
+    organization: design.organization
+      ? { id: design.organization.id, name: design.organization.name }
+      : null,
     workstreams: design.workstreams.map((ws) => ({
       id: ws.id,
       name: ws.name,
@@ -88,28 +126,7 @@ function compactDesign(design: NonNullable<Awaited<ReturnType<typeof getEventDes
       opensTargets: gate.opensTargets,
       closesAfterTargets: gate.closesAfterTargets,
     })),
-    matrix: design.pairs.map((pair) => ({
-      workstream: { id: pair.workstream.id, name: pair.workstream.name },
-      block: { id: pair.block.id, name: pair.block.name },
-      activities: pair.activities.map((activity) => ({
-        id: activity.id,
-        name: activity.name,
-        description: activity.description || null,
-        steps: activity.steps.map((step) => ({
-          id: step.id,
-          name: step.name,
-          description: step.description || null,
-          estimatedDurationMinutes: step.estimatedDurationMinutes,
-          plannedStartAt: step.plannedStartAt,
-          dependencyStepIds: step.dependencyStepIds,
-          requiresGateIds: step.requiresGateIds,
-          producesGateId: step.producesGateId,
-          executorActorId: step.executorActorId,
-          approverActorIds: step.approverActorIds,
-          approvalRoles: step.approvalRoles,
-        })),
-      })),
-    })),
+    matrix,
     counts: {
       workstreams: design.workstreams.length,
       blocks: design.blocks.length,
@@ -118,47 +135,12 @@ function compactDesign(design: NonNullable<Awaited<ReturnType<typeof getEventDes
         (sum, pair) => sum + pair.activities.length,
         0,
       ),
-      steps: design.pairs.reduce(
-        (sum, pair) =>
-          sum +
-          pair.activities.reduce(
-            (inner, activity) => inner + activity.steps.length,
-            0,
-          ),
-        0,
-      ),
+      steps: stepCount,
+      stepsWithoutExecutor,
+      stepsWithoutApprover,
     },
-  };
-}
-
-function withActorNames(
-  compact: ReturnType<typeof compactDesign>,
-  actors: Awaited<ReturnType<typeof listEventActors>>,
-) {
-  const byId = new Map(actors.map((actor) => [actor.id, actor.name]));
-  return {
-    ...compact,
-    actorsIndex: actors.map((actor) => ({
-      id: actor.id,
-      name: actor.name,
-      area: actor.area,
-      roles: actor.roles,
-    })),
-    matrix: compact.matrix.map((pair) => ({
-      ...pair,
-      activities: pair.activities.map((activity) => ({
-        ...activity,
-        steps: activity.steps.map((step) => ({
-          ...step,
-          executorName: step.executorActorId
-            ? (byId.get(step.executorActorId) ?? null)
-            : null,
-          approverNames: step.approverActorIds.map(
-            (id) => byId.get(id) ?? id,
-          ),
-        })),
-      })),
-    })),
+    privacy:
+      "Sin datos de personas (nombres, emails, admins, actores). Solo cobertura de asignación (sí/no y conteos).",
   };
 }
 
@@ -166,7 +148,7 @@ export function createGuideTools(ctx: GuideToolContext) {
   return {
     search_knowledge_base: tool({
       description:
-        "Busca en la base de conocimiento curada de ControlX (conceptos de producto). Úsala PRIMERO para preguntas de cómo funciona el sistema, antes de improvisar.",
+        "Busca en la base de conocimiento curada de ControlX (conceptos de producto). Úsala PRIMERO para 'cómo funciona', 'ayuda con roles/setup/diseño/plan', etc.",
       inputSchema: z.object({
         query: z
           .string()
@@ -200,7 +182,7 @@ export function createGuideTools(ctx: GuideToolContext) {
 
     list_organization_events: tool({
       description:
-        "Lista los eventos de la organización activa (nombre, estado, Día D, conteo de ejecuciones).",
+        "Lista los eventos de la organización activa (nombre, estado, Día D, conteo de ejecuciones). Sin personas.",
       inputSchema: z.object({}),
       execute: async () => {
         const organizationId = ctx.organizationId;
@@ -217,7 +199,11 @@ export function createGuideTools(ctx: GuideToolContext) {
         if (!workspace) return { error: "Organización no encontrada." };
 
         return {
-          organization: workspace.organization,
+          organization: {
+            id: workspace.organization.id,
+            name: workspace.organization.name,
+            status: workspace.organization.status,
+          },
           events: workspace.events.map((event) => ({
             id: event.id,
             name: event.name,
@@ -233,7 +219,7 @@ export function createGuideTools(ctx: GuideToolContext) {
 
     get_event_overview: tool({
       description:
-        "Obtiene resumen del evento: estado, timezone, Día D, admins y ejecuciones recientes.",
+        "Resumen del evento: estado, timezone, Día D y ejecuciones recientes. Sin admins ni personas.",
       inputSchema: z.object({
         eventId: z
           .string()
@@ -255,13 +241,13 @@ export function createGuideTools(ctx: GuideToolContext) {
         if (!workspace) return { error: "Evento no encontrado." };
 
         return {
-          organization: workspace.organization,
+          organization: workspace.organization
+            ? {
+                id: workspace.organization.id,
+                name: workspace.organization.name,
+              }
+            : null,
           event: workspace.event,
-          admins: workspace.admins.map((admin) => ({
-            name: admin.name,
-            email: admin.email,
-            role: admin.role,
-          })),
           executions: workspace.executions.slice(0, 10).map((execution) => ({
             id: execution.id,
             name: execution.name,
@@ -277,7 +263,7 @@ export function createGuideTools(ctx: GuideToolContext) {
 
     get_event_design: tool({
       description:
-        "Lee el diseño completo del evento: workstreams, bloques, actividades, pasos, gates y asignaciones.",
+        "Lee el diseño del evento (workstreams, bloques, actividades, pasos, gates). Solo indica si cada paso tiene ejecutor/aprobadores (booleans/conteos), sin nombres de personas.",
       inputSchema: z.object({
         eventId: z
           .string()
@@ -295,19 +281,16 @@ export function createGuideTools(ctx: GuideToolContext) {
         const access = await assertEventAccess(ctx, id);
         if ("error" in access) return access;
 
-        const [design, actors] = await Promise.all([
-          getEventDesign(id),
-          listEventActors(id),
-        ]);
+        const design = await getEventDesign(id);
         if (!design) return { error: "Evento no encontrado." };
 
-        return withActorNames(compactDesign(design), actors);
+        return compactDesign(design);
       },
     }),
 
     search_design_steps: tool({
       description:
-        "Busca pasos del diseño por texto (nombre o descripción) y devuelve coincidencias con contexto.",
+        "Busca pasos del diseño por texto. Devuelve contexto estructural y cobertura de roles (sí/no), sin nombres de personas.",
       inputSchema: z.object({
         query: z.string().min(1).describe("Texto a buscar en pasos."),
         eventId: z.string().optional(),
@@ -320,20 +303,17 @@ export function createGuideTools(ctx: GuideToolContext) {
         const access = await assertEventAccess(ctx, id);
         if ("error" in access) return access;
 
-        const [design, actors] = await Promise.all([
-          getEventDesign(id),
-          listEventActors(id),
-        ]);
+        const design = await getEventDesign(id);
         if (!design) return { error: "Evento no encontrado." };
 
-        const byId = new Map(actors.map((actor) => [actor.id, actor.name]));
         const needle = query.trim().toLowerCase();
         const matches: Array<Record<string, unknown>> = [];
 
         for (const pair of design.pairs) {
           for (const activity of pair.activities) {
             for (const step of activity.steps) {
-              const haystack = `${step.name} ${step.description} ${step.longDescription}`.toLowerCase();
+              const haystack =
+                `${step.name} ${step.description} ${step.longDescription}`.toLowerCase();
               if (!haystack.includes(needle)) continue;
               matches.push({
                 stepId: step.id,
@@ -342,12 +322,8 @@ export function createGuideTools(ctx: GuideToolContext) {
                 workstream: pair.workstream.name,
                 block: pair.block.name,
                 activity: activity.name,
-                executorName: step.executorActorId
-                  ? (byId.get(step.executorActorId) ?? null)
-                  : null,
-                approverNames: step.approverActorIds.map(
-                  (actorId) => byId.get(actorId) ?? actorId,
-                ),
+                hasExecutor: Boolean(step.executorActorId),
+                approverCount: step.approverActorIds?.length ?? 0,
                 dependencyStepIds: step.dependencyStepIds,
                 requiresGateIds: step.requiresGateIds,
                 plannedStartAt: step.plannedStartAt,
@@ -368,38 +344,9 @@ export function createGuideTools(ctx: GuideToolContext) {
       },
     }),
 
-    get_event_actors: tool({
-      description:
-        "Lista actores del mapa del evento con área y roles (EventAdmin, Ejecutor, Aprobador, SteerCo).",
-      inputSchema: z.object({
-        eventId: z.string().optional(),
-      }),
-      execute: async ({ eventId }) => {
-        const id = resolveEventId(ctx, eventId);
-        if (!id) {
-          return { error: "Necesitas un evento abierto o un eventId." };
-        }
-        const access = await assertEventAccess(ctx, id);
-        if ("error" in access) return access;
-
-        const actors = await listEventActors(id);
-        return {
-          eventId: id,
-          actors: actors.map((actor) => ({
-            id: actor.id,
-            name: actor.name,
-            email: actor.email,
-            area: actor.area,
-            roles: actor.roles,
-          })),
-          count: actors.length,
-        };
-      },
-    }),
-
     get_event_readiness: tool({
       description:
-        "Obtiene el readiness del evento: checks de setup/diseño/roles/plan, blockers y si puede arrancar.",
+        "Obtiene el readiness del evento: checks de setup/diseño/roles/plan, blockers y si puede arrancar. Sin listados de personas.",
       inputSchema: z.object({
         eventId: z.string().optional(),
       }),

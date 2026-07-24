@@ -5,7 +5,6 @@ import { UserMenu } from "@/components/user-menu";
 import { Button } from "@/components/ui/button";
 import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
-import { canAccessFeedback } from "@/lib/feedback";
 
 export async function AuthHeader() {
   const bypassEnabled = isDevBypassEnabled();
@@ -19,8 +18,6 @@ export async function AuthHeader() {
     );
   }
 
-  const showFeedback = await canAccessFeedback(user);
-
   return (
     <>
       <Button variant="ghost" size="sm" asChild>
@@ -29,14 +26,12 @@ export async function AuthHeader() {
           Novedades
         </Link>
       </Button>
-      {showFeedback ? (
-        <Button variant="ghost" size="sm" asChild>
-          <Link href="/feedback" className="gap-1.5">
-            <MessageSquareText className="size-4" />
-            Mejoras
-          </Link>
-        </Button>
-      ) : null}
+      <Button variant="ghost" size="sm" asChild>
+        <Link href="/feedback" className="gap-1.5">
+          <MessageSquareText className="size-4" />
+          Mejoras
+        </Link>
+      </Button>
       {user.isSuperAdmin ? (
         <Button variant="ghost" size="sm" asChild>
           <Link href="/admin/ai-audit" className="gap-1.5">

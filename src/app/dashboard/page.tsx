@@ -1,9 +1,8 @@
-import { Command, ShieldCheck } from "lucide-react";
+import { Command } from "lucide-react";
 import { redirect } from "next/navigation";
 
 import { AdminDashboard } from "@/components/admin-dashboard";
 import { AuthHeader } from "@/components/auth-header";
-import { Badge } from "@/components/ui/badge";
 import { getFirstAssignedPath, listOrganizations } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 
@@ -35,10 +34,6 @@ export default async function DashboardPage() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <Badge variant="outline" className="gap-1.5">
-              <ShieldCheck className="size-3" />
-              SuperAdmin
-            </Badge>
             <AuthHeader />
           </div>
         </div>

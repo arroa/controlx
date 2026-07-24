@@ -50,7 +50,7 @@ const SUGGESTIONS_BY_ZONE: Record<GuideZone, string[]> = {
   ],
   roles: [
     "¿Qué pasos no tienen ejecutor?",
-    "¿Quiénes son los aprobadores asignados?",
+    "¿Cuántos pasos faltan de aprobador?",
     "¿Cómo se asignan roles a los pasos?",
   ],
   plan: [

@@ -74,17 +74,24 @@ El diseño responde “qué hay que hacer”, no todavía “quién” (Roles) n
   {
     id: "roles",
     title: "Roles: ejecutores y aprobadores",
-    tags: ["roles", "ejecutor", "aprobador", "steerco", "asignacion"],
+    tags: ["roles", "ejecutor", "aprobador", "steerco", "asignacion", "ayuda"],
     zones: ["all", "roles", "overview"],
     summary:
-      "En Roles se asigna quién ejecuta y quién aprueba cada paso del diseño.",
-    body: `Roles es el paso 3 de 4.
+      "En Roles se asigna quién ejecuta y quién aprueba cada paso del diseño. Explica el proceso, no listes personas.",
+    body: `Roles es el paso 3 de 4. Pantalla: /events/{id}/roles
 
-- Ejecutor: actor con rol EXECUTOR asignado a un paso (uno por paso).
-- Aprobadores: uno o varios actores APPROVER/STEERCO por paso.
-- EventAdmin configura el evento; no implica que ejecute pasos por ese rol.
+Cómo usar la pantalla:
+1. Elige un actor del mapa (debe tener rol EXECUTOR y/o APPROVER/STEERCO en Setup).
+2. Asígnarlo a un paso como ejecutor o como aprobador.
+3. Repite hasta cubrir los pasos relevantes.
 
-Si faltan ejecutores o aprobadores, el readiness lo marca y el evento no debería arrancar limpio.`,
+Conceptos:
+- Ejecutor: un actor EXECUTOR por paso (hace el trabajo en la ejecución).
+- Aprobadores: uno o varios APPROVER/STEERCO por paso.
+- EventAdmin: configura el evento en Setup; NO es lo mismo que “roles de paso”. No hace falta listar quiénes son EventAdmin para explicar esta pantalla.
+
+Si faltan ejecutores o aprobadores, el readiness lo marca (conteos / pasos sin cobertura).
+Para “ayuda con roles”: explica este flujo. El asistente no lista personas ni admins.`,
   },
   {
     id: "plan",
@@ -142,13 +149,15 @@ El asistente guía explica el sistema; el copiloto de ejecución (futuro) es qui
     tags: ["actor", "eventadmin", "executor", "approver", "steerco"],
     zones: ["all", "setup", "roles"],
     summary: "Roles posibles en el mapa de actores del evento.",
-    body: `Roles del mapa:
+    body: `Roles del mapa (se definen en Setup → actores):
 - EVENT_ADMIN: configura el evento.
 - EXECUTOR: puede ejecutar pasos asignados.
 - APPROVER: aprueba pasos puntuales.
 - STEERCO: aprobación de nivel más global / gobierno.
 
-Una persona puede tener varios roles. La asignación a pasos se hace en la pantalla Roles.`,
+Una persona puede tener varios roles. La asignación a pasos se hace en la pantalla Roles.
+
+Importante: explicar estos roles ≠ enumerar quiénes los tienen. El asistente no tiene acceso al directorio de personas.`,
   },
 ];
 
