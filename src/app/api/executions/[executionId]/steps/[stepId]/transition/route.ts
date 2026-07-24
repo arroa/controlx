@@ -61,10 +61,11 @@ export async function POST(request: Request, { params }: RouteParams) {
       stepId,
       action: parsed.data.action,
       comment: parsed.data.comment,
+      occurredAt: parsed.data.occurredAt,
       actorId: authResult.user.id,
       actorLabel: authResult.user.email,
     });
-    return NextResponse.json({ step: next });
+    return NextResponse.json({ step: next.step, steps: next.steps });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No fue posible." },

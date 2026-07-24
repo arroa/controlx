@@ -6,6 +6,7 @@ import {
   CircleCheck,
   CirclePlay,
   CircleX,
+  RotateCcw,
   ShieldAlert,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -126,7 +127,7 @@ function startBlockedLabel(
   if (!blockers.length) return null;
   const failed = blockers.filter((item) => item.reason === "failed");
   if (failed.length) {
-    return `Deps fallidas — Event Admin debe Forzar: ${failed.map((item) => item.name).join(", ")}`;
+    return `Deps fallidas — rearrancar el fallido o Event Admin puede Forzar: ${failed.map((item) => item.name).join(", ")}`;
   }
   return `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`;
 }
@@ -210,16 +211,29 @@ function flowerActionsFor(input: {
     );
   }
 
-  if (step.status === "FALLIDO" && canForceSuccess) {
-    actions.push({
-      key: "force",
-      label: "Forzar OK",
-      icon: ShieldAlert,
-      tone: "neutral",
-      disabled: busy,
-      title: "Requiere comentario. Desbloquea dependientes.",
-      onClick: () => onOutcome("force_success"),
-    });
+  if (step.status === "FALLIDO") {
+    if (canAct) {
+      actions.push({
+        key: "restart",
+        label: "Rearrancar",
+        icon: RotateCcw,
+        tone: "go",
+        disabled: busy,
+        title: "Vuelve a Iniciado para intentarlo de nuevo.",
+        onClick: () => onAction("restart"),
+      });
+    }
+    if (canForceSuccess) {
+      actions.push({
+        key: "force",
+        label: "Forzar OK",
+        icon: ShieldAlert,
+        tone: "neutral",
+        disabled: busy,
+        title: "Requiere comentario. Desbloquea dependientes.",
+        onClick: () => onOutcome("force_success"),
+      });
+    }
   }
 
   return actions;
@@ -372,18 +386,27 @@ export function ExecutorTimesMap({
     const raw: Omit<TimedStep, "column">[] = candidateSteps.map((step) => {
       const durationMin =
         step.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
-      const startMs = step.plannedStartAt
-        ? new Date(step.plannedStartAt).getTime()
-        : t0Ms;
-      const endMs = startMs + durationMin * 60_000;
+      const startMs = step.actualStartedAt
+        ? new Date(step.actualStartedAt).getTime()
+        : step.plannedStartAt
+          ? new Date(step.plannedStartAt).getTime()
+          : t0Ms;
+      const endMs = step.actualEndedAt
+        ? new Date(step.actualEndedAt).getTime()
+        : startMs + durationMin * 60_000;
+      const safeStart = Math.min(startMs, endMs);
+      const safeEnd = Math.max(startMs, endMs);
       const mine = isMineStep(step, actorId);
       return {
         step,
-        startMs,
-        endMs,
-        startMin: Math.max(0, Math.round((startMs - t0Ms) / 60_000)),
-        durationMin,
-        dayKey: dayKeyFromMs(startMs, timezone),
+        startMs: safeStart,
+        endMs: safeEnd,
+        startMin: Math.max(0, Math.round((safeStart - t0Ms) / 60_000)),
+        durationMin: Math.max(
+          1,
+          Math.round((safeEnd - safeStart) / 60_000),
+        ),
+        dayKey: dayKeyFromMs(safeStart, timezone),
         mine,
         isNext: step.id === nextId,
       };

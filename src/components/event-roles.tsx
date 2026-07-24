@@ -8,11 +8,12 @@ import {
   Info,
   LoaderCircle,
   Pencil,
+  RefreshCw,
   Search,
   Square,
   UserRound,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -116,6 +117,8 @@ export function EventRoles({
   initialActors: EventActorSummary[];
   initialSteps: RoleStepRow[];
 }) {
+  const [actors, setActors] = useState(initialActors);
+  const [actorsLoading, setActorsLoading] = useState(false);
   const [steps, setSteps] = useState(initialSteps);
   const [selectedActorId, setSelectedActorId] = useState<string | null>(null);
   const [actorPoolFilter, setActorPoolFilter] =
@@ -136,39 +139,85 @@ export function EventRoles({
   const [assignDrafts, setAssignDrafts] = useState<RoleDraftRow[]>([]);
   const [rowSavingId, setRowSavingId] = useState<string | null>(null);
 
+  const refreshBoard = useEffectEvent(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setActorsLoading(true);
+    const response = await fetch(
+      `/api/events/${eventId}/roles-board`,
+    ).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as {
+          actors?: EventActorSummary[];
+          steps?: RoleStepRow[];
+          error?: string;
+        })
+      : null;
+    if (!opts?.silent) setActorsLoading(false);
+    if (!response?.ok) return;
+    if (payload?.actors) {
+      setActors(payload.actors);
+      setSelectedActorId((current) =>
+        current && payload.actors!.some((actor) => actor.id === current)
+          ? current
+          : null,
+      );
+    }
+    if (payload?.steps) {
+      setSteps(payload.steps);
+    }
+  });
+
+  useEffect(() => {
+    setActors(initialActors);
+    setSteps(initialSteps);
+    void refreshBoard({ silent: true });
+    const onFocus = () => {
+      void refreshBoard({ silent: true });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+    // Solo al cambiar de evento: luego se refresca desde API (evita cache viejo).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [eventId]);
+
+  useEffect(() => {
+    if (assignModalOpen) {
+      void refreshBoard({ silent: true });
+    }
+  }, [assignModalOpen]);
+
   const executors = useMemo(
     () =>
-      initialActors
+      actors
         .filter(actorCanExecute)
         .sort((a, b) => a.name.localeCompare(b.name, "es")),
-    [initialActors],
+    [actors],
   );
 
   const approvers = useMemo(
     () =>
-      initialActors
+      actors
         .filter(actorCanApprove)
         .sort((a, b) => a.name.localeCompare(b.name, "es")),
-    [initialActors],
+    [actors],
   );
 
   const pool = useMemo(
     () =>
-      initialActors
+      actors
         .filter((actor) =>
           actorPoolFilter === "executors"
             ? actorCanExecute(actor)
             : actorCanApprove(actor),
         )
         .sort((a, b) => a.name.localeCompare(b.name, "es")),
-    [initialActors, actorPoolFilter],
+    [actors, actorPoolFilter],
   );
 
   const actorNameById = useMemo(() => {
     const map = new Map<string, string>();
-    for (const actor of initialActors) map.set(actor.id, actor.name);
+    for (const actor of actors) map.set(actor.id, actor.name);
     return map;
-  }, [initialActors]);
+  }, [actors]);
 
   const countsByActor = useMemo(() => {
     const map = new Map<string, number>();
@@ -561,27 +610,45 @@ export function EventRoles({
                     : "Asignar como aprobador (varios por paso)"}
                 </p>
               </div>
-              <div className="inline-flex w-full rounded-lg border p-0.5">
-                {(
-                  [
-                    ["executors", "Ejecutores"],
-                    ["approvers", "Aprobadores"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => changeActorPoolFilter(value)}
+              <div className="flex items-center gap-2">
+                <div className="inline-flex min-w-0 flex-1 rounded-lg border p-0.5">
+                  {(
+                    [
+                      ["executors", "Ejecutores"],
+                      ["approvers", "Aprobadores"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => changeActorPoolFilter(value)}
+                      className={cn(
+                        "flex-1 rounded-md px-2.5 py-1.5 text-xs transition-colors",
+                        actorPoolFilter === value
+                          ? "bg-muted font-medium text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  title="Actualizar actores y asignaciones"
+                  disabled={actorsLoading}
+                  onClick={() => void refreshBoard()}
+                >
+                  <RefreshCw
                     className={cn(
-                      "flex-1 rounded-md px-2.5 py-1.5 text-xs transition-colors",
-                      actorPoolFilter === value
-                        ? "bg-muted font-medium text-foreground"
-                        : "text-muted-foreground hover:text-foreground",
+                      "size-3.5",
+                      actorsLoading ? "animate-spin" : undefined,
                     )}
-                  >
-                    {label}
-                  </button>
-                ))}
+                  />
+                  <span className="sr-only">Actualizar actores</span>
+                </Button>
               </div>
             </div>
             <ul className="min-h-0 flex-1 overflow-auto p-2">

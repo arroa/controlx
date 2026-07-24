@@ -6,11 +6,13 @@ import {
   CircleX,
   Layers,
   Paperclip,
+  RotateCcw,
   ShieldAlert,
   X,
 } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore } from "react";
 
+import { DateTimePicker } from "@/components/datetime-picker";
 import type { OutcomeAction } from "@/components/executor-times-map";
 import { ExecutorTimesMap } from "@/components/executor-times-map";
 import type { FlowerAction } from "@/components/step-action-flower";
@@ -25,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Sheet,
   SheetContent,
@@ -76,6 +79,8 @@ function toTimesViewRow(
     status: step.status,
     mine,
     isNext: step.id === nextId,
+    actualStartedAt: step.actualStartedAt,
+    actualEndedAt: step.actualEndedAt,
     // Siempre se puede abrir la flor; las acciones de guardar se deshabilitan aparte.
     operable: true,
   };
@@ -86,7 +91,7 @@ function startBlockedLabel(step: RuntimeStepSummary, all: RuntimeStepSummary[]) 
   if (!blockers.length) return null;
   const failed = blockers.filter((item) => item.reason === "failed");
   if (failed.length) {
-    return `Deps fallidas — Event Admin debe Forzar: ${failed.map((item) => item.name).join(", ")}`;
+    return `Deps fallidas — rearrancar el fallido o Event Admin puede Forzar: ${failed.map((item) => item.name).join(", ")}`;
   }
   return `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`;
 }
@@ -124,6 +129,14 @@ function patchStep(
   detail: ExecutionDetail,
   step: RuntimeStepSummary,
 ): ExecutionDetail {
+  return patchSteps(detail, [step]);
+}
+
+function patchSteps(
+  detail: ExecutionDetail,
+  steps: RuntimeStepSummary[],
+): ExecutionDetail {
+  const byId = new Map(steps.map((step) => [step.id, step]));
   return {
     ...detail,
     status:
@@ -131,10 +144,10 @@ function patchStep(
         ? "EN_EJECUCION"
         : detail.status,
     steps: detail.steps.map((item) => {
-      if (item.id !== step.id) return item;
-      // Las transiciones no reenvían metadatos de gates; se conservan.
+      const next = byId.get(item.id);
+      if (!next) return item;
       return {
-        ...step,
+        ...next,
         producesGateId: item.producesGateId,
         requiresGateIds: item.requiresGateIds,
       };
@@ -179,6 +192,7 @@ export function ExecutionTimesPanel({
     action: OutcomeAction;
   } | null>(null);
   const [comment, setComment] = useState("");
+  const [occurredAt, setOccurredAt] = useState<string | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -341,6 +355,7 @@ export function ExecutionTimesPanel({
             setError("");
             setComment("");
             setFiles([]);
+            setOccurredAt(new Date().toISOString());
             setOutcome({ stepId: step.id, action: "complete_success" });
           },
         },
@@ -356,27 +371,45 @@ export function ExecutionTimesPanel({
             setError("");
             setComment("");
             setFiles([]);
+            setOccurredAt(new Date().toISOString());
             setOutcome({ stepId: step.id, action: "complete_fail" });
           },
         },
       );
     }
-    if (step.status === "FALLIDO" && canForceSuccess) {
-      actions.push({
-        key: "force",
-        label: "Forzar OK",
-        icon: ShieldAlert,
-        tone: "neutral",
-        disabled: busy,
-        title: "Requiere comentario. Desbloquea dependientes.",
-        onClick: () => {
-          setSelectedId(null);
-          setError("");
-          setComment("");
-          setFiles([]);
-          setOutcome({ stepId: step.id, action: "force_success" });
-        },
-      });
+    if (step.status === "FALLIDO") {
+      if (canAct) {
+        actions.push({
+          key: "restart",
+          label: "Rearrancar",
+          icon: RotateCcw,
+          tone: "go",
+          disabled: busy,
+          title: "Vuelve a Iniciado para intentarlo de nuevo.",
+          onClick: () => {
+            setSelectedId(null);
+            void runAction(step.id, "restart");
+          },
+        });
+      }
+      if (canForceSuccess) {
+        actions.push({
+          key: "force",
+          label: "Forzar OK",
+          icon: ShieldAlert,
+          tone: "neutral",
+          disabled: busy,
+          title: "Requiere comentario. Desbloquea dependientes.",
+          onClick: () => {
+            setSelectedId(null);
+            setError("");
+            setComment("");
+            setFiles([]);
+            setOccurredAt(new Date().toISOString());
+            setOutcome({ stepId: step.id, action: "force_success" });
+          },
+        });
+      }
     }
     return actions;
   }
@@ -411,6 +444,7 @@ export function ExecutionTimesPanel({
   function closeOutcome() {
     setOutcome(null);
     setComment("");
+    setOccurredAt(null);
     setFiles([]);
   }
 
@@ -441,6 +475,7 @@ export function ExecutionTimesPanel({
     const payload = response
       ? ((await response.json()) as {
           step?: RuntimeStepSummary;
+          steps?: RuntimeStepSummary[];
           error?: string;
         })
       : null;
@@ -450,9 +485,13 @@ export function ExecutionTimesPanel({
       setInfoId(stepId);
       return;
     }
-    setDetail((current) => patchStep(current, payload.step!));
+    setDetail((current) =>
+      payload.steps?.length
+        ? patchSteps(current, payload.steps)
+        : patchStep(current, payload.step!),
+    );
     setComment("");
-    flash("Listo");
+    flash(action === "restart" ? "Rearrancado" : "Listo");
   }
 
   async function confirmOutcome() {
@@ -468,6 +507,11 @@ export function ExecutionTimesPanel({
       const canAct = isMineStep(outcomeStep, actorId) || canOperateAny;
       if (!canAct) return;
     }
+    if (!occurredAt) {
+      setError("Indica la hora en que terminó la actividad.");
+      return;
+    }
+
     setBusy(true);
     setError("");
 
@@ -506,12 +550,14 @@ export function ExecutionTimesPanel({
         body: JSON.stringify({
           action: outcome.action,
           comment: comment.trim() || undefined,
+          occurredAt,
         }),
       },
     ).catch(() => null);
     const payload = response
       ? ((await response.json()) as {
           step?: RuntimeStepSummary;
+          steps?: RuntimeStepSummary[];
           error?: string;
         })
       : null;
@@ -520,7 +566,11 @@ export function ExecutionTimesPanel({
       setError(payload?.error ?? "No fue posible cerrar el paso.");
       return;
     }
-    setDetail((current) => patchStep(current, payload.step!));
+    setDetail((current) =>
+      payload.steps?.length
+        ? patchSteps(current, payload.steps)
+        : patchStep(current, payload.step!),
+    );
     closeOutcome();
     flash(OUTCOME_LABELS[outcome.action]);
   }
@@ -613,6 +663,7 @@ export function ExecutionTimesPanel({
               setError("");
               setComment("");
               setFiles([]);
+              setOccurredAt(new Date().toISOString());
               setOutcome({ stepId, action });
             }}
             onOpenInfo={setInfoId}
@@ -790,11 +841,26 @@ export function ExecutionTimesPanel({
             <DialogDescription>
               {outcome?.action === "force_success"
                 ? `${outcomeStep?.name ?? "Paso"} · el Forzado requiere motivo y desbloquea dependientes.`
-                : `${outcomeStep?.name ?? "Paso"} · adjuntos opcionales.`}
+                : `${outcomeStep?.name ?? "Paso"} · indica cuándo terminó (el plan se redibuja con esa hora).`}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Hora de término</Label>
+              <DateTimePicker
+                value={occurredAt}
+                timezone={detail.timezone}
+                onChange={setOccurredAt}
+                placeholder="Elegir día y hora"
+                disabled={busy}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Por defecto: ahora (reloj del dispositivo). En simulacro ajústala
+                al tiempo del ensayo.
+              </p>
+            </div>
+
             <Textarea
               value={comment}
               onChange={(event) => setComment(event.target.value)}
@@ -870,6 +936,7 @@ export function ExecutionTimesPanel({
               type="button"
               disabled={
                 busy ||
+                !occurredAt ||
                 (outcome?.action === "force_success" && !comment.trim())
               }
               variant={

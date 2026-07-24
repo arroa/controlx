@@ -60,6 +60,8 @@ export type TimesViewRow = {
   isNext?: boolean;
   /** false = el paso no se puede seleccionar/operar (p. ej. no es mío ni admin). */
   operable?: boolean;
+  actualStartedAt?: string | null;
+  actualEndedAt?: string | null;
 };
 
 type ScheduleItem = {
@@ -200,6 +202,39 @@ function computeSchedule(
   const items = new Map<string, ScheduleItem>();
   for (const id of order) {
     const row = byId.get(id)!;
+    const usedDefaultDuration = row.estimatedDurationMinutes == null;
+    const durationMin = row.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
+
+    // Ejecución: ventana real fija → los dependientes se redibujan desde ese fin.
+    if (row.actualEndedAt && t0Ms != null) {
+      const endMin = toOffsetMin(row.actualEndedAt);
+      const startMin = row.actualStartedAt
+        ? toOffsetMin(row.actualStartedAt)
+        : Math.max(0, endMin - durationMin);
+      const safeStart = Math.min(startMin, endMin);
+      const safeEnd = Math.max(startMin, endMin);
+      items.set(id, {
+        id,
+        startMin: safeStart,
+        endMin: safeEnd,
+        durationMin: Math.max(1, safeEnd - safeStart),
+        usedDefaultDuration: false,
+      });
+      continue;
+    }
+
+    if (row.actualStartedAt && t0Ms != null) {
+      const startMin = toOffsetMin(row.actualStartedAt);
+      items.set(id, {
+        id,
+        startMin,
+        endMin: startMin + durationMin,
+        durationMin,
+        usedDefaultDuration,
+      });
+      continue;
+    }
+
     const depEnds = row.dependencyStepIds
       .map((depId) => items.get(depId)?.endMin)
       .filter((value): value is number => value != null);
@@ -257,8 +292,6 @@ function computeSchedule(
       anchored !== undefined
         ? Math.max(anchored, fromDeps, fromGates)
         : Math.max(fromDeps, fromGates);
-    const usedDefaultDuration = row.estimatedDurationMinutes == null;
-    const durationMin = row.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
     items.set(id, {
       id,
       startMin,

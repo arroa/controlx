@@ -90,7 +90,8 @@ function actorCanDoAction(
     action === "complete_success" ||
     action === "complete_fail" ||
     action === "omit" ||
-    action === "simulate"
+    action === "simulate" ||
+    action === "restart"
   ) {
     return step.executorActorId === actor.id;
   }

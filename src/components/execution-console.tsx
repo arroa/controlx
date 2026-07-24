@@ -7,17 +7,28 @@ import {
   LoaderCircle,
   MessageSquarePlus,
   Play,
+  RotateCcw,
   ShieldCheck,
   XCircle,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { DateTimePicker } from "@/components/datetime-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  actionNeedsOccurredAt,
   RUNTIME_STEP_STATUS_LABELS,
   type ExecutionDetail,
   type RuntimeStepAction,
@@ -51,6 +62,10 @@ export function ExecutionConsole({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [pendingAction, setPendingAction] = useState<RuntimeStepAction | null>(
+    null,
+  );
+  const [occurredAt, setOccurredAt] = useState<string | null>(null);
 
   const selected = useMemo(
     () => detail.steps.find((step) => step.id === selectedId) ?? null,
@@ -65,7 +80,23 @@ export function ExecutionConsole({
     return map;
   }, [detail.steps]);
 
-  async function runAction(action: RuntimeStepAction) {
+  function applySteps(steps: RuntimeStepSummary[] | undefined, step: RuntimeStepSummary) {
+    setDetail((current) => ({
+      ...current,
+      status:
+        current.status === "PREPARADO" || current.status === "BORRADOR"
+          ? "EN_EJECUCION"
+          : current.status,
+      steps: steps?.length
+        ? steps
+        : current.steps.map((item) => (item.id === step.id ? step : item)),
+    }));
+  }
+
+  async function runAction(
+    action: RuntimeStepAction,
+    opts?: { occurredAt?: string },
+  ) {
     if (!selected) return;
     setBusy(true);
     setError("");
@@ -74,12 +105,17 @@ export function ExecutionConsole({
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, comment: comment || undefined }),
+        body: JSON.stringify({
+          action,
+          comment: comment || undefined,
+          occurredAt: opts?.occurredAt,
+        }),
       },
     ).catch(() => null);
     const payload = response
       ? ((await response.json()) as {
           step?: RuntimeStepSummary;
+          steps?: RuntimeStepSummary[];
           error?: string;
         })
       : null;
@@ -88,19 +124,22 @@ export function ExecutionConsole({
       setError(payload?.error ?? "No fue posible actualizar el paso.");
       return;
     }
-    setDetail((current) => ({
-      ...current,
-      status:
-        current.status === "PREPARADO" || current.status === "BORRADOR"
-          ? "EN_EJECUCION"
-          : current.status,
-      steps: current.steps.map((step) =>
-        step.id === payload.step!.id ? payload.step! : step,
-      ),
-    }));
+    applySteps(payload.steps, payload.step);
     setComment("");
-    setToast("Paso actualizado");
+    setPendingAction(null);
+    setOccurredAt(null);
+    setToast(action === "restart" ? "Paso rearrancado" : "Paso actualizado");
     window.setTimeout(() => setToast(""), 2000);
+  }
+
+  function requestAction(action: RuntimeStepAction) {
+    if (actionNeedsOccurredAt(action)) {
+      setOccurredAt(new Date().toISOString());
+      setPendingAction(action);
+      setError("");
+      return;
+    }
+    void runAction(action);
   }
 
   async function startExecution() {
@@ -326,7 +365,7 @@ export function ExecutionConsole({
                   <Button
                     size="sm"
                     disabled={busy}
-                    onClick={() => void runAction("start")}
+                    onClick={() => requestAction("start")}
                   >
                     Iniciar
                   </Button>
@@ -336,7 +375,7 @@ export function ExecutionConsole({
                     <Button
                       size="sm"
                       disabled={busy}
-                      onClick={() => void runAction("complete_success")}
+                      onClick={() => requestAction("complete_success")}
                     >
                       <CheckCircle2 className="size-3.5" />
                       Exitoso
@@ -345,10 +384,30 @@ export function ExecutionConsole({
                       size="sm"
                       variant="destructive"
                       disabled={busy}
-                      onClick={() => void runAction("complete_fail")}
+                      onClick={() => requestAction("complete_fail")}
                     >
                       <XCircle className="size-3.5" />
                       Fallido
+                    </Button>
+                  </>
+                )}
+                {selected.status === "FALLIDO" && (
+                  <>
+                    <Button
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => void runAction("restart")}
+                    >
+                      <RotateCcw className="size-3.5" />
+                      Rearrancar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => requestAction("force_success")}
+                    >
+                      Forzar OK
                     </Button>
                   </>
                 )}
@@ -372,14 +431,6 @@ export function ExecutionConsole({
                     </Button>
                   </>
                 )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void runAction("force_success")}
-                >
-                  Forzar OK
-                </Button>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -486,6 +537,83 @@ export function ExecutionConsole({
           )}
         </section>
       </div>
+
+      <Dialog
+        open={Boolean(pendingAction)}
+        onOpenChange={(open) => {
+          if (!open && !busy) {
+            setPendingAction(null);
+            setOccurredAt(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {pendingAction === "complete_fail"
+                ? "Marcar como Fallido"
+                : pendingAction === "force_success"
+                  ? "Forzar OK"
+                  : "Marcar como Exitoso"}
+            </DialogTitle>
+            <DialogDescription>
+              Indica cuándo terminó la actividad. El plan se redibuja con esa
+              hora.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Hora de término</Label>
+              <DateTimePicker
+                value={occurredAt}
+                timezone={detail.timezone}
+                onChange={setOccurredAt}
+                placeholder="Elegir día y hora"
+                disabled={busy}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Por defecto: ahora. En simulacro ajústala al tiempo del ensayo.
+              </p>
+            </div>
+            {pendingAction === "force_success" ? (
+              <p className="text-xs text-amber-200">
+                Forzar requiere un comentario con el motivo (campo de arriba).
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setPendingAction(null);
+                setOccurredAt(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                busy ||
+                !occurredAt ||
+                !pendingAction ||
+                (pendingAction === "force_success" && !comment.trim())
+              }
+              variant={
+                pendingAction === "complete_fail" ? "destructive" : "default"
+              }
+              onClick={() => {
+                if (!pendingAction || !occurredAt) return;
+                void runAction(pendingAction, { occurredAt });
+              }}
+            >
+              {busy ? "Guardando…" : "Confirmar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -24,6 +24,7 @@ export function formatDayLabel(isoOrDate: string | Date, timezone: string) {
 
 export type ScheduleStepInput = {
   id: string;
+  /** Ancla “no antes de” del diseño (ISO), relativa al Día D de diseño. */
   plannedStartAt: string | null;
   estimatedDurationMinutes: number | null;
   dependencyStepIds: string[];
@@ -31,6 +32,10 @@ export type ScheduleStepInput = {
   requiresGateIds: string[];
   workstreamId: string;
   blockId: string;
+  /** Inicio real declarado en la ejecución (ISO absoluto). */
+  actualStartedAt?: string | null;
+  /** Fin real declarado en la ejecución (ISO absoluto). */
+  actualEndedAt?: string | null;
 };
 
 export type ScheduleGateInput = {
@@ -41,6 +46,9 @@ export type ScheduleGateInput = {
 /**
  * Calcula plannedStartAt absoluto por paso usando T0 de la instancia
  * (día de arranque simulado o Día D real) + deps/gates/anclas del diseño.
+ *
+ * Si un paso tiene actualEndedAt, su ventana queda fijada a los tiempos reales
+ * y los dependientes se calendarizan desde ese fin (p. ej. terminó antes → plan mejora).
  */
 export function computeRuntimePlannedStarts(input: {
   steps: ScheduleStepInput[];
@@ -60,14 +68,18 @@ export function computeRuntimePlannedStarts(input: {
   const designT0Ms = input.designDayDStartAt
     ? new Date(input.designDayDStartAt).getTime()
     : null;
+  const instanceT0Ms = input.instanceAnchorStartAt.getTime();
 
-  const toOffsetMin = (iso: string) => {
+  const toDesignOffsetMin = (iso: string) => {
     if (designT0Ms == null) return 0;
     return Math.max(
       0,
       Math.round((new Date(iso).getTime() - designT0Ms) / 60_000),
     );
   };
+
+  const toInstanceOffsetMin = (iso: string) =>
+    Math.round((new Date(iso).getTime() - instanceT0Ms) / 60_000);
 
   const inbound = new Map(rows.map((row) => [row.id, 0]));
   const outgoing = new Map<string, string[]>(rows.map((row) => [row.id, []]));
@@ -108,6 +120,27 @@ export function computeRuntimePlannedStarts(input: {
 
   for (const id of order) {
     const row = byId.get(id)!;
+    const durationMin =
+      row.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
+
+    if (row.actualEndedAt) {
+      const endMin = toInstanceOffsetMin(row.actualEndedAt);
+      const startMin = row.actualStartedAt
+        ? toInstanceOffsetMin(row.actualStartedAt)
+        : Math.min(endMin, endMin - durationMin);
+      items.set(id, {
+        startMin: Math.min(startMin, endMin),
+        endMin: Math.max(startMin, endMin),
+      });
+      continue;
+    }
+
+    if (row.actualStartedAt) {
+      const startMin = toInstanceOffsetMin(row.actualStartedAt);
+      items.set(id, { startMin, endMin: startMin + durationMin });
+      continue;
+    }
+
     const depEnds = row.dependencyStepIds
       .map((depId) => items.get(depId)?.endMin)
       .filter((value): value is number => value != null);
@@ -121,13 +154,15 @@ export function computeRuntimePlannedStarts(input: {
       }
       const gate = input.gates.find((item) => item.id === gateId);
       if (gate?.plannedOpenAt && designT0Ms != null) {
-        gateEnds.push(toOffsetMin(gate.plannedOpenAt));
+        // Ancla de gate en offset de diseño → misma escala que startMin de diseño;
+        // se interpreta como minutos desde T0 de instancia (igual que materialización).
+        gateEnds.push(toDesignOffsetMin(gate.plannedOpenAt));
       }
     }
 
     const anchored =
       row.plannedStartAt && designT0Ms != null
-        ? toOffsetMin(row.plannedStartAt)
+        ? toDesignOffsetMin(row.plannedStartAt)
         : undefined;
 
     const startMin =
@@ -135,15 +170,12 @@ export function computeRuntimePlannedStarts(input: {
         ? Math.max(anchored, ...depEnds, ...gateEnds, 0)
         : Math.max(0, ...depEnds, ...gateEnds);
 
-    const durationMin =
-      row.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
     items.set(id, { startMin, endMin: startMin + durationMin });
   }
 
-  const instanceT0 = input.instanceAnchorStartAt.getTime();
   const result = new Map<string, Date>();
   for (const [id, item] of items) {
-    result.set(id, new Date(instanceT0 + item.startMin * 60_000));
+    result.set(id, new Date(instanceT0Ms + item.startMin * 60_000));
   }
   return result;
 }

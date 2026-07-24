@@ -35,6 +35,8 @@ export const runtimeStepActionSchema = z.enum([
   "approve",
   "reject",
   "force_success",
+  /** Reabrir un Fallido para intentarlo de nuevo (vuelve a Iniciado). */
+  "restart",
 ]);
 
 export const evidenceMetaSchema = z.object({
@@ -64,6 +66,7 @@ export const stepCommentSchema = z.object({
       "approve",
       "reject",
       "force",
+      "restart",
     ])
     .default("note"),
 });
@@ -105,10 +108,23 @@ export type RuntimeStepSummary = {
   status: RuntimeStepStatus;
   forced: boolean;
   overdue: boolean;
+  /** Inicio real declarado (reloj de la ejecución). */
+  actualStartedAt: string | null;
+  /** Fin real declarado al cerrar OK/fallo/forzado. */
+  actualEndedAt: string | null;
   comments: StepComment[];
   evidence: EvidenceMeta[];
   updatedAt: string;
 };
+
+/** Acciones de cierre que piden hora real de término. */
+export function actionNeedsOccurredAt(action: RuntimeStepAction): boolean {
+  return (
+    action === "complete_success" ||
+    action === "complete_fail" ||
+    action === "force_success"
+  );
+}
 
 export type ExecutionGateSummary = {
   id: string;

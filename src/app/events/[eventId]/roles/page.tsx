@@ -13,6 +13,9 @@ import {
 import { getCurrentUser } from "@/lib/current-user";
 import { pairsToRoleSteps } from "@/lib/role-steps";
 
+/** Siempre fresco: actores de Setup deben verse al entrar a Roles. */
+export const dynamic = "force-dynamic";
+
 export default async function EventRolesPage({
   params,
 }: {

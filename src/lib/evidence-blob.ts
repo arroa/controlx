@@ -1,6 +1,6 @@
 import "server-only";
 
-import { put } from "@vercel/blob";
+import { del, list, put } from "@vercel/blob";
 
 export const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024;
 export const EVIDENCE_MAX_PER_STEP = 8;
@@ -53,4 +53,38 @@ export async function uploadEvidenceBlob(input: {
     uploadedBy: input.uploadedBy,
     uploadedAt: new Date().toISOString(),
   };
+}
+
+/** Borra evidencias en Blob de una ejecución (best-effort). */
+export async function deleteExecutionEvidenceBlobs(
+  executionId: string,
+): Promise<void> {
+  if (!isBlobConfigured() || !executionId.trim()) return;
+
+  try {
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    const prefix = `evidences/${executionId}/`;
+    let cursor: string | undefined;
+
+    do {
+      const page = await list({
+        prefix,
+        cursor,
+        token,
+      });
+      if (page.blobs.length) {
+        await del(
+          page.blobs.map((blob) => blob.url),
+          { token },
+        );
+      }
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+  } catch (error) {
+    console.error(
+      "[evidence-blob] no se pudieron borrar blobs de",
+      executionId,
+      error,
+    );
+  }
 }

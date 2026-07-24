@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getEventDesign } from "@/lib/admin-data";
 import {
+  deleteExecutionEvidenceBlobs,
   EVIDENCE_MAX_PER_STEP,
   isBlobConfigured,
   uploadEvidenceBlob,
@@ -12,6 +13,7 @@ import {
 import { assertCanCreateExecution } from "@/lib/event-readiness";
 import { computeRuntimePlannedStarts } from "@/lib/execution-schedule";
 import {
+  actionNeedsOccurredAt,
   runtimeStepActionSchema,
   stepIsOverdue,
   unmetStepDependencies,
@@ -66,6 +68,8 @@ type RuntimeStepDoc = {
   approverActorIds: ObjectId[];
   status: RuntimeStepStatus;
   forced: boolean;
+  actualStartedAt?: Date | null;
+  actualEndedAt?: Date | null;
   comments: StepComment[];
   evidence: EvidenceMeta[];
   createdAt: Date;
@@ -75,7 +79,14 @@ type RuntimeStepDoc = {
 export const stepTransitionSchema = z.object({
   action: runtimeStepActionSchema,
   comment: z.string().trim().max(4000).optional(),
+  /** Hora real del acto (cierre OK/fallo/forzado). ISO. */
+  occurredAt: z.string().datetime().optional(),
 });
+
+const SCHEDULE_MUTABLE_STATUSES = new Set<RuntimeStepStatus>([
+  "PLANIFICADO",
+  "RECHAZADO",
+]);
 
 function toStepSummary(
   doc: RuntimeStepDoc,
@@ -111,6 +122,8 @@ function toStepSummary(
     status: doc.status,
     forced: doc.forced,
     overdue: stepIsOverdue({ status: doc.status, plannedStartAt }),
+    actualStartedAt: doc.actualStartedAt?.toISOString() ?? null,
+    actualEndedAt: doc.actualEndedAt?.toISOString() ?? null,
     comments: doc.comments ?? [],
     evidence: doc.evidence ?? [],
     updatedAt: doc.updatedAt.toISOString(),
@@ -233,6 +246,11 @@ function nextStatus(input: {
       return "RECHAZADO";
     case "force_success":
       return hasApprovers ? "APROBADO" : "EXITOSO";
+    case "restart":
+      if (current !== "FALLIDO") {
+        throw new Error("Solo se puede rearrancar un paso Fallido.");
+      }
+      return "INICIADO";
     default:
       throw new Error("Acción no soportada.");
   }
@@ -258,9 +276,94 @@ function commentKind(
       return "reject";
     case "force_success":
       return "force";
+    case "restart":
+      return "restart";
     default:
       return "note";
   }
+}
+
+/**
+ * Recalcula plannedStartAt de pasos aún no arrancados usando fines reales
+ * (actualEndedAt) + anclas/deps del diseño.
+ */
+async function recomputeScheduleFromActuals(input: {
+  executionId: ObjectId;
+  eventId: string;
+  anchorStartAt: Date;
+  designDayDStartAt: string | null;
+}): Promise<number> {
+  const design = await getEventDesign(input.eventId);
+  if (!design) return 0;
+
+  const database = await getDatabase();
+  const stepsCollection =
+    database.collection<RuntimeStepDoc>("executionSteps");
+  const existing = await stepsCollection
+    .find({ eventInstanceId: input.executionId })
+    .toArray();
+  if (!existing.length) return 0;
+
+  const runtimeByDesignId = new Map(
+    existing.map((doc) => [doc.designStepId.toHexString(), doc]),
+  );
+
+  const designRows = design.pairs.flatMap((pair) =>
+    pair.activities.flatMap((activity) =>
+      activity.steps.map((step) => ({ pair, activity, step })),
+    ),
+  );
+
+  const plannedByDesignId = computeRuntimePlannedStarts({
+    steps: designRows.map(({ step }) => {
+      const runtime = runtimeByDesignId.get(step.id);
+      return {
+        id: step.id,
+        plannedStartAt: step.plannedStartAt,
+        estimatedDurationMinutes:
+          runtime?.estimatedDurationMinutes ?? step.estimatedDurationMinutes,
+        dependencyStepIds: step.dependencyStepIds,
+        producesGateId: step.producesGateId,
+        requiresGateIds: step.requiresGateIds,
+        workstreamId: step.workstreamId,
+        blockId: step.blockId,
+        actualStartedAt: runtime?.actualStartedAt?.toISOString() ?? null,
+        actualEndedAt: runtime?.actualEndedAt?.toISOString() ?? null,
+      };
+    }),
+    gates: design.gates.map((gate) => ({
+      id: gate.id,
+      plannedOpenAt: gate.plannedOpenAt,
+    })),
+    designDayDStartAt: input.designDayDStartAt,
+    instanceAnchorStartAt: input.anchorStartAt,
+  });
+
+  const now = new Date();
+  const ops: Array<{
+    updateOne: {
+      filter: { _id: ObjectId };
+      update: { $set: { plannedStartAt: Date; updatedAt: Date } };
+    };
+  }> = [];
+
+  for (const { step } of designRows) {
+    const runtime = runtimeByDesignId.get(step.id);
+    if (!runtime?._id) continue;
+    if (!SCHEDULE_MUTABLE_STATUSES.has(runtime.status)) continue;
+    const nextStart = plannedByDesignId.get(step.id) ?? input.anchorStartAt;
+    if (sameInstant(runtime.plannedStartAt, nextStart)) continue;
+    ops.push({
+      updateOne: {
+        filter: { _id: runtime._id },
+        update: { $set: { plannedStartAt: nextStart, updatedAt: now } },
+      },
+    });
+  }
+
+  if (!ops.length) return 0;
+  await stepsCollection.bulkWrite(ops);
+  return ops.length;
 }
 
 export async function materializeExecutionSteps(input: {
@@ -636,10 +739,21 @@ export async function syncExecutionPlanFromDesign(input: {
     }
   }
 
-  if (added || refreshed) {
+  // Tras refrescar desde diseño, reaplicar horarios con fines reales ya cargados.
+  const rescheduled = await recomputeScheduleFromActuals({
+    executionId: input.executionId,
+    eventId: input.eventId,
+    anchorStartAt: input.anchorStartAt,
+    designDayDStartAt: input.designDayDStartAt,
+  });
+
+  if (added || refreshed || rescheduled) {
     const parts: string[] = [];
     if (added) parts.push(`${added} nuevo(s)`);
     if (refreshed) parts.push(`${refreshed} actualizado(s) desde el diseño`);
+    if (rescheduled) {
+      parts.push(`${rescheduled} replanificado(s) con tiempos reales`);
+    }
     await database.collection("timelineEntries").insertOne({
       eventInstanceId: input.executionId,
       occurredAt: now,
@@ -672,6 +786,7 @@ export async function syncMissingExecutionSteps(input: {
 
 export async function getExecutionDetail(
   executionId: string,
+  options?: { syncPlan?: boolean },
 ): Promise<ExecutionDetail | null> {
   if (!ObjectId.isValid(executionId)) return null;
   const database = await getDatabase();
@@ -685,7 +800,12 @@ export async function getExecutionDetail(
   const designDayDStartAt = design?.event.dayDStartAt ?? null;
 
   const openStatuses = new Set(["PREPARADO", "EN_EJECUCION", "PAUSADO"]);
-  if (openStatuses.has(execution.status) && execution.anchorStartAt) {
+  const shouldSync = options?.syncPlan !== false;
+  if (
+    shouldSync &&
+    openStatuses.has(execution.status) &&
+    execution.anchorStartAt
+  ) {
     // Simulacro abierto: relee el plan (duraciones/deps/horas). REAL en marcha:
     // solo pasos nuevos (el snapshot del día real no se reescribe).
     const refreshPlan =
@@ -787,9 +907,10 @@ export async function transitionRuntimeStep(input: {
   stepId: string;
   action: RuntimeStepAction;
   comment?: string;
+  occurredAt?: string;
   actorId: string;
   actorLabel: string;
-}): Promise<RuntimeStepSummary> {
+}): Promise<{ step: RuntimeStepSummary; steps: RuntimeStepSummary[] }> {
   requireComment(input.action, input.comment);
   if (!ObjectId.isValid(input.executionId) || !ObjectId.isValid(input.stepId)) {
     throw new Error("Identificadores inválidos.");
@@ -850,7 +971,7 @@ export async function transitionRuntimeStep(input: {
       }
       if (failed.length) {
         parts.push(
-          `fallido(s) — un Event Admin debe Forzar: ${failed.map((item) => item.name).join(", ")}`,
+          `fallido(s) — Event Admin puede Forzar, o rearrancar el fallido: ${failed.map((item) => item.name).join(", ")}`,
         );
       }
       throw new Error(
@@ -863,6 +984,28 @@ export async function transitionRuntimeStep(input: {
     throw new Error("Solo se puede forzar un paso Fallido.");
   }
 
+  const now = new Date();
+  let occurredAt = now;
+  if (actionNeedsOccurredAt(input.action)) {
+    if (!input.occurredAt) {
+      throw new Error("Indica la hora en que terminó la actividad.");
+    }
+    occurredAt = new Date(input.occurredAt);
+    if (Number.isNaN(occurredAt.getTime())) {
+      throw new Error("Hora de término inválida.");
+    }
+    if (execution.anchorStartAt && occurredAt < execution.anchorStartAt) {
+      throw new Error(
+        "La hora de término no puede ser anterior al arranque de la ejecución.",
+      );
+    }
+    if (step.actualStartedAt && occurredAt < step.actualStartedAt) {
+      throw new Error(
+        "La hora de término no puede ser anterior al inicio del paso.",
+      );
+    }
+  }
+
   const status = nextStatus({
     action: input.action,
     current: step.status,
@@ -870,12 +1013,15 @@ export async function transitionRuntimeStep(input: {
     hasApprovers: step.approverActorIds.length > 0,
   });
 
-  const now = new Date();
   const comments = [...(step.comments ?? [])];
   if (input.comment?.trim() || input.action !== "start") {
     const text =
       input.comment?.trim() ||
-      (input.action === "start" ? "Paso iniciado." : undefined);
+      (input.action === "start"
+        ? "Paso iniciado."
+        : input.action === "restart"
+          ? "Paso rearrancado tras fallo."
+          : undefined);
     if (text) {
       comments.push({
         id: new ObjectId().toHexString(),
@@ -889,16 +1035,30 @@ export async function transitionRuntimeStep(input: {
   }
 
   const forced = input.action === "force_success" ? true : step.forced;
+  const $set: Partial<RuntimeStepDoc> = {
+    status,
+    forced,
+    comments,
+    updatedAt: now,
+  };
+
+  if (input.action === "start") {
+    $set.actualStartedAt = now;
+    $set.actualEndedAt = null;
+  } else if (input.action === "restart") {
+    $set.actualStartedAt = now;
+    $set.actualEndedAt = null;
+    $set.forced = false;
+  } else if (actionNeedsOccurredAt(input.action)) {
+    $set.actualEndedAt = occurredAt;
+    if (!step.actualStartedAt) {
+      $set.actualStartedAt = step.plannedStartAt ?? occurredAt;
+    }
+  }
+
   const updated = await steps.findOneAndUpdate(
     { _id: stepId },
-    {
-      $set: {
-        status,
-        forced,
-        comments,
-        updatedAt: now,
-      },
-    },
+    { $set },
     { returnDocument: "after" },
   );
   if (!updated) throw new Error("No fue posible actualizar el paso.");
@@ -910,19 +1070,44 @@ export async function transitionRuntimeStep(input: {
     );
   }
 
+  if (
+    execution.anchorStartAt &&
+    (actionNeedsOccurredAt(input.action) || input.action === "restart")
+  ) {
+    const design = await getEventDesign(execution.eventId.toHexString());
+    await recomputeScheduleFromActuals({
+      executionId,
+      eventId: execution.eventId.toHexString(),
+      anchorStartAt: execution.anchorStartAt,
+      designDayDStartAt: design?.event.dayDStartAt ?? null,
+    });
+  }
+
   await database.collection("timelineEntries").insertOne({
     eventInstanceId: executionId,
-    occurredAt: now,
+    occurredAt: actionNeedsOccurredAt(input.action) ? occurredAt : now,
     actorClerkUserId: input.actorId,
     action: `STEP_${input.action.toUpperCase()}`,
     entityType: "step",
     entityId: input.stepId,
     previousState: { status: step.status },
-    nextState: { status, forced },
+    nextState: {
+      status,
+      forced: Boolean($set.forced ?? forced),
+      actualEndedAt: updated.actualEndedAt?.toISOString() ?? null,
+    },
     description: `${step.name}: ${step.status} → ${status}`,
   });
 
-  return toStepSummary(updated);
+  // Sin sync: ya replanificamos con tiempos reales en esta transición.
+  const detail = await getExecutionDetail(input.executionId, {
+    syncPlan: false,
+  });
+  if (!detail) throw new Error("Ejecución no encontrada tras actualizar.");
+  const nextStep =
+    detail.steps.find((item) => item.id === input.stepId) ??
+    toStepSummary(updated);
+  return { step: nextStep, steps: detail.steps };
 }
 
 export async function addStepComment(input: {
@@ -1012,4 +1197,104 @@ export async function addStepEvidence(input: {
     );
   if (!updated) throw new Error("No fue posible guardar la evidencia.");
   return toStepSummary(updated);
+}
+
+export type DeletedExecutionSummary = {
+  id: string;
+  eventId: string;
+  name: string;
+  type: "SIMULACRO" | "REAL";
+};
+
+export async function getExecutionAccessContext(executionId: string): Promise<{
+  eventId: string;
+  name: string;
+  type: "SIMULACRO" | "REAL";
+} | null> {
+  if (!ObjectId.isValid(executionId)) return null;
+  const database = await getDatabase();
+  const execution = await database
+    .collection<ExecutionDoc>("eventInstances")
+    .findOne(
+      { _id: new ObjectId(executionId) },
+      { projection: { eventId: 1, type: 1, name: 1 } },
+    );
+  if (!execution) return null;
+  return {
+    eventId: execution.eventId.toHexString(),
+    name: execution.name,
+    type: execution.type,
+  };
+}
+
+/**
+ * Elimina una ejecución y su runtime (pasos, timeline, blobs).
+ * Por defecto solo SIMULACRO (protege REAL).
+ */
+export async function deleteExecution(
+  executionId: string,
+  options?: { allowReal?: boolean },
+): Promise<DeletedExecutionSummary> {
+  if (!ObjectId.isValid(executionId)) {
+    throw new Error("Ejecución inválida.");
+  }
+
+  const database = await getDatabase();
+  const id = new ObjectId(executionId);
+  const execution = await database
+    .collection<ExecutionDoc>("eventInstances")
+    .findOne({ _id: id });
+  if (!execution) throw new Error("La ejecución no existe.");
+
+  if (execution.type === "REAL" && !options?.allowReal) {
+    throw new Error(
+      "No se pueden borrar ejecuciones REAL desde esta acción. Solo simulacros.",
+    );
+  }
+
+  await Promise.all([
+    database.collection("executionSteps").deleteMany({ eventInstanceId: id }),
+    database.collection("timelineEntries").deleteMany({ eventInstanceId: id }),
+  ]);
+
+  const deleted = await database
+    .collection<ExecutionDoc>("eventInstances")
+    .deleteOne({ _id: id });
+  if (!deleted.deletedCount) throw new Error("La ejecución no existe.");
+
+  await deleteExecutionEvidenceBlobs(executionId);
+
+  return {
+    id: executionId,
+    eventId: execution.eventId.toHexString(),
+    name: execution.name,
+    type: execution.type,
+  };
+}
+
+/** Purge de todos los SIMULACRO de un evento. No toca REAL. */
+export async function purgeEventSimulacros(eventId: string): Promise<{
+  deletedCount: number;
+  deleted: DeletedExecutionSummary[];
+}> {
+  if (!ObjectId.isValid(eventId)) {
+    throw new Error("Evento inválido.");
+  }
+
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const simulacros = await database
+    .collection<ExecutionDoc>("eventInstances")
+    .find({ eventId: eventObjectId, type: "SIMULACRO" })
+    .project({ _id: 1, name: 1, type: 1, eventId: 1 })
+    .toArray();
+
+  const deleted: DeletedExecutionSummary[] = [];
+  for (const item of simulacros) {
+    const id = item._id!.toHexString();
+    const result = await deleteExecution(id);
+    deleted.push(result);
+  }
+
+  return { deletedCount: deleted.length, deleted };
 }

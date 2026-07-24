@@ -5,6 +5,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -12,6 +13,17 @@ import { useMemo, useState } from "react";
 
 import { DateTimePicker } from "@/components/datetime-picker";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -69,6 +81,14 @@ export function EventExecutions({
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [recomputing, setRecomputing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [purging, setPurging] = useState(false);
+  const [actionError, setActionError] = useState("");
+
+  const simulacroCount = useMemo(
+    () => executions.filter((item) => item.type === "SIMULACRO").length,
+    [executions],
+  );
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -82,6 +102,48 @@ export function EventExecutions({
       );
     });
   }, [executions, query, typeFilter]);
+
+  async function deleteSimulacro(executionId: string) {
+    setActionError("");
+    setDeletingId(executionId);
+    const response = await fetch(`/api/executions/${executionId}`, {
+      method: "DELETE",
+    }).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as { error?: string })
+      : null;
+    setDeletingId(null);
+    if (!response?.ok) {
+      setActionError(payload?.error ?? "No fue posible eliminar el simulacro.");
+      return;
+    }
+    setExecutions((current) =>
+      current.filter((item) => item.id !== executionId),
+    );
+  }
+
+  async function purgeSimulacros() {
+    setActionError("");
+    setPurging(true);
+    const response = await fetch(
+      `/api/events/${event.id}/executions/purge-simulacros`,
+      { method: "POST" },
+    ).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as {
+          deletedCount?: number;
+          error?: string;
+        })
+      : null;
+    setPurging(false);
+    if (!response?.ok) {
+      setActionError(payload?.error ?? "No fue posible purgar los simulacros.");
+      return;
+    }
+    setExecutions((current) =>
+      current.filter((item) => item.type !== "SIMULACRO"),
+    );
+  }
 
   async function recomputeReadiness() {
     setRecomputing(true);
@@ -138,7 +200,44 @@ export function EventExecutions({
           ))}
         </div>
 
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {simulacroCount > 0 ? (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={purging || deletingId !== null}
+                >
+                  {purging ? (
+                    <LoaderCircle className="size-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="size-4" />
+                  )}
+                  Purgar simulacros ({simulacroCount})
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Purgar todos los simulacros?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se eliminarán {simulacroCount} simulacro
+                    {simulacroCount === 1 ? "" : "s"} de este evento (pasos,
+                    timeline y evidencias). Las ejecuciones REAL no se tocan.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    onClick={() => void purgeSimulacros()}
+                  >
+                    Purgar simulacros
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : null}
           <CreateExecutionDialog
             event={event}
             readiness={readiness}
@@ -151,6 +250,12 @@ export function EventExecutions({
           />
         </div>
       </div>
+
+      {actionError ? (
+        <div className="shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {actionError}
+        </div>
+      ) : null}
 
       {readiness.stale ? (
         <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
@@ -219,6 +324,49 @@ export function EventExecutions({
                   <Button variant="secondary" className="w-full" asChild>
                     <Link href={`/run/${execution.id}`}>Mi turno</Link>
                   </Button>
+                  {execution.type === "SIMULACRO" ? (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="w-full text-destructive hover:text-destructive"
+                          disabled={
+                            purging ||
+                            deletingId === execution.id ||
+                            deletingId !== null
+                          }
+                        >
+                          {deletingId === execution.id ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="size-4" />
+                          )}
+                          Eliminar simulacro
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            ¿Eliminar este simulacro?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Se borrará “{execution.name}” con sus pasos,
+                            timeline y evidencias. No se puede deshacer.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction
+                            variant="destructive"
+                            onClick={() => void deleteSimulacro(execution.id)}
+                          >
+                            Eliminar
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  ) : null}
                 </CardContent>
               </Card>
             ))}
