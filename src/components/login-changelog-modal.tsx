@@ -1,7 +1,7 @@
 "use client";
 
 import { Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +20,7 @@ import {
 export function LoginChangelogModal() {
   const [open, setOpen] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
+  const dontShowAgainRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -32,14 +33,41 @@ export function LoginChangelogModal() {
     setOpen(true);
   }, []);
 
-  function dismiss() {
-    if (dontShowAgain) {
-      try {
-        window.localStorage.setItem(RELEASE_NOTES_STORAGE_KEY, "1");
-      } catch {
-        // ignore
+  useEffect(() => {
+    dontShowAgainRef.current = dontShowAgain;
+  }, [dontShowAgain]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (dontShowAgainRef.current) {
+        try {
+          window.localStorage.setItem(RELEASE_NOTES_STORAGE_KEY, "1");
+        } catch {
+          // ignore
+        }
       }
+      setOpen(false);
     }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
+  function persistIfNeeded() {
+    if (!dontShowAgainRef.current) return;
+    try {
+      window.localStorage.setItem(RELEASE_NOTES_STORAGE_KEY, "1");
+    } catch {
+      // ignore
+    }
+  }
+
+  function dismiss() {
+    persistIfNeeded();
     setOpen(false);
   }
 
@@ -47,8 +75,11 @@ export function LoginChangelogModal() {
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) dismiss();
-        else setOpen(true);
+        if (next) {
+          setOpen(true);
+          return;
+        }
+        dismiss();
       }}
     >
       <DialogContent className="sm:max-w-lg">

@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
 import { DevActorSwitcher } from "@/components/dev-actor-switcher";
-import { ExecutorCockpit } from "@/components/executor-cockpit";
+import { ExecutionTimesPanel } from "@/components/execution-times-panel";
 import { Badge } from "@/components/ui/badge";
 import { canAccessEvent, listEventActors } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
@@ -120,11 +120,12 @@ export default async function ExecutorRunPage({
         ) : null}
         <AuthHeader />
       </header>
-      <main className="mx-auto flex min-h-0 w-full max-w-lg flex-1 flex-col">
-        <ExecutorCockpit
+      <main className="mx-auto flex min-h-0 w-full flex-1 flex-col">
+        <ExecutionTimesPanel
           initial={detail}
           actorId={actor.id}
           actorName={actor.name}
+          title="Mi turno"
         />
       </main>
     </div>

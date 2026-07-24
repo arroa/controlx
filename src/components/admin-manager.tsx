@@ -72,8 +72,12 @@ export function AdminManager({
                   <ShieldCheck className="size-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{admin.email}</p>
-                  <p className="text-xs text-muted-foreground">{roleLabel}</p>
+                  <p className="truncate text-sm font-medium">
+                    {admin.name || admin.email}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {admin.email}
+                  </p>
                 </div>
                 <AdminDialog
                   roleLabel={roleLabel}
@@ -130,10 +134,17 @@ function AdminDialog({
     setLoading(true);
     setError("");
     const form = new FormData(event.currentTarget);
+    const body: { email: FormDataEntryValue | null; name?: FormDataEntryValue | null } =
+      {
+        email: form.get("email"),
+      };
+    if (roleLabel === "OrgAdmin") {
+      body.name = form.get("name");
+    }
     const response = await fetch(endpoint, {
       method: admin ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: form.get("email") }),
+      body: JSON.stringify(body),
     }).catch(() => null);
     const payload = response
       ? ((await response.json()) as { admin?: AdminSummary; error?: string })
@@ -174,6 +185,18 @@ function AdminDialog({
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={handleSubmit}>
+          {roleLabel === "OrgAdmin" ? (
+            <div className="space-y-2">
+              <Label htmlFor={`admin-name-${admin?.id ?? "new"}`}>Nombre</Label>
+              <Input
+                id={`admin-name-${admin?.id ?? "new"}`}
+                name="name"
+                defaultValue={admin?.name}
+                required
+                minLength={1}
+              />
+            </div>
+          ) : null}
           <div className="space-y-2">
             <Label htmlFor={`admin-email-${admin?.id ?? "new"}`}>
               Correo electrónico

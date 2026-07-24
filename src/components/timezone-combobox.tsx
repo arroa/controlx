@@ -23,6 +23,7 @@ type TimezoneComboboxProps = {
   value: string;
   onValueChange: (value: string) => void;
   id?: string;
+  disabled?: boolean;
 };
 
 function normalizeSearch(value: string): string {
@@ -56,6 +57,7 @@ export function TimezoneCombobox({
   value,
   onValueChange,
   id,
+  disabled = false,
 }: TimezoneComboboxProps) {
   const [open, setOpen] = useState(false);
   const selected = useMemo(
@@ -64,7 +66,7 @@ export function TimezoneCombobox({
   );
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={disabled ? false : open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           id={id}
@@ -72,6 +74,7 @@ export function TimezoneCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          disabled={disabled}
           className="h-auto min-h-10 w-full justify-between px-3 py-2 font-normal"
         >
           {selected ? (

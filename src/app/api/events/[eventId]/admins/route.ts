@@ -32,7 +32,7 @@ export async function POST(
   try {
     const admin = await addEventAdmin(
       eventId,
-      parsed.data.email,
+      parsed.data,
       authResult.user.id,
     );
     return NextResponse.json({ admin }, { status: 201 });

@@ -7,6 +7,7 @@ import {
   CheckSquare,
   Info,
   LoaderCircle,
+  Pencil,
   Search,
   Square,
   UserRound,
@@ -15,7 +16,22 @@ import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -40,6 +56,17 @@ type SortDir = "asc" | "desc";
 type StepFilter = "unassigned" | "mine" | "all";
 type AssignAs = "executor" | "approver";
 type ActorPoolFilter = "executors" | "approvers";
+
+type RoleDraftRow = {
+  stepId: string;
+  stepName: string;
+  workstreamName: string;
+  activityName: string;
+  executorActorId: string;
+  approverActorId: string;
+};
+
+const NONE = "__none__";
 
 function compareRows(
   a: RoleStepRow,
@@ -105,6 +132,25 @@ export function EventRoles({
     kind: "ok" | "error" | "saving";
     message: string;
   } | null>(null);
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignDrafts, setAssignDrafts] = useState<RoleDraftRow[]>([]);
+  const [rowSavingId, setRowSavingId] = useState<string | null>(null);
+
+  const executors = useMemo(
+    () =>
+      initialActors
+        .filter(actorCanExecute)
+        .sort((a, b) => a.name.localeCompare(b.name, "es")),
+    [initialActors],
+  );
+
+  const approvers = useMemo(
+    () =>
+      initialActors
+        .filter(actorCanApprove)
+        .sort((a, b) => a.name.localeCompare(b.name, "es")),
+    [initialActors],
+  );
 
   const pool = useMemo(
     () =>
@@ -289,6 +335,93 @@ export function EventRoles({
   function changeFilter(next: StepFilter) {
     setFilter(next);
     setSelectedStepIds(new Set());
+  }
+
+  function openAssignModal(stepIds: string[]) {
+    const drafts: RoleDraftRow[] = [];
+    for (const id of stepIds) {
+      const row = steps.find((item) => item.step.id === id);
+      if (!row) continue;
+      drafts.push({
+        stepId: row.step.id,
+        stepName: row.step.name,
+        workstreamName: row.workstreamName,
+        activityName: row.activityName,
+        executorActorId: row.step.executorActorId ?? "",
+        approverActorId: row.step.approverActorIds?.[0] ?? "",
+      });
+    }
+    if (!drafts.length) return;
+    setAssignDrafts(drafts);
+    setAssignModalOpen(true);
+  }
+
+  function patchAssignDraft(
+    stepId: string,
+    patch: Partial<Pick<RoleDraftRow, "executorActorId" | "approverActorId">>,
+  ) {
+    setAssignDrafts((current) =>
+      current.map((row) =>
+        row.stepId === stepId ? { ...row, ...patch } : row,
+      ),
+    );
+  }
+
+  async function saveRoleAssignments(rows: RoleDraftRow[]) {
+    if (!rows.length) return false;
+    const response = await fetch(`/api/events/${eventId}/step-roles`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        assignments: rows.map((row) => ({
+          stepId: row.stepId,
+          executorActorId: row.executorActorId || null,
+          approverActorId: row.approverActorId || null,
+        })),
+      }),
+    }).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as {
+          steps?: DesignStepSummary[];
+          error?: string;
+        })
+      : null;
+    if (!response?.ok || !payload?.steps) {
+      showToast("error", payload?.error ?? "No fue posible guardar.");
+      return false;
+    }
+    applyStepUpdates(payload.steps);
+    return true;
+  }
+
+  async function saveAssignRow(stepId: string) {
+    const row = assignDrafts.find((item) => item.stepId === stepId);
+    if (!row) return;
+    setRowSavingId(stepId);
+    showToast("saving", "Guardando…");
+    const ok = await saveRoleAssignments([row]);
+    setRowSavingId(null);
+    if (!ok) return;
+    showToast("ok", `Guardado: ${row.stepName}`);
+  }
+
+  async function saveAssignAll() {
+    setSaving(true);
+    showToast("saving", "Guardando asignaciones…");
+    const ok = await saveRoleAssignments(assignDrafts);
+    setSaving(false);
+    if (!ok) return;
+    setSelectedStepIds(new Set());
+    setAssignModalOpen(false);
+    showToast("ok", `${assignDrafts.length} paso(s) actualizados.`);
+  }
+
+  function onAsignarClick() {
+    if (!selectedActorId) {
+      openAssignModal([...selectedStepIds]);
+      return;
+    }
+    void assignSelected();
   }
 
   async function assignSelected() {
@@ -579,16 +712,21 @@ export function EventRoles({
                     type="button"
                     size="sm"
                     disabled={
-                      !selectedActorId ||
                       saving ||
-                      selectedAssignableIds.length === 0
+                      (selectedActorId
+                        ? selectedAssignableIds.length === 0
+                        : selectedStepIds.size === 0)
                     }
-                    onClick={() => void assignSelected()}
+                    onClick={onAsignarClick}
                   >
                     {saving ? (
                       <LoaderCircle className="size-3.5 animate-spin" />
                     ) : null}
-                    Asignar ({selectedAssignableIds.length})
+                    Asignar (
+                    {selectedActorId
+                      ? selectedAssignableIds.length
+                      : selectedStepIds.size}
+                    )
                   </Button>
                 </div>
               </div>
@@ -695,37 +833,72 @@ export function EventRoles({
                               </span>
                             </TableCell>
                             <TableCell className="max-w-[9rem] text-muted-foreground">
-                              <span className="block truncate" title={exec}>
+                              <button
+                                type="button"
+                                className="block max-w-full truncate text-left underline-offset-2 hover:text-foreground hover:underline"
+                                title={`${exec} · editar`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openAssignModal([row.step.id]);
+                                }}
+                              >
                                 {exec}
-                              </span>
+                              </button>
                             </TableCell>
                             <TableCell className="max-w-[11rem] text-muted-foreground">
-                              <span
-                                className="block truncate"
-                                title={approvers}
+                              <button
+                                type="button"
+                                className="block max-w-full truncate text-left underline-offset-2 hover:text-foreground hover:underline"
+                                title={`${approvers} · editar`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openAssignModal([row.step.id]);
+                                }}
                               >
                                 {approvers}
-                              </span>
+                              </button>
                             </TableCell>
                             <TableCell className="w-10 text-right">
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <button
-                                    type="button"
-                                    className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    aria-label={`Info de ${row.step.name}`}
-                                    onClick={(event) => event.stopPropagation()}
+                              <div className="flex items-center justify-end gap-0.5">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                      aria-label={`Editar roles de ${row.step.name}`}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openAssignModal([row.step.id]);
+                                      }}
+                                    >
+                                      <Pencil className="size-3.5" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="left">
+                                    Editar ejecutor / aprobador
+                                  </TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                      aria-label={`Info de ${row.step.name}`}
+                                      onClick={(event) =>
+                                        event.stopPropagation()
+                                      }
+                                    >
+                                      <Info className="size-3.5" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent
+                                    side="left"
+                                    className="max-w-xs text-left whitespace-pre-wrap"
                                   >
-                                    <Info className="size-3.5" />
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent
-                                  side="left"
-                                  className="max-w-xs text-left whitespace-pre-wrap"
-                                >
-                                  {description}
-                                </TooltipContent>
-                              </Tooltip>
+                                    {description}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
@@ -749,6 +922,122 @@ export function EventRoles({
             )}
           </section>
         </div>
+
+        <Dialog open={assignModalOpen} onOpenChange={setAssignModalOpen}>
+          <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden sm:max-w-3xl">
+            <DialogHeader className="shrink-0 border-b px-1 pb-4">
+              <DialogTitle>
+                {assignDrafts.length === 1
+                  ? "Editar asignación"
+                  : `Asignar ${assignDrafts.length} pasos`}
+              </DialogTitle>
+              <DialogDescription>
+                Elige ejecutor y aprobador por fila. Podés guardar una o todas.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-4">
+              {assignDrafts.map((row) => (
+                <div
+                  key={row.stepId}
+                  className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_10rem_10rem_auto] sm:items-end"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{row.stepName}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {row.workstreamName} · {row.activityName}
+                    </p>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-[11px] text-muted-foreground">
+                      Ejecutor
+                    </label>
+                    <Select
+                      value={row.executorActorId || NONE}
+                      onValueChange={(value) =>
+                        patchAssignDraft(row.stepId, {
+                          executorActorId: value === NONE ? "" : value,
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-9 w-full">
+                        <SelectValue placeholder="Sin ejecutor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NONE}>Sin ejecutor</SelectItem>
+                        {executors.map((actor) => (
+                          <SelectItem key={actor.id} value={actor.id}>
+                            {actor.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-[11px] text-muted-foreground">
+                      Aprobador
+                    </label>
+                    <Select
+                      value={row.approverActorId || NONE}
+                      onValueChange={(value) =>
+                        patchAssignDraft(row.stepId, {
+                          approverActorId: value === NONE ? "" : value,
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-9 w-full">
+                        <SelectValue placeholder="Sin aprobador" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NONE}>Sin aprobador</SelectItem>
+                        {approvers.map((actor) => (
+                          <SelectItem key={actor.id} value={actor.id}>
+                            {actor.name}
+                            {actor.roles.includes("STEERCO") ? " · SteerCo" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-9"
+                    disabled={saving || rowSavingId === row.stepId}
+                    onClick={() => void saveAssignRow(row.stepId)}
+                  >
+                    {rowSavingId === row.stepId ? (
+                      <LoaderCircle className="size-3.5 animate-spin" />
+                    ) : null}
+                    Guardar
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            <DialogFooter className="shrink-0 border-t pt-4 sm:justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={saving}
+                onClick={() => setAssignModalOpen(false)}
+              >
+                Cerrar
+              </Button>
+              <Button
+                type="button"
+                disabled={saving || assignDrafts.length === 0}
+                onClick={() => void saveAssignAll()}
+              >
+                {saving ? (
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                ) : null}
+                Guardar todo ({assignDrafts.length})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </TooltipProvider>
   );

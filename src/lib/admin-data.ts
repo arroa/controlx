@@ -43,6 +43,20 @@ export const organizationInputSchema = z.object({
   description: z.string().trim().max(500).default(""),
 });
 
+export const organizationUpdateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120).optional(),
+    description: z.string().trim().max(500).optional(),
+    status: z.enum(["ACTIVE", "ARCHIVED"]).optional(),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.status !== undefined,
+    { message: "Indica al menos un campo a actualizar." },
+  );
+
 /** Evento = diseño / plantilla. No es una ejecución. */
 export const eventInputSchema = z.object({
   organizationId: z.string().refine(ObjectId.isValid, "Organización inválida"),
@@ -57,6 +71,7 @@ export const eventUpdateSchema = z.object({
   description: z.string().trim().max(1000).optional(),
   timezone: timezoneSchema.optional(),
   dayDStartAt: z.iso.datetime().nullable().optional(),
+  status: z.enum(["BORRADOR", "ACTIVO", "ARCHIVED"]).optional(),
 });
 
 /** Ejecución = instancia del evento (simulacro o real). */
@@ -79,6 +94,7 @@ export const executionInputSchema = z
   });
 
 export const adminInputSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
   email: z.string().trim().email().transform((email) => email.toLowerCase()),
 });
 
@@ -214,13 +230,43 @@ export const unassignStepApproversSchema = z.object({
     .min(1, "Elige al menos un paso."),
 });
 
+/** Asignar/editar ejecutor + aprobador principal por paso (modal Roles). */
+export const setStepRolesSchema = z.object({
+  assignments: z
+    .array(
+      z.object({
+        stepId: z.string().refine(ObjectId.isValid, "Paso inválido"),
+        executorActorId: z
+          .string()
+          .refine(ObjectId.isValid, "Ejecutor inválido")
+          .nullable(),
+        approverActorId: z
+          .string()
+          .refine(ObjectId.isValid, "Aprobador inválido")
+          .nullable(),
+      }),
+    )
+    .min(1, "Elige al menos un paso."),
+});
+
+export type OrganizationStatus = "ACTIVE" | "ARCHIVED";
+
 export type OrganizationSummary = {
   id: string;
   name: string;
   description: string;
-  status: "ACTIVE";
+  status: OrganizationStatus;
   createdAt: string;
 };
+
+export type OrganizationUsage = {
+  eventCount: number;
+  adminCount: number;
+  executionCount: number;
+  isEmpty: boolean;
+};
+
+export type EventStatus = "BORRADOR" | "ACTIVO" | "ARCHIVED";
 
 export type EventSummary = {
   id: string;
@@ -230,9 +276,14 @@ export type EventSummary = {
   timezone: string;
   /** Origen absoluto del Día D (timeline). null = aún no definido. */
   dayDStartAt: string | null;
-  status: "BORRADOR" | "ACTIVO";
+  status: EventStatus;
   executionCount: number;
   createdAt: string;
+};
+
+export type EventUsage = {
+  executionCount: number;
+  isEmpty: boolean;
 };
 
 export type ExecutionSummary = {
@@ -259,6 +310,7 @@ export type ExecutionSummary = {
 export type AdminSummary = {
   id: string;
   email: string;
+  name: string;
   role: "ORG_ADMIN" | "EVENT_ADMIN";
   createdAt: string;
 };
@@ -357,7 +409,7 @@ type OrganizationDocument = {
   name: string;
   slug: string;
   description: string;
-  status: "ACTIVE";
+  status: OrganizationStatus;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -370,7 +422,9 @@ type EventDocument = {
   description: string;
   timezone: string;
   dayDStartAt?: Date | null;
-  status: "BORRADOR" | "ACTIVO";
+  status: EventStatus;
+  /** Estado previo al archivar, para restaurar al desarchivar. */
+  statusBeforeArchive?: "BORRADOR" | "ACTIVO";
   readiness?: {
     stale: boolean;
     computedAt: Date | null;
@@ -404,6 +458,7 @@ type OrganizationMembershipDocument = {
   _id?: ObjectId;
   organizationId: ObjectId;
   email: string;
+  name?: string;
   role: "ORG_ADMIN";
   status: "ACTIVE" | "INACTIVE";
   createdBy: string;
@@ -555,6 +610,60 @@ function toSlug(value: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
+function toOrganizationStatus(
+  status: OrganizationDocument["status"] | undefined,
+): OrganizationStatus {
+  return status === "ARCHIVED" ? "ARCHIVED" : "ACTIVE";
+}
+
+function toOrganizationSummary(
+  organization: OrganizationDocument,
+): OrganizationSummary {
+  return {
+    id: organization._id!.toHexString(),
+    name: organization.name,
+    description: organization.description,
+    status: toOrganizationStatus(organization.status),
+    createdAt: organization.createdAt.toISOString(),
+  };
+}
+
+function toOrgAdminSummary(
+  membership: OrganizationMembershipDocument,
+): AdminSummary {
+  return {
+    id: membership._id!.toHexString(),
+    email: membership.email,
+    name: membership.name?.trim() || emailLocalPart(membership.email),
+    role: "ORG_ADMIN",
+    createdAt: membership.createdAt.toISOString(),
+  };
+}
+
+function toEventStatus(
+  status: EventDocument["status"] | undefined,
+): EventStatus {
+  if (status === "ARCHIVED" || status === "ACTIVO") return status;
+  return "BORRADOR";
+}
+
+function toEventSummary(
+  event: EventDocument,
+  executionCount = 0,
+): EventSummary {
+  return {
+    id: event._id!.toHexString(),
+    organizationId: event.organizationId.toHexString(),
+    name: event.name,
+    description: event.description,
+    timezone: event.timezone,
+    dayDStartAt: event.dayDStartAt?.toISOString() ?? null,
+    status: toEventStatus(event.status),
+    executionCount,
+    createdAt: event.createdAt.toISOString(),
+  };
+}
+
 export async function listOrganizations(): Promise<{
   databaseReady: boolean;
   organizations: OrganizationSummary[];
@@ -572,13 +681,7 @@ export async function listOrganizations(): Promise<{
 
   return {
     databaseReady: true,
-    organizations: organizations.map((organization) => ({
-      id: organization._id!.toHexString(),
-      name: organization.name,
-      description: organization.description,
-      status: organization.status,
-      createdAt: organization.createdAt.toISOString(),
-    })),
+    organizations: organizations.map(toOrganizationSummary),
   };
 }
 
@@ -612,30 +715,14 @@ export async function getOrganizationWorkspace(organizationId: string) {
     executionCounts.map((item) => [item._id.toHexString(), item.count]),
   );
   return {
-    organization: {
-      id: organization._id!.toHexString(),
-      name: organization.name,
-      description: organization.description,
-      status: organization.status,
-      createdAt: organization.createdAt.toISOString(),
-    } satisfies OrganizationSummary,
-    admins: admins.map((admin) => ({
-      id: admin._id!.toHexString(),
-      email: admin.email,
-      role: admin.role,
-      createdAt: admin.createdAt.toISOString(),
-    })) satisfies AdminSummary[],
-    events: events.map((event) => ({
-      id: event._id!.toHexString(),
-      organizationId: event.organizationId.toHexString(),
-      name: event.name,
-      description: event.description,
-      timezone: event.timezone,
-      dayDStartAt: event.dayDStartAt?.toISOString() ?? null,
-      status: event.status,
-      executionCount: countByEvent.get(event._id!.toHexString()) ?? 0,
-      createdAt: event.createdAt.toISOString(),
-    })) satisfies EventSummary[],
+    organization: toOrganizationSummary(organization),
+    admins: admins.map(toOrgAdminSummary) satisfies AdminSummary[],
+    events: events.map((event) =>
+      toEventSummary(
+        event,
+        countByEvent.get(event._id!.toHexString()) ?? 0,
+      ),
+    ) satisfies EventSummary[],
   };
 }
 
@@ -666,22 +753,13 @@ export async function getEventWorkspace(eventId: string) {
     organization: organization
       ? { id: organization._id!.toHexString(), name: organization.name }
       : null,
-    event: {
-      id: event._id!.toHexString(),
-      organizationId: event.organizationId.toHexString(),
-      name: event.name,
-      description: event.description,
-      timezone: event.timezone,
-      dayDStartAt: event.dayDStartAt?.toISOString() ?? null,
-      status: event.status,
-      executionCount: executions.length,
-      createdAt: event.createdAt.toISOString(),
-    } satisfies EventSummary,
+    event: toEventSummary(event, executions.length) satisfies EventSummary,
     admins: admins
       .filter((admin) => hasEventAdminRole(admin))
       .map((admin) => ({
         id: admin._id!.toHexString(),
         email: admin.email,
+        name: admin.name?.trim() || emailLocalPart(admin.email),
         role: "EVENT_ADMIN" as const,
         createdAt: admin.createdAt.toISOString(),
       })) satisfies AdminSummary[],
@@ -830,29 +908,149 @@ export async function createOrganization(
   };
   const result = await collection.insertOne(document);
 
+  return toOrganizationSummary({ ...document, _id: result.insertedId });
+}
+
+export async function getOrganizationDetail(organizationId: string) {
+  if (!ObjectId.isValid(organizationId)) return null;
+  const database = await getDatabase();
+  const id = new ObjectId(organizationId);
+  const [organization, admins, usage] = await Promise.all([
+    database.collection<OrganizationDocument>("organizations").findOne({ _id: id }),
+    database
+      .collection<OrganizationMembershipDocument>("organizationMemberships")
+      .find({ organizationId: id, status: "ACTIVE" })
+      .sort({ createdAt: 1 })
+      .toArray(),
+    getOrganizationUsage(organizationId),
+  ]);
+  if (!organization || !usage) return null;
+
   return {
-    id: result.insertedId.toHexString(),
-    name: document.name,
-    description: document.description,
-    status: document.status,
-    createdAt: now.toISOString(),
+    organization: toOrganizationSummary(organization),
+    admins: admins.map(toOrgAdminSummary),
+    usage,
   };
+}
+
+export async function getOrganizationUsage(
+  organizationId: string,
+): Promise<OrganizationUsage | null> {
+  if (!ObjectId.isValid(organizationId)) return null;
+  const database = await getDatabase();
+  const id = new ObjectId(organizationId);
+
+  const [eventCount, adminCount, executionCount] = await Promise.all([
+    database.collection<EventDocument>("events").countDocuments({ organizationId: id }),
+    database
+      .collection<OrganizationMembershipDocument>("organizationMemberships")
+      .countDocuments({ organizationId: id, status: "ACTIVE" }),
+    database
+      .collection<ExecutionDocument>("eventInstances")
+      .countDocuments({ organizationId: id }),
+  ]);
+
+  return {
+    eventCount,
+    adminCount,
+    executionCount,
+    isEmpty: eventCount === 0 && executionCount === 0,
+  };
+}
+
+export async function updateOrganization(
+  organizationId: string,
+  input: z.infer<typeof organizationUpdateSchema>,
+): Promise<OrganizationSummary> {
+  if (!ObjectId.isValid(organizationId)) {
+    throw new Error("Organización inválida.");
+  }
+
+  const database = await getDatabase();
+  const id = new ObjectId(organizationId);
+  const collection =
+    database.collection<OrganizationDocument>("organizations");
+  const current = await collection.findOne({ _id: id });
+  if (!current) throw new Error("La organización no existe.");
+
+  const $set: Partial<OrganizationDocument> = { updatedAt: new Date() };
+
+  if (input.name !== undefined) {
+    $set.name = input.name;
+    if (input.name !== current.name) {
+      const baseSlug = toSlug(input.name);
+      let slug = baseSlug;
+      let suffix = 2;
+      while (
+        await collection.findOne(
+          { slug, _id: { $ne: id } },
+          { projection: { _id: 1 } },
+        )
+      ) {
+        slug = `${baseSlug}-${suffix++}`;
+      }
+      $set.slug = slug;
+    }
+  }
+  if (input.description !== undefined) $set.description = input.description;
+  if (input.status !== undefined) $set.status = input.status;
+
+  const result = await collection.findOneAndUpdate(
+    { _id: id },
+    { $set },
+    { returnDocument: "after" },
+  );
+  if (!result) throw new Error("No fue posible actualizar la organización.");
+  return toOrganizationSummary(result);
+}
+
+export async function deleteOrganization(organizationId: string): Promise<void> {
+  if (!ObjectId.isValid(organizationId)) {
+    throw new Error("Organización inválida.");
+  }
+
+  const usage = await getOrganizationUsage(organizationId);
+  if (!usage) throw new Error("La organización no existe.");
+  if (!usage.isEmpty) {
+    throw new Error(
+      "La organización tiene eventos o ejecuciones. Archívala o elimina ese contenido primero.",
+    );
+  }
+
+  const database = await getDatabase();
+  const id = new ObjectId(organizationId);
+  const deleted = await database
+    .collection<OrganizationDocument>("organizations")
+    .deleteOne({ _id: id });
+  if (!deleted.deletedCount) throw new Error("La organización no existe.");
+
+  await database
+    .collection<OrganizationMembershipDocument>("organizationMemberships")
+    .deleteMany({ organizationId: id });
+}
+
+async function requireActiveOrganization(organizationId: ObjectId) {
+  const database = await getDatabase();
+  const organization = await database
+    .collection<OrganizationDocument>("organizations")
+    .findOne({ _id: organizationId });
+  if (!organization) {
+    throw new Error("La organización seleccionada no existe.");
+  }
+  if (toOrganizationStatus(organization.status) === "ARCHIVED") {
+    throw new Error("La organización está archivada y no se puede usar.");
+  }
+  return organization;
 }
 
 export async function createEvent(
   input: z.infer<typeof eventInputSchema>,
   actorId: string,
 ): Promise<EventSummary> {
-  const database = await getDatabase();
   const organizationId = new ObjectId(input.organizationId);
-  const organization = await database
-    .collection<OrganizationDocument>("organizations")
-    .findOne({ _id: organizationId }, { projection: { _id: 1 } });
+  await requireActiveOrganization(organizationId);
 
-  if (!organization) {
-    throw new Error("La organización seleccionada no existe.");
-  }
-
+  const database = await getDatabase();
   const now = new Date();
   const document: EventDocument = {
     organizationId,
@@ -875,17 +1073,7 @@ export async function createEvent(
     .collection<EventDocument>("events")
     .insertOne(document);
 
-  return {
-    id: result.insertedId.toHexString(),
-    organizationId: input.organizationId,
-    name: document.name,
-    description: document.description,
-    timezone: document.timezone,
-    dayDStartAt: document.dayDStartAt?.toISOString() ?? null,
-    status: document.status,
-    executionCount: 0,
-    createdAt: now.toISOString(),
-  };
+  return toEventSummary({ ...document, _id: result.insertedId }, 0);
 }
 
 export async function updateEvent(
@@ -900,7 +1088,30 @@ export async function updateEvent(
     .findOne({ _id: id });
   if (!current) throw new Error("El evento no existe.");
 
+  const currentStatus = toEventStatus(current.status);
   const $set: Partial<EventDocument> = { updatedAt: new Date() };
+  const $unset: Record<string, ""> = {};
+
+  if (input.status !== undefined) {
+    if (input.status === "ARCHIVED") {
+      if (currentStatus !== "ARCHIVED") {
+        $set.status = "ARCHIVED";
+        $set.statusBeforeArchive =
+          currentStatus === "ACTIVO" ? "ACTIVO" : "BORRADOR";
+      }
+    } else if (input.status === "BORRADOR" || input.status === "ACTIVO") {
+      if (currentStatus === "ARCHIVED") {
+        $set.status =
+          current.statusBeforeArchive === "ACTIVO" ? "ACTIVO" : "BORRADOR";
+        $unset.statusBeforeArchive = "";
+      } else {
+        $set.status = input.status;
+      }
+    }
+  } else if (currentStatus === "ARCHIVED") {
+    throw new Error("El evento está archivado y no se puede editar.");
+  }
+
   if (input.name !== undefined) $set.name = input.name;
   if (input.description !== undefined) $set.description = input.description;
   if (input.timezone !== undefined) $set.timezone = input.timezone;
@@ -908,28 +1119,121 @@ export async function updateEvent(
     $set.dayDStartAt = input.dayDStartAt ? new Date(input.dayDStartAt) : null;
   }
 
+  const updateDoc: {
+    $set: Partial<EventDocument>;
+    $unset?: Record<string, "">;
+  } = { $set };
+  if (Object.keys($unset).length) updateDoc.$unset = $unset;
+
   const result = await database
     .collection<EventDocument>("events")
-    .findOneAndUpdate({ _id: id }, { $set }, { returnDocument: "after" });
+    .findOneAndUpdate({ _id: id }, updateDoc, { returnDocument: "after" });
   if (!result) throw new Error("El evento no existe.");
 
-  await touchPrepReadiness(eventId);
+  if (toEventStatus(result.status) !== "ARCHIVED") {
+    await touchPrepReadiness(eventId);
+  }
+
+  const executionCount = await database
+    .collection<ExecutionDocument>("eventInstances")
+    .countDocuments({ eventId: id });
+
+  return toEventSummary(result, executionCount);
+}
+
+export async function getEventUsage(
+  eventId: string,
+): Promise<EventUsage | null> {
+  if (!ObjectId.isValid(eventId)) return null;
+  const database = await getDatabase();
+  const id = new ObjectId(eventId);
+  const event = await database
+    .collection<EventDocument>("events")
+    .findOne({ _id: id }, { projection: { _id: 1 } });
+  if (!event) return null;
 
   const executionCount = await database
     .collection<ExecutionDocument>("eventInstances")
     .countDocuments({ eventId: id });
 
   return {
-    id: result._id!.toHexString(),
-    organizationId: result.organizationId.toHexString(),
-    name: result.name,
-    description: result.description,
-    timezone: result.timezone,
-    dayDStartAt: result.dayDStartAt?.toISOString() ?? null,
-    status: result.status,
     executionCount,
-    createdAt: result.createdAt.toISOString(),
+    isEmpty: executionCount === 0,
   };
+}
+
+export async function getEventDetail(eventId: string) {
+  if (!ObjectId.isValid(eventId)) return null;
+  const database = await getDatabase();
+  const id = new ObjectId(eventId);
+  const [event, usage, memberships] = await Promise.all([
+    database.collection<EventDocument>("events").findOne({ _id: id }),
+    getEventUsage(eventId),
+    database
+      .collection<EventMembershipDocument>("eventMemberships")
+      .find({ eventId: id, status: "ACTIVE" })
+      .sort({ createdAt: 1 })
+      .toArray(),
+  ]);
+  if (!event || !usage) return null;
+
+  return {
+    event: toEventSummary(event, usage.executionCount),
+    usage,
+    admins: memberships
+      .filter((admin) => hasEventAdminRole(admin))
+      .map(
+        (admin) =>
+          ({
+            id: admin._id!.toHexString(),
+            email: admin.email,
+            name: admin.name?.trim() || emailLocalPart(admin.email),
+            role: "EVENT_ADMIN" as const,
+            createdAt: admin.createdAt.toISOString(),
+          }) satisfies AdminSummary,
+      ),
+  };
+}
+
+export async function deleteEvent(eventId: string): Promise<void> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const usage = await getEventUsage(eventId);
+  if (!usage) throw new Error("El evento no existe.");
+  if (!usage.isEmpty) {
+    throw new Error(
+      "El evento tiene ejecuciones. Archívalo o elimina esas ejecuciones primero.",
+    );
+  }
+
+  const database = await getDatabase();
+  const id = new ObjectId(eventId);
+  const deleted = await database
+    .collection<EventDocument>("events")
+    .deleteOne({ _id: id });
+  if (!deleted.deletedCount) throw new Error("El evento no existe.");
+
+  await Promise.all([
+    database
+      .collection("eventMemberships")
+      .deleteMany({ eventId: id }),
+    database.collection("workstreams").deleteMany({ eventId: id }),
+    database.collection("blocks").deleteMany({ eventId: id }),
+    database.collection("activities").deleteMany({ eventId: id }),
+    database.collection("designSteps").deleteMany({ eventId: id }),
+    database.collection("gates").deleteMany({ eventId: id }),
+  ]);
+}
+
+async function requireUsableEvent(eventId: ObjectId) {
+  const database = await getDatabase();
+  const event = await database
+    .collection<EventDocument>("events")
+    .findOne({ _id: eventId });
+  if (!event) throw new Error("El evento seleccionado no existe.");
+  if (toEventStatus(event.status) === "ARCHIVED") {
+    throw new Error("El evento está archivado y no se puede usar.");
+  }
+  return event;
 }
 
 export async function createExecution(
@@ -946,13 +1250,7 @@ export async function createExecution(
 
   const database = await getDatabase();
   const eventId = new ObjectId(input.eventId);
-  const event = await database
-    .collection<EventDocument>("events")
-    .findOne({ _id: eventId });
-
-  if (!event) {
-    throw new Error("El evento seleccionado no existe.");
-  }
+  const event = await requireUsableEvent(eventId);
 
   const timezone = input.timezone?.trim() || event.timezone;
   const now = new Date();
@@ -1024,23 +1322,21 @@ export async function createExecution(
 
 export async function addOrganizationAdmin(
   organizationId: string,
-  email: string,
+  input: { email: string; name?: string },
   actorId: string,
 ): Promise<AdminSummary> {
   const database = await getDatabase();
   const id = new ObjectId(organizationId);
-  const organization = await database
-    .collection<OrganizationDocument>("organizations")
-    .findOne({ _id: id }, { projection: { _id: 1 } });
-  if (!organization) throw new Error("La organización no existe.");
+  await requireActiveOrganization(id);
 
   const { ensureClerkUser, normalizeEmail } = await import(
     "@/lib/clerk-users"
   );
-  const normalizedEmail = normalizeEmail(email);
+  const normalizedEmail = normalizeEmail(input.email);
   await ensureClerkUser(normalizedEmail);
 
   const now = new Date();
+  const adminName = input.name?.trim() || emailLocalPart(normalizedEmail);
   const collection =
     database.collection<OrganizationMembershipDocument>(
       "organizationMemberships",
@@ -1048,7 +1344,12 @@ export async function addOrganizationAdmin(
   await collection.updateOne(
     { organizationId: id, email: normalizedEmail, role: "ORG_ADMIN" },
     {
-      $set: { status: "ACTIVE" },
+      $set: {
+        status: "ACTIVE",
+        name: adminName,
+        updatedBy: actorId,
+        updatedAt: now,
+      },
       $setOnInsert: { createdBy: actorId, createdAt: now },
     },
     { upsert: true },
@@ -1059,24 +1360,22 @@ export async function addOrganizationAdmin(
     role: "ORG_ADMIN",
   });
 
-  return {
-    id: membership!._id!.toHexString(),
-    email: normalizedEmail,
-    role: "ORG_ADMIN",
-    createdAt: membership!.createdAt.toISOString(),
-  };
+  return toOrgAdminSummary(membership!);
 }
 
 export async function addEventAdmin(
   eventId: string,
-  email: string,
+  input: { email: string; name?: string },
   actorId: string,
 ): Promise<AdminSummary> {
+  await requireUsableEvent(new ObjectId(eventId));
+  const name =
+    input.name?.trim() || emailLocalPart(input.email);
   const actor = await upsertEventActor(
     eventId,
     {
-      email,
-      name: emailLocalPart(email),
+      email: input.email,
+      name,
       area: "General",
       roles: ["EVENT_ADMIN"],
     },
@@ -1086,6 +1385,7 @@ export async function addEventAdmin(
   return {
     id: actor.id,
     email: actor.email,
+    name: actor.name,
     role: "EVENT_ADMIN",
     createdAt: actor.createdAt,
   };
@@ -1094,19 +1394,30 @@ export async function addEventAdmin(
 export async function updateOrganizationAdmin(
   organizationId: string,
   adminId: string,
-  email: string,
+  input: { email: string; name?: string },
   actorId: string,
 ): Promise<AdminSummary> {
   if (!ObjectId.isValid(organizationId) || !ObjectId.isValid(adminId)) {
     throw new Error("Administrador inválido.");
   }
+  await requireActiveOrganization(new ObjectId(organizationId));
+
   const { ensureClerkUser, normalizeEmail } = await import(
     "@/lib/clerk-users"
   );
-  const normalizedEmail = normalizeEmail(email);
+  const normalizedEmail = normalizeEmail(input.email);
   await ensureClerkUser(normalizedEmail);
 
   const database = await getDatabase();
+  const $set: Partial<OrganizationMembershipDocument> = {
+    email: normalizedEmail,
+    updatedBy: actorId,
+    updatedAt: new Date(),
+  };
+  if (input.name !== undefined) {
+    $set.name = input.name.trim() || emailLocalPart(normalizedEmail);
+  }
+
   const result = await database
     .collection<OrganizationMembershipDocument>("organizationMemberships")
     .findOneAndUpdate(
@@ -1116,23 +1427,12 @@ export async function updateOrganizationAdmin(
         role: "ORG_ADMIN",
         status: "ACTIVE",
       },
-      {
-        $set: {
-          email: normalizedEmail,
-          updatedBy: actorId,
-          updatedAt: new Date(),
-        },
-      },
+      { $set },
       { returnDocument: "after" },
     );
   if (!result) throw new Error("El OrgAdmin no existe.");
 
-  return {
-    id: result._id!.toHexString(),
-    email: result.email,
-    role: result.role,
-    createdAt: result.createdAt.toISOString(),
-  };
+  return toOrgAdminSummary(result);
 }
 
 export async function deactivateOrganizationAdmin(
@@ -1143,6 +1443,7 @@ export async function deactivateOrganizationAdmin(
   if (!ObjectId.isValid(organizationId) || !ObjectId.isValid(adminId)) {
     throw new Error("Administrador inválido.");
   }
+  await requireActiveOrganization(new ObjectId(organizationId));
   const database = await getDatabase();
   const result = await database
     .collection<OrganizationMembershipDocument>("organizationMemberships")
@@ -1167,12 +1468,13 @@ export async function deactivateOrganizationAdmin(
 export async function updateEventAdmin(
   eventId: string,
   adminId: string,
-  email: string,
+  input: { email: string; name?: string },
   actorId: string,
 ): Promise<AdminSummary> {
   if (!ObjectId.isValid(eventId) || !ObjectId.isValid(adminId)) {
     throw new Error("Administrador inválido.");
   }
+  await requireUsableEvent(new ObjectId(eventId));
   const database = await getDatabase();
   const existing = await database
     .collection<EventMembershipDocument>("eventMemberships")
@@ -1189,8 +1491,11 @@ export async function updateEventAdmin(
     eventId,
     adminId,
     {
-      email,
-      name: existing.name?.trim() || emailLocalPart(email),
+      email: input.email,
+      name:
+        input.name?.trim() ||
+        existing.name?.trim() ||
+        emailLocalPart(input.email),
       area: existing.area?.trim() || "General",
       roles: membershipRoles(existing),
     },
@@ -1199,6 +1504,7 @@ export async function updateEventAdmin(
   return {
     id: actor.id,
     email: actor.email,
+    name: actor.name,
     role: "EVENT_ADMIN",
     createdAt: actor.createdAt,
   };
@@ -1212,6 +1518,7 @@ export async function deactivateEventAdmin(
   if (!ObjectId.isValid(eventId) || !ObjectId.isValid(adminId)) {
     throw new Error("Administrador inválido.");
   }
+  await requireUsableEvent(new ObjectId(eventId));
   const database = await getDatabase();
   const existing = await database
     .collection<EventMembershipDocument>("eventMemberships")
@@ -2188,10 +2495,6 @@ export async function assignStepsExecutor(
     {
       eventId: eventObjectId,
       _id: { $in: stepObjectIds },
-      $or: [
-        { executorActorId: null },
-        { executorActorId: { $exists: false } },
-      ],
     },
     { $set: { executorActorId: executorId, updatedAt: now } },
   );
@@ -2294,6 +2597,92 @@ export async function assignStepsApprover(
     .toArray();
   await touchPrepReadiness(eventId);
 
+  return steps.map((step) => toDesignStepSummary(eventId, step));
+}
+
+export async function setStepRolesAssignments(
+  eventId: string,
+  input: z.infer<typeof setStepRolesSchema>,
+): Promise<DesignStepSummary[]> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const database = await getDatabase();
+  const eventObjectId = new ObjectId(eventId);
+  const collection = database.collection<DesignStepDocument>("designSteps");
+  const memberships =
+    database.collection<EventMembershipDocument>("eventMemberships");
+
+  const stepObjectIds = input.assignments.map(
+    (item) => new ObjectId(item.stepId),
+  );
+  const matched = await collection.countDocuments({
+    eventId: eventObjectId,
+    _id: { $in: stepObjectIds },
+  });
+  if (matched !== stepObjectIds.length) {
+    throw new Error("Uno o más pasos no pertenecen a este evento.");
+  }
+
+  const actorIds = [
+    ...new Set(
+      input.assignments.flatMap((item) =>
+        [item.executorActorId, item.approverActorId].filter(
+          (id): id is string => Boolean(id),
+        ),
+      ),
+    ),
+  ].map((id) => new ObjectId(id));
+
+  const actors =
+    actorIds.length === 0
+      ? []
+      : await memberships
+          .find({
+            _id: { $in: actorIds },
+            eventId: eventObjectId,
+            status: "ACTIVE",
+          })
+          .toArray();
+  const actorById = new Map(
+    actors.map((actor) => [actor._id!.toHexString(), actor]),
+  );
+
+  for (const item of input.assignments) {
+    if (item.executorActorId) {
+      const actor = actorById.get(item.executorActorId);
+      if (!actor || !membershipRoles(actor).includes("EXECUTOR")) {
+        throw new Error("Hay un ejecutor inválido en la asignación.");
+      }
+    }
+    if (item.approverActorId) {
+      const actor = actorById.get(item.approverActorId);
+      if (!actor || !isApproverActor(actor)) {
+        throw new Error("Hay un aprobador inválido en la asignación.");
+      }
+    }
+  }
+
+  const now = new Date();
+  for (const item of input.assignments) {
+    await collection.updateOne(
+      { _id: new ObjectId(item.stepId), eventId: eventObjectId },
+      {
+        $set: {
+          executorActorId: item.executorActorId
+            ? new ObjectId(item.executorActorId)
+            : null,
+          approverActorIds: item.approverActorId
+            ? [new ObjectId(item.approverActorId)]
+            : [],
+          updatedAt: now,
+        },
+      },
+    );
+  }
+
+  const steps = await collection
+    .find({ eventId: eventObjectId, _id: { $in: stepObjectIds } })
+    .toArray();
+  await touchPrepReadiness(eventId);
   return steps.map((step) => toDesignStepSummary(eventId, step));
 }
 

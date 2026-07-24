@@ -14,9 +14,14 @@ import {
   type FlowerAction,
 } from "@/components/step-action-flower";
 import {
-  RUNTIME_STEP_STATUS_LABELS,
+  filterStepsByFocus,
+  isMineStep,
+  nextMineStepId,
+  runtimeBarTone,
+  type ExecutionFocusMode,
+} from "@/lib/execution-focus";
+import {
   type RuntimeStepAction,
-  type RuntimeStepStatus,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
 import { cn } from "@/lib/utils";
@@ -98,54 +103,26 @@ function ceilToSlot(ms: number) {
 }
 
 /**
- * Colores del mapa:
- * - Pendiente (mío): azul
- * - Siguiente en secuencia (mío): azul más claro
- * - No es mío: gris claro
- * - Exitoso: verde
- * - Fallido: rojo
+ * Colores del mapa: ver runtimeBarTone.
  */
 function barTone(
-  status: RuntimeStepStatus,
+  status: RuntimeStepSummary["status"],
   mine: boolean,
   isNext: boolean,
+  dimOthers: boolean,
 ) {
-  if (
-    status === "EXITOSO" ||
-    status === "APROBADO" ||
-    status === "SIMULADO" ||
-    status === "OMITIDO"
-  ) {
-    return mine
-      ? "border-emerald-300 bg-emerald-500 text-emerald-950"
-      : "border-emerald-500/30 bg-emerald-500/25 text-emerald-100";
-  }
-  if (status === "FALLIDO") {
-    return mine
-      ? "border-rose-300 bg-rose-500 text-rose-50"
-      : "border-rose-500/30 bg-rose-500/25 text-rose-100";
-  }
-  if (!mine) {
-    return "border-zinc-400/50 bg-zinc-300 text-zinc-800";
-  }
-  if (status === "PENDIENTE_APROBACION") {
-    return "border-amber-300 bg-amber-400 text-amber-950";
-  }
-  // Mío pendiente / en curso / rechazado (se puede reiniciar)
-  if (isNext || status === "INICIADO") {
-    return "border-sky-200 bg-sky-300 text-sky-950"; // azul claro = siguiente
-  }
-  return "border-blue-300 bg-blue-600 text-white"; // azul = pendiente
+  return runtimeBarTone({ status, mine, isNext, dimOthers });
 }
 
 function flowerActionsFor(input: {
   step: RuntimeStepSummary;
   busy: boolean;
+  canAct: boolean;
   onAction: (action: RuntimeStepAction) => void;
   onOutcome: (action: OutcomeAction) => void;
   onInfo: () => void;
 }): FlowerAction[] {
-  const { step, busy, onAction, onOutcome, onInfo } = input;
+  const { step, busy, canAct, onAction, onOutcome, onInfo } = input;
   const actions: FlowerAction[] = [
     {
       key: "info",
@@ -159,11 +136,14 @@ function flowerActionsFor(input: {
   if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
     actions.push({
       key: "start",
-      label: "Iniciar",
+      label: canAct ? "Iniciar" : "Iniciar (solo lectura)",
       icon: CirclePlay,
       tone: "go",
-      disabled: busy,
-      onClick: () => onAction("start"),
+      disabled: busy || !canAct,
+      onClick: () => {
+        if (!canAct) return;
+        onAction("start");
+      },
     });
   }
 
@@ -171,19 +151,25 @@ function flowerActionsFor(input: {
     actions.push(
       {
         key: "success",
-        label: "Exitoso",
+        label: canAct ? "Exitoso" : "Exitoso (solo lectura)",
         icon: CircleCheck,
         tone: "success",
-        disabled: busy,
-        onClick: () => onOutcome("complete_success"),
+        disabled: busy || !canAct,
+        onClick: () => {
+          if (!canAct) return;
+          onOutcome("complete_success");
+        },
       },
       {
         key: "fail",
-        label: "Fallido",
+        label: canAct ? "Fallido" : "Fallido (solo lectura)",
         icon: CircleX,
         tone: "danger",
-        disabled: busy,
-        onClick: () => onOutcome("complete_fail"),
+        disabled: busy || !canAct,
+        onClick: () => {
+          if (!canAct) return;
+          onOutcome("complete_fail");
+        },
       },
     );
   }
@@ -220,7 +206,9 @@ export function ExecutorTimesMap({
   anchorStartAt,
   /** null = todos los workstreams; array = solo esos ids */
   workstreamIds,
-  mineOnly,
+  focusMode = "all",
+  /** Si true, se pueden operar pasos ajenos (admin). */
+  canOperateAny = false,
   selectedId,
   busy,
   onSelect,
@@ -229,11 +217,12 @@ export function ExecutorTimesMap({
   onOpenInfo,
 }: {
   steps: RuntimeStepSummary[];
-  actorId: string;
+  actorId: string | null;
   timezone: string;
   anchorStartAt: string | null;
   workstreamIds: string[] | null;
-  mineOnly: boolean;
+  focusMode?: ExecutionFocusMode;
+  canOperateAny?: boolean;
   selectedId: string | null;
   busy: boolean;
   onSelect: (stepId: string | null) => void;
@@ -242,6 +231,7 @@ export function ExecutorTimesMap({
   onOpenInfo: (stepId: string) => void;
 }) {
   const t0Ms = anchorStartAt ? new Date(anchorStartAt).getTime() : Date.now();
+  const dimOthers = focusMode === "highlight-mine";
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [flowerOpenId, setFlowerOpenId] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -291,51 +281,22 @@ export function ExecutorTimesMap({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [selectedId, onSelect]);
 
-  const mineIds = useMemo(
-    () =>
-      new Set(
-        steps
-          .filter((step) => step.executorActorId === actorId)
-          .map((step) => step.id),
-      ),
-    [steps, actorId],
+  const nextId = useMemo(
+    () => nextMineStepId(steps, actorId, t0Ms),
+    [steps, actorId, t0Ms],
   );
 
-  /** Tu próximo paso: el iniciado, o el pendiente más temprano. */
-  const nextMineId = useMemo(() => {
-    const mineSteps = steps.filter((step) => mineIds.has(step.id));
-    const started = mineSteps.find((step) => step.status === "INICIADO");
-    if (started) return started.id;
-    const pending = mineSteps
-      .filter(
-        (step) =>
-          step.status === "PLANIFICADO" || step.status === "RECHAZADO",
-      )
-      .sort((a, b) => {
-        const aStart = a.plannedStartAt
-          ? new Date(a.plannedStartAt).getTime()
-          : t0Ms;
-        const bStart = b.plannedStartAt
-          ? new Date(b.plannedStartAt).getTime()
-          : t0Ms;
-        return aStart - bStart || a.order - b.order;
-      });
-    return pending[0]?.id ?? null;
-  }, [steps, mineIds, t0Ms]);
-
   const candidateSteps = useMemo(() => {
-    const wsSet =
-      workstreamIds == null ? null : new Set(workstreamIds);
-
-    const list = steps.filter((step) => {
+    const wsSet = workstreamIds == null ? null : new Set(workstreamIds);
+    const focused = filterStepsByFocus(steps, actorId, focusMode);
+    const list = focused.filter((step) => {
       if (wsSet && !wsSet.has(step.workstreamId)) return false;
-      if (mineOnly) return mineIds.has(step.id);
       return true;
     });
 
     return [...list].sort((a, b) => {
       const score = (step: RuntimeStepSummary) =>
-        mineIds.has(step.id) ? 0 : 1;
+        isMineStep(step, actorId) ? 0 : 1;
       const diff = score(a) - score(b);
       if (diff !== 0) return diff;
       const aStart = a.plannedStartAt
@@ -346,7 +307,7 @@ export function ExecutorTimesMap({
         : t0Ms;
       return aStart - bStart;
     });
-  }, [steps, workstreamIds, mineOnly, mineIds, t0Ms]);
+  }, [steps, workstreamIds, focusMode, actorId, t0Ms]);
 
   const timed = useMemo(() => {
     const raw: Omit<TimedStep, "column">[] = candidateSteps.map((step) => {
@@ -356,6 +317,7 @@ export function ExecutorTimesMap({
         ? new Date(step.plannedStartAt).getTime()
         : t0Ms;
       const endMs = startMs + durationMin * 60_000;
+      const mine = isMineStep(step, actorId);
       return {
         step,
         startMs,
@@ -363,12 +325,12 @@ export function ExecutorTimesMap({
         startMin: Math.max(0, Math.round((startMs - t0Ms) / 60_000)),
         durationMin,
         dayKey: dayKeyFromMs(startMs, timezone),
-        mine: mineIds.has(step.id),
-        isNext: step.id === nextMineId,
+        mine,
+        isNext: step.id === nextId,
       };
     });
     return assignColumns(raw);
-  }, [candidateSteps, t0Ms, timezone, mineIds, nextMineId]);
+  }, [candidateSteps, t0Ms, timezone, actorId, nextId]);
 
   const columnCount = useMemo(
     () => Math.max(1, ...timed.map((item) => item.column + 1), 0),
@@ -543,22 +505,25 @@ export function ExecutorTimesMap({
                       data-step-card={item.step.id}
                       className={cn(
                         "absolute flex flex-col overflow-visible rounded-md border px-1.5 py-1 shadow-sm",
-                        barTone(item.step.status, item.mine, item.isNext),
+                        barTone(
+                          item.step.status,
+                          item.mine,
+                          item.isNext,
+                          dimOthers,
+                        ),
                         flowerOpen
                           ? "z-40"
                           : selected
                             ? "z-30 ring-2 ring-white/70"
                             : "z-[2]",
-                        !item.mine && "opacity-80",
+                        dimOthers && !item.mine && "opacity-70",
                       )}
                       style={{ top: top + 1, left, width, height }}
                     >
                       <button
                         type="button"
                         className="flex min-h-0 flex-1 flex-col items-stretch gap-0.5 text-left"
-                        disabled={!item.mine}
                         onClick={() => {
-                          if (!item.mine) return;
                           const next =
                             selectedId === item.step.id ? null : item.step.id;
                           onSelect(next);
@@ -573,7 +538,7 @@ export function ExecutorTimesMap({
                           {item.step.activityName}
                         </span>
                       </button>
-                      {item.mine && selected ? (
+                      {selected ? (
                         <div className="mt-auto flex justify-end pt-0.5">
                           <StepActionFlower
                             open={flowerOpen}
@@ -587,6 +552,7 @@ export function ExecutorTimesMap({
                             actions={flowerActionsFor({
                               step: item.step,
                               busy,
+                              canAct: item.mine || canOperateAny,
                               onAction: (action) => {
                                 setFlowerOpenId(null);
                                 onSelect(null);

@@ -55,9 +55,17 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  const closeRef = React.useRef<HTMLButtonElement>(null)
+
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay
+        onPointerDown={(event) => {
+          if (event.target === event.currentTarget) {
+            closeRef.current?.click()
+          }
+        }}
+      />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
@@ -67,6 +75,18 @@ function DialogContent({
         {...props}
       >
         {children}
+        {/* Siempre presente para poder cerrar desde el overlay aunque no haya X */}
+        <DialogPrimitive.Close asChild>
+          <button
+            ref={closeRef}
+            type="button"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden={!showCloseButton}
+          >
+            Close
+          </button>
+        </DialogPrimitive.Close>
         {showCloseButton && (
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <Button
@@ -74,8 +94,7 @@ function DialogContent({
               className="absolute top-2 right-2"
               size="icon-sm"
             >
-              <XIcon
-              />
+              <XIcon />
               <span className="sr-only">Close</span>
             </Button>
           </DialogPrimitive.Close>

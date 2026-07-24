@@ -1,20 +1,17 @@
 "use client";
 
 import {
+  BadgeInfo,
   CalendarClock,
-  ChevronDown,
-  ChevronRight,
+  ChartNoAxesGantt,
   DoorOpen,
-  FileText,
-  Info,
-  ListChecks,
+  List,
   LoaderCircle,
   Pencil,
   Save,
   Search,
-  TriangleAlert,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Label } from "@/components/ui/label";
 
@@ -43,13 +40,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { FlowerAction } from "@/components/step-action-flower";
 import type {
   DesignPair,
   DesignStepSummary,
@@ -60,18 +58,23 @@ import { GatesManager } from "@/components/gates-manager";
 import {
   DateTimePicker,
   toZonedInput,
+  zonedPartsFromIso,
 } from "@/components/datetime-picker";
+import {
+  DEFAULT_DURATION_MINUTES,
+  TimesView,
+  type TimesViewRow,
+} from "@/components/times-view";
 import { cn } from "@/lib/utils";
 
-const DEFAULT_DURATION_MINUTES = 30;
-const PIXELS_PER_MINUTE = 2.4;
-const GATE_COLORS = [
-  "border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  "border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  "border-emerald-500 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  "border-rose-500 bg-rose-500/15 text-rose-700 dark:text-rose-300",
-  "border-violet-500 bg-violet-500/15 text-violet-700 dark:text-violet-300",
-];
+function formatDayDToolbar(iso: string, timezone: string) {
+  const p = zonedPartsFromIso(iso, timezone);
+  const dd = String(p.day).padStart(2, "0");
+  const mm = String(p.month).padStart(2, "0");
+  const hh = String(p.hour).padStart(2, "0");
+  const mi = String(p.minute).padStart(2, "0");
+  return `${dd}-${mm} ${hh}:${mi}`;
+}
 
 type PlannerRow = DesignStepSummary & {
   workstreamName: string;
@@ -143,8 +146,27 @@ function isDirty(row: PlannerRow, draft: Draft) {
   );
 }
 
-function gateColorClass(index: number) {
-  return GATE_COLORS[index % GATE_COLORS.length]!;
+/** Misma paleta que el cockpit: azul = pendiente, azul claro = activo. */
+function plannerStepBarClass(
+  _row: TimesViewRow,
+  active: boolean,
+  _flowerOpen: boolean,
+): string {
+  return active
+    ? "border-sky-200 bg-sky-300 text-sky-950 ring-2 ring-white/70"
+    : "border-blue-300 bg-blue-600 text-white hover:bg-blue-500";
+}
+
+function plannerFlowerActions(input: { onEdit: () => void }): FlowerAction[] {
+  return [
+    {
+      key: "edit",
+      label: "Editar planificación",
+      icon: Pencil,
+      tone: "go",
+      onClick: input.onEdit,
+    },
+  ];
 }
 
 export function EventPlanner({
@@ -171,6 +193,7 @@ export function EventPlanner({
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [view, setView] = useState<"grid" | "times">("grid");
 
   const editingRow = editingId
     ? (rows.find((row) => row.id === editingId) ?? null)
@@ -316,34 +339,31 @@ export function EventPlanner({
   return (
     <>
     <Tabs
-      defaultValue="grid"
+      value={view}
+      onValueChange={(next) => {
+        if (next === "grid" || next === "times") setView(next);
+      }}
       className="flex h-full min-h-0 flex-col gap-2 overflow-hidden data-horizontal:flex-col"
     >
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <TabsList className="h-8">
-          <TabsTrigger value="grid" className="h-7 px-2.5 text-xs">
-            Planilla
-          </TabsTrigger>
-          <TabsTrigger value="times" className="h-7 px-2.5 text-xs">
-            Tiempos
-          </TabsTrigger>
-        </TabsList>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="h-8"
-          onClick={() => setGatesOpen(true)}
-        >
-          <DoorOpen className="size-3.5" />
-          Gates
-          {gates.length ? (
-            <Badge variant="outline" className="ml-0.5 h-5 px-1.5 text-[10px]">
-              {gates.length}
-            </Badge>
-          ) : null}
-        </Button>
-        <div className="relative min-w-[180px] flex-1">
+        <p className="shrink-0 text-xs font-medium tabular-nums">
+          {dayDStartAt ? (
+            <>
+              Día D:{" "}
+              <span className="text-foreground">
+                {formatDayDToolbar(dayDStartAt, eventTimezone)}
+              </span>
+              <span className="text-muted-foreground">
+                {" · "}
+                {eventTimezone}
+              </span>
+            </>
+          ) : (
+            <span className="text-amber-200">Día D: sin definir · {eventTimezone}</span>
+          )}
+        </p>
+
+        <div className="relative min-w-[160px] max-w-xs flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="h-8 pl-8 text-sm"
@@ -352,10 +372,46 @@ export function EventPlanner({
             placeholder="Buscar…"
           />
         </div>
-        <p className="hidden text-[11px] text-muted-foreground md:block">
-          TZ {eventTimezone}
-          {dayDStartAt ? " · Día D definido" : ""}
-        </p>
+
+        <Button
+          type="button"
+          size="sm"
+          className="h-8"
+          variant={view === "grid" ? "default" : "outline"}
+          onClick={() => setView("grid")}
+        >
+          <List className="size-3.5" />
+          Lista de Pasos
+        </Button>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8"
+          onClick={() => setGatesOpen(true)}
+        >
+          <DoorOpen className="size-3.5" />
+          Gates
+          {gates.length ? (
+            <Badge variant="secondary" className="ml-0.5 h-5 px-1.5 text-[10px]">
+              {gates.length}
+            </Badge>
+          ) : null}
+        </Button>
+
+        <div className="min-w-2 flex-1" />
+
+        <Button
+          type="button"
+          size="sm"
+          className="h-8"
+          variant={view === "times" ? "default" : "outline"}
+          onClick={() => setView("times")}
+        >
+          <ChartNoAxesGantt className="size-3.5" />
+          Vista Panorámica
+        </Button>
       </div>
 
       {error ? (
@@ -395,11 +451,17 @@ export function EventPlanner({
           dayDStartAt={dayDStartAt}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onEdit={(id) => {
-            setError("");
-            setSelectedId(id);
-            setEditingId(id);
-          }}
+          getBarClass={plannerStepBarClass}
+          getFlowerActions={(row) =>
+            plannerFlowerActions({
+              onEdit: () => {
+                setError("");
+                setSelectedId(row.id);
+                setEditingId(row.id);
+              },
+            })
+          }
+          showBuiltInInfoDialog
         />
       </TabsContent>
     </Tabs>
@@ -976,7 +1038,7 @@ function DependencyPicker({
                                   className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
                                   aria-label="Ver descripción"
                                 >
-                                  <Info className="size-3.5" />
+                                  <BadgeInfo className="size-3.5" />
                                 </button>
                               </TooltipTrigger>
                               <TooltipContent side="left" className="max-w-xs">
@@ -1320,844 +1382,3 @@ function ApprovalPicker({
   );
 }
 
-type ScheduleItem = {
-  id: string;
-  startMin: number;
-  endMin: number;
-  durationMin: number;
-  usedDefaultDuration: boolean;
-};
-
-type GateMarker = {
-  id: string;
-  name: string;
-  openMin: number;
-  colorIndex: number;
-};
-
-function stepMatchesTarget(
-  row: PlannerRow,
-  target: { workstreamId: string; blockId: string | null },
-) {
-  if (row.workstreamId !== target.workstreamId) return false;
-  return target.blockId == null || row.blockId === target.blockId;
-}
-
-function stepsForTargets(
-  rows: PlannerRow[],
-  targets: Array<{ workstreamId: string; blockId: string | null }>,
-) {
-  return rows.filter((row) =>
-    targets.some((target) => stepMatchesTarget(row, target)),
-  );
-}
-
-function computeSchedule(
-  rows: PlannerRow[],
-  gates: GateSummary[],
-  dayDStartAt: string | null,
-): {
-  items: Map<string, ScheduleItem>;
-  totalMin: number;
-  gateMarkers: GateMarker[];
-  t0Ms: number | null;
-} {
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  const producerByGate = new Map<string, string>();
-  for (const row of rows) {
-    if (row.producesGateId) producerByGate.set(row.producesGateId, row.id);
-  }
-
-  const inbound = new Map(rows.map((row) => [row.id, 0]));
-  const outgoing = new Map<string, string[]>(rows.map((row) => [row.id, []]));
-
-  function addEdge(fromId: string, toId: string) {
-    if (!byId.has(fromId) || !byId.has(toId) || fromId === toId) return;
-    inbound.set(toId, (inbound.get(toId) ?? 0) + 1);
-    outgoing.get(fromId)?.push(toId);
-  }
-
-  for (const row of rows) {
-    for (const depId of row.dependencyStepIds) {
-      addEdge(depId, row.id);
-    }
-    for (const gateId of row.requiresGateIds ?? []) {
-      const producerId = producerByGate.get(gateId);
-      if (producerId) addEdge(producerId, row.id);
-      const gate = gates.find((item) => item.id === gateId);
-      if (!gate) continue;
-      for (const closer of stepsForTargets(
-        rows,
-        gate.closesAfterTargets ?? [],
-      )) {
-        addEdge(closer.id, row.id);
-      }
-    }
-  }
-
-  // Megadeps del catálogo: cierre → apertura del gate.
-  for (const gate of gates) {
-    const closers = stepsForTargets(rows, gate.closesAfterTargets ?? []);
-    const opened = stepsForTargets(rows, gate.opensTargets ?? []);
-    const producerId = producerByGate.get(gate.id);
-    for (const openStep of opened) {
-      for (const closer of closers) {
-        addEdge(closer.id, openStep.id);
-      }
-      if (producerId) addEdge(producerId, openStep.id);
-    }
-  }
-
-  const queue = rows
-    .filter((row) => (inbound.get(row.id) ?? 0) === 0)
-    .map((row) => row.id);
-  const order: string[] = [];
-  while (queue.length) {
-    const id = queue.shift()!;
-    order.push(id);
-    for (const next of outgoing.get(id) ?? []) {
-      const remaining = (inbound.get(next) ?? 0) - 1;
-      inbound.set(next, remaining);
-      if (remaining === 0) queue.push(next);
-    }
-  }
-  for (const row of rows) {
-    if (!order.includes(row.id)) order.push(row.id);
-  }
-
-  const fallbackPoints = [
-    ...rows
-      .filter((row) => row.plannedStartAt)
-      .map((row) => new Date(row.plannedStartAt!).getTime()),
-    ...gates
-      .filter((gate) => gate.plannedOpenAt)
-      .map((gate) => new Date(gate.plannedOpenAt!).getTime()),
-  ];
-  const t0Ms = dayDStartAt
-    ? new Date(dayDStartAt).getTime()
-    : fallbackPoints.length
-      ? Math.min(...fallbackPoints)
-      : null;
-
-  const toOffsetMin = (iso: string) =>
-    t0Ms == null
-      ? 0
-      : Math.max(0, Math.round((new Date(iso).getTime() - t0Ms) / 60_000));
-
-  const anchorMin = new Map(
-    rows
-      .filter((row) => row.plannedStartAt && t0Ms != null)
-      .map((row) => [row.id, toOffsetMin(row.plannedStartAt!)]),
-  );
-  const gateTimeMin = new Map(
-    gates
-      .filter((gate) => gate.plannedOpenAt && t0Ms != null)
-      .map((gate) => [gate.id, toOffsetMin(gate.plannedOpenAt!)]),
-  );
-
-  const items = new Map<string, ScheduleItem>();
-  for (const id of order) {
-    const row = byId.get(id)!;
-    const depEnds = row.dependencyStepIds
-      .map((depId) => items.get(depId)?.endMin)
-      .filter((value): value is number => value != null);
-
-    const gateConstraintMins: number[] = [];
-    for (const gateId of row.requiresGateIds ?? []) {
-      const producerId = producerByGate.get(gateId);
-      if (producerId) {
-        const end = items.get(producerId)?.endMin;
-        if (end != null) gateConstraintMins.push(end);
-      }
-      const gate = gates.find((item) => item.id === gateId);
-      if (!gate) continue;
-      const timed = gateTimeMin.get(gateId);
-      if (timed != null) gateConstraintMins.push(timed);
-      for (const closer of stepsForTargets(
-        rows,
-        gate.closesAfterTargets ?? [],
-      )) {
-        const end = items.get(closer.id)?.endMin;
-        if (end != null) gateConstraintMins.push(end);
-      }
-    }
-
-    for (const gate of gates) {
-      if (
-        !(gate.opensTargets ?? []).some((target) =>
-          stepMatchesTarget(row, target),
-        )
-      ) {
-        continue;
-      }
-      const timed = gateTimeMin.get(gate.id);
-      if (timed != null) gateConstraintMins.push(timed);
-      const producerId = producerByGate.get(gate.id);
-      if (producerId) {
-        const end = items.get(producerId)?.endMin;
-        if (end != null) gateConstraintMins.push(end);
-      }
-      for (const closer of stepsForTargets(
-        rows,
-        gate.closesAfterTargets ?? [],
-      )) {
-        const end = items.get(closer.id)?.endMin;
-        if (end != null) gateConstraintMins.push(end);
-      }
-    }
-
-    const fromDeps = depEnds.length ? Math.max(...depEnds) : 0;
-    const fromGates = gateConstraintMins.length
-      ? Math.max(...gateConstraintMins)
-      : 0;
-    const anchored = anchorMin.get(id);
-    const startMin =
-      anchored !== undefined
-        ? Math.max(anchored, fromDeps, fromGates)
-        : Math.max(fromDeps, fromGates);
-    const usedDefaultDuration = row.estimatedDurationMinutes == null;
-    const durationMin = row.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
-    items.set(id, {
-      id,
-      startMin,
-      endMin: startMin + durationMin,
-      durationMin,
-      usedDefaultDuration,
-    });
-  }
-
-  const gateMarkers: GateMarker[] = gates
-    .map((gate, index) => {
-      const parts: number[] = [];
-      const timed = gateTimeMin.get(gate.id);
-      if (timed != null) parts.push(timed);
-      const producerId = producerByGate.get(gate.id);
-      if (producerId) {
-        const end = items.get(producerId)?.endMin;
-        if (end != null) parts.push(end);
-      }
-      for (const closer of stepsForTargets(
-        rows,
-        gate.closesAfterTargets ?? [],
-      )) {
-        const end = items.get(closer.id)?.endMin;
-        if (end != null) parts.push(end);
-      }
-
-      const hasActivation =
-        timed != null ||
-        Boolean(producerId) ||
-        (gate.closesAfterTargets ?? []).length > 0 ||
-        (gate.approvalRoles ?? []).length > 0;
-
-      if (!hasActivation && !(gate.opensTargets ?? []).length) return null;
-
-      return {
-        id: gate.id,
-        name: gate.name,
-        openMin: parts.length ? Math.max(...parts) : 0,
-        colorIndex: index,
-      };
-    })
-    .filter((marker): marker is GateMarker => marker != null);
-
-  const totalMin = Math.max(
-    60,
-    ...[...items.values()].map((item) => item.endMin),
-    ...gateMarkers.map((marker) => marker.openMin + 15),
-  );
-  return { items, totalMin, gateMarkers, t0Ms };
-}
-
-type LaneStats = {
-  stepCount: number;
-  durationMin: number;
-  startMin: number | null;
-  endMin: number | null;
-};
-
-function computeLaneStats(
-  laneRows: PlannerRow[],
-  items: Map<string, ScheduleItem>,
-): LaneStats {
-  let durationMin = 0;
-  let startMin: number | null = null;
-  let endMin: number | null = null;
-  for (const row of laneRows) {
-    const item = items.get(row.id);
-    if (!item) continue;
-    durationMin += item.durationMin;
-    startMin =
-      startMin == null ? item.startMin : Math.min(startMin, item.startMin);
-    endMin = endMin == null ? item.endMin : Math.max(endMin, item.endMin);
-  }
-  return { stepCount: laneRows.length, durationMin, startMin, endMin };
-}
-
-function formatDurationCompact(totalMin: number) {
-  if (totalMin < 60) return `${totalMin}m`;
-  const hours = Math.floor(totalMin / 60);
-  const minutes = totalMin % 60;
-  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
-}
-
-type LaneStatsDisplay = {
-  blocksLabel: string | null;
-  stepsLabel: string;
-  durationLabel: string;
-  rangeLabel: string;
-};
-
-function TimesLaneHeader({
-  title,
-  expanded,
-  onToggle,
-  stats,
-  tone,
-}: {
-  title: string;
-  expanded: boolean;
-  onToggle: () => void;
-  stats: LaneStatsDisplay;
-  tone: "workstream" | "block";
-}) {
-  const Chevron = expanded ? ChevronDown : ChevronRight;
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={expanded}
-      className={cn(
-        "sticky left-0 right-0 flex w-full items-center gap-2 py-1.5 pr-3 text-left backdrop-blur transition-colors",
-        tone === "workstream"
-          ? "z-[5] border-l-2 border-l-cyan-500/80 bg-slate-700/55 pl-3 text-slate-100 hover:bg-slate-700/70"
-          : "z-[4] border-l-2 border-l-slate-500/70 bg-slate-800/40 pl-5 text-slate-200 hover:bg-slate-800/55",
-      )}
-    >
-      <Chevron className="size-4 shrink-0 opacity-70" />
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-left font-semibold tracking-wide",
-          tone === "workstream" ? "text-sm" : "text-[13px]",
-        )}
-      >
-        {title}
-      </span>
-      <span
-        className="ml-auto flex shrink-0 items-baseline gap-x-2 font-mono text-[10px] leading-none text-slate-300/85 tabular-nums"
-        title={[
-          stats.blocksLabel,
-          stats.stepsLabel,
-          stats.durationLabel,
-          stats.rangeLabel,
-        ]
-          .filter(Boolean)
-          .join(" · ")}
-      >
-        <span className="inline-block w-[4.75rem] text-right whitespace-nowrap">
-          {stats.blocksLabel ?? "\u00A0"}
-        </span>
-        <span className="inline-block w-[4.25rem] text-right whitespace-nowrap">
-          {stats.stepsLabel}
-        </span>
-        <span className="inline-block w-[3.75rem] text-right whitespace-nowrap">
-          {stats.durationLabel}
-        </span>
-        <span className="inline-block w-[6.75rem] text-right whitespace-nowrap">
-          {stats.rangeLabel}
-        </span>
-      </span>
-    </button>
-  );
-}
-
-type StepActionItem = {
-  key: string;
-  label: string;
-  icon: typeof Pencil;
-  soon?: boolean;
-};
-
-const STEP_ACTION_ITEMS: StepActionItem[] = [
-  { key: "edit", label: "Editar planificación", icon: Pencil },
-  { key: "details", label: "Más información", icon: FileText },
-  {
-    key: "results",
-    label: "Resultados de ejecución",
-    icon: ListChecks,
-    soon: true,
-  },
-  {
-    key: "failure",
-    label: "Ver fallo",
-    icon: TriangleAlert,
-    soon: true,
-  },
-];
-
-function StepActionFlower({
-  open,
-  openToRight = false,
-  onToggle,
-  onClose,
-  onEdit,
-  onDetails,
-}: {
-  open: boolean;
-  /** Si el paso está pegado al borde izquierdo, abre el menú hacia la derecha. */
-  openToRight?: boolean;
-  onToggle: () => void;
-  onClose: () => void;
-  onEdit: () => void;
-  onDetails: () => void;
-}) {
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onPointerDown(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        onClose();
-      }
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open, onClose]);
-
-  return (
-    <div ref={rootRef} className="relative size-5">
-      <button
-        type="button"
-        aria-label="Acciones del paso"
-        aria-expanded={open}
-        title="Acciones"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle();
-        }}
-        className={cn(
-          "relative z-20 flex size-5 items-center justify-center rounded-full border text-[10px] font-bold leading-none shadow-md transition-colors",
-          open
-            ? "border-sky-300 bg-zinc-100 text-zinc-900 ring-2 ring-black/30 dark:bg-zinc-200"
-            : "border-white/40 bg-black/35 text-primary-foreground hover:bg-black/50",
-        )}
-      >
-        i
-      </button>
-
-      {open ? (
-        <div
-          className={cn(
-            "absolute bottom-full z-30 mb-1.5 flex items-center gap-1.5",
-            openToRight ? "left-0" : "right-0",
-          )}
-        >
-          {STEP_ACTION_ITEMS.map((action, index) => {
-            const Icon = action.icon;
-            return (
-              <button
-                key={action.key}
-                type="button"
-                title={
-                  action.soon ? `${action.label} (próximamente)` : action.label
-                }
-                aria-label={action.label}
-                disabled={action.soon}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (action.key === "edit") onEdit();
-                  if (action.key === "details") onDetails();
-                }}
-                className={cn(
-                  "flex size-8 items-center justify-center rounded-full border-2 shadow-lg ring-2 ring-black/40 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 fill-mode-both",
-                  action.soon
-                    ? "cursor-not-allowed border-zinc-400 bg-zinc-300 text-zinc-600 opacity-80"
-                    : "border-sky-300 bg-zinc-100 text-zinc-900 hover:scale-105 hover:border-sky-400 hover:bg-white dark:border-sky-400 dark:bg-zinc-200 dark:text-zinc-900 dark:hover:bg-white",
-                )}
-                style={{ animationDelay: `${index * 45}ms` }}
-              >
-                <Icon className="size-3.5" />
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function TimesView({
-  rows,
-  allRows,
-  gates,
-  eventTimezone,
-  dayDStartAt,
-  selectedId,
-  onSelect,
-  onEdit,
-}: {
-  rows: PlannerRow[];
-  allRows: PlannerRow[];
-  gates: GateSummary[];
-  eventTimezone: string;
-  dayDStartAt: string | null;
-  selectedId: string | null;
-  onSelect: (id: string | null) => void;
-  onEdit: (id: string) => void;
-}) {
-  const { items, totalMin, gateMarkers, t0Ms } = useMemo(
-    () => computeSchedule(allRows, gates, dayDStartAt),
-    [allRows, gates, dayDStartAt],
-  );
-  const [flowerOpenId, setFlowerOpenId] = useState<string | null>(null);
-  const [infoRowId, setInfoRowId] = useState<string | null>(null);
-  const infoRow =
-    infoRowId == null
-      ? null
-      : (allRows.find((row) => row.id === infoRowId) ?? null);
-
-  useEffect(() => {
-    setFlowerOpenId(null);
-  }, [selectedId]);
-  const lanes = useMemo(() => {
-    const visibleIds = new Set(rows.map((row) => row.id));
-    const byWs = new Map<string, Map<string, PlannerRow[]>>();
-    for (const row of allRows) {
-      if (!visibleIds.has(row.id)) continue;
-      let byBlock = byWs.get(row.workstreamName);
-      if (!byBlock) {
-        byBlock = new Map();
-        byWs.set(row.workstreamName, byBlock);
-      }
-      const list = byBlock.get(row.blockName) ?? [];
-      list.push(row);
-      byBlock.set(row.blockName, list);
-    }
-    return [...byWs.entries()].map(([workstreamName, byBlock]) => ({
-      workstreamName,
-      blocks: [...byBlock.entries()].map(([blockName, blockRows]) => ({
-        blockName,
-        rows: blockRows,
-      })),
-    }));
-  }, [allRows, rows]);
-
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  const chartWidth = Math.max(960, totalMin * PIXELS_PER_MINUTE);
-  const ticks = buildTicks(totalMin);
-  const useClockLabels = Boolean(dayDStartAt && t0Ms != null);
-
-  function toggleCollapsed(key: string) {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function laneStatsFor(
-    laneRows: PlannerRow[],
-    blockCount?: number,
-  ): LaneStatsDisplay {
-    const stats = computeLaneStats(laneRows, items);
-    return {
-      blocksLabel:
-        blockCount == null
-          ? null
-          : `${blockCount} bloque${blockCount === 1 ? "" : "s"}`,
-      stepsLabel: `${stats.stepCount} paso${stats.stepCount === 1 ? "" : "s"}`,
-      durationLabel: formatDurationCompact(stats.durationMin),
-      rangeLabel:
-        stats.startMin != null && stats.endMin != null
-          ? `${formatAxisLabel(stats.startMin, t0Ms, eventTimezone, useClockLabels)}–${formatAxisLabel(stats.endMin, t0Ms, eventTimezone, useClockLabels)}`
-          : "—",
-    };
-  }
-
-  return (
-    <div className="h-full min-h-0 overflow-auto rounded-xl border">
-      <div style={{ width: chartWidth }} className="min-w-full">
-        {!dayDStartAt ? (
-          <div className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
-            Sin Inicio del Día D el eje es relativo. Configúralo en{" "}
-            <span className="font-medium text-foreground">Setup</span>.
-          </div>
-        ) : null}
-        <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
-          {gateMarkers.length ? (
-            <div
-              className="relative h-7 border-b border-border/60"
-              style={{ width: chartWidth }}
-            >
-              {gateMarkers.map((marker) => (
-                <div
-                  key={`head-${marker.id}`}
-                  className="absolute top-1 bottom-1 z-[1]"
-                  style={{ left: marker.openMin * PIXELS_PER_MINUTE }}
-                  title={`${marker.name} · ${formatAxisLabel(marker.openMin, t0Ms, eventTimezone, useClockLabels)}`}
-                >
-                  <div
-                    className={cn(
-                      "h-full border-l-2 border-dashed",
-                      gateColorClass(marker.colorIndex).split(" ")[0],
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      "absolute top-0.5 left-1.5 max-w-32 truncate rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none",
-                      gateColorClass(marker.colorIndex),
-                    )}
-                  >
-                    {marker.name}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="relative h-7" style={{ width: chartWidth }}>
-            {ticks.map((tick) => (
-              <div
-                key={tick}
-                className="absolute top-0 bottom-0 border-l border-border/60"
-                style={{ left: tick * PIXELS_PER_MINUTE }}
-              >
-                <span className="ml-1 text-[10px] text-muted-foreground">
-                  {formatAxisLabel(
-                    tick,
-                    t0Ms,
-                    eventTimezone,
-                    useClockLabels,
-                  )}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {!lanes.length ? (
-          <p className="p-8 text-center text-sm text-muted-foreground">
-            No hay filas que coincidan con la búsqueda.
-          </p>
-        ) : (
-          lanes.map(({ workstreamName, blocks }) => {
-            const wsKey = `ws:${workstreamName}`;
-            const wsExpanded = !collapsed.has(wsKey);
-            const wsRows = blocks.flatMap((block) => block.rows);
-            return (
-              <div key={workstreamName} className="border-b last:border-b-0">
-                <TimesLaneHeader
-                  title={workstreamName}
-                  expanded={wsExpanded}
-                  onToggle={() => toggleCollapsed(wsKey)}
-                  tone="workstream"
-                  stats={laneStatsFor(wsRows, blocks.length)}
-                />
-                {wsExpanded
-                  ? blocks.map(({ blockName, rows: blockRows }) => {
-                      const laneKey = `${workstreamName}::${blockName}`;
-                      const blockKey = `block:${laneKey}`;
-                      const blockExpanded = !collapsed.has(blockKey);
-                      return (
-                        <div key={laneKey}>
-                          <TimesLaneHeader
-                            title={blockName}
-                            expanded={blockExpanded}
-                            onToggle={() => toggleCollapsed(blockKey)}
-                            tone="block"
-                            stats={laneStatsFor(blockRows)}
-                          />
-                          {blockExpanded ? (
-                            <div
-                              className="relative py-1.5"
-                              style={{
-                                width: chartWidth,
-                                minHeight: blockRows.length * 32,
-                              }}
-                            >
-                              {ticks.map((tick) => (
-                                <div
-                                  key={`${laneKey}-${tick}`}
-                                  className="absolute inset-y-0 border-l border-border/40"
-                                  style={{ left: tick * PIXELS_PER_MINUTE }}
-                                />
-                              ))}
-                              {gateMarkers.map((marker) => (
-                                <div
-                                  key={`${laneKey}-${marker.id}`}
-                                  className={cn(
-                                    "pointer-events-none absolute inset-y-0 z-[1] border-l-2 border-dashed opacity-70",
-                                    gateColorClass(marker.colorIndex).split(
-                                      " ",
-                                    )[0],
-                                  )}
-                                  style={{
-                                    left: marker.openMin * PIXELS_PER_MINUTE,
-                                  }}
-                                />
-                              ))}
-                              {blockRows.map((row, index) => {
-                                const item = items.get(row.id);
-                                if (!item) return null;
-                                const top = 2 + index * 30;
-                                const left =
-                                  item.startMin * PIXELS_PER_MINUTE;
-                                const width = Math.max(
-                                  8,
-                                  item.durationMin * PIXELS_PER_MINUTE,
-                                );
-                                const active = selectedId === row.id;
-                                const flowerOpen = flowerOpenId === row.id;
-                                // ~4 botones × 32px + gaps: abrir a la derecha si no cabe a la izquierda.
-                                const openFlowerToRight = left + width < 160;
-                                return (
-                                  <div
-                                    key={row.id}
-                                    className={cn(
-                                      "absolute flex h-6 items-center rounded-md border border-sky-300/50 shadow-sm",
-                                      flowerOpen
-                                        ? "z-50"
-                                        : active
-                                          ? "z-20"
-                                          : "z-[2]",
-                                      active
-                                        ? "bg-sky-300 ring-2 ring-sky-200/80"
-                                        : "bg-sky-400/90 hover:bg-sky-300",
-                                      item.usedDefaultDuration && "opacity-70",
-                                    )}
-                                    style={{ top, left, width }}
-                                    title={`${row.name} · ${item.durationMin} min · ${formatAxisLabel(item.startMin, t0Ms, eventTimezone, useClockLabels)}`}
-                                  >
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        onSelect(active ? null : row.id)
-                                      }
-                                      className="min-w-0 flex-1 truncate py-0 pl-2.5 pr-1.5 text-left text-[11px] font-medium text-sky-950"
-                                    >
-                                      {row.name}
-                                    </button>
-                                    {active ? (
-                                      <div className="relative mr-0.5 shrink-0">
-                                        <StepActionFlower
-                                          open={flowerOpen}
-                                          openToRight={openFlowerToRight}
-                                          onToggle={() =>
-                                            setFlowerOpenId((current) =>
-                                              current === row.id
-                                                ? null
-                                                : row.id,
-                                            )
-                                          }
-                                          onClose={() => setFlowerOpenId(null)}
-                                          onEdit={() => {
-                                            setFlowerOpenId(null);
-                                            onEdit(row.id);
-                                          }}
-                                          onDetails={() => {
-                                            setFlowerOpenId(null);
-                                            setInfoRowId(row.id);
-                                          }}
-                                        />
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })
-                  : null}
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      <Dialog
-        open={Boolean(infoRow)}
-        onOpenChange={(open) => {
-          if (!open) setInfoRowId(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          {infoRow ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>{infoRow.name}</DialogTitle>
-                <DialogDescription>
-                  Detalle del paso en el plan.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge variant="outline">{infoRow.workstreamName}</Badge>
-                  <Badge variant="secondary">{infoRow.blockName}</Badge>
-                </div>
-                <p>
-                  <span className="text-muted-foreground">Actividad: </span>
-                  {infoRow.activityName}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Duración: </span>
-                  {infoRow.estimatedDurationMinutes != null
-                    ? `${infoRow.estimatedDurationMinutes} min`
-                    : `default ${DEFAULT_DURATION_MINUTES} min`}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Deps: </span>
-                  {infoRow.dependencyStepIds.length || "ninguna"}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Aprobaciones: </span>
-                  {(infoRow.approvalRoles ?? []).length
-                    ? (infoRow.approvalRoles ?? []).join(", ")
-                    : "ninguna"}
-                </p>
-                <div>
-                  <p className="text-muted-foreground">Descripción</p>
-                  <p className="mt-1 whitespace-pre-wrap">
-                    {infoRow.description?.trim() || "Sin descripción."}
-                  </p>
-                </div>
-              </div>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function buildTicks(totalMin: number) {
-  const step = totalMin <= 120 ? 15 : totalMin <= 480 ? 30 : 60;
-  const ticks: number[] = [];
-  for (let value = 0; value <= totalMin; value += step) ticks.push(value);
-  return ticks;
-}
-
-function formatMinutes(total: number) {
-  const hours = Math.floor(total / 60);
-  const minutes = total % 60;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-}
-
-/** Etiqueta del eje: hora civil desde Día D, o offset relativo. */
-function formatAxisLabel(
-  offsetMin: number,
-  t0Ms: number | null,
-  timezone: string,
-  useClock: boolean,
-) {
-  if (!useClock || t0Ms == null) return formatMinutes(offsetMin);
-  const instant = new Date(t0Ms + offsetMin * 60_000);
-  return new Intl.DateTimeFormat("es-PE", {
-    timeZone: timezone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(instant);
-}

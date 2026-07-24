@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
 import { DevActorSwitcher } from "@/components/dev-actor-switcher";
-import { ExecutionConsole } from "@/components/execution-console";
+import { ExecutionTimesPanel } from "@/components/execution-times-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -67,6 +67,13 @@ export default async function ExecutionPage({
             Evento
           </Link>
           <ChevronRight className="size-4 text-muted-foreground" />
+          <Link
+            href={`/events/${eventId}/executions`}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            Ejecuciones
+          </Link>
+          <ChevronRight className="size-4 text-muted-foreground" />
           <span className="truncate text-sm font-medium">{detail.name}</span>
           <div className="ml-auto flex items-center gap-2">
             <Badge variant="outline">{detail.type}</Badge>
@@ -89,8 +96,14 @@ export default async function ExecutionPage({
           </div>
         </div>
       </header>
-      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 py-4">
-        <ExecutionConsole initial={detail} />
+      <main className="mx-auto flex min-h-0 w-full flex-1 flex-col">
+        <ExecutionTimesPanel
+          initial={detail}
+          actorId={actor?.id ?? null}
+          actorName={actor?.name ?? null}
+          canOperateAny={isAdmin && !impersonating}
+          title="Consola"
+        />
       </main>
     </div>
   );

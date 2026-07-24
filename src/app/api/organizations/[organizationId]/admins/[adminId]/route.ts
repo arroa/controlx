@@ -42,7 +42,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     const admin = await updateOrganizationAdmin(
       organizationId,
       adminId,
-      parsed.data.email,
+      parsed.data,
       authResult.user.id,
     );
     return NextResponse.json({ admin });

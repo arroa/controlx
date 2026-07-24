@@ -63,12 +63,18 @@ export default async function OrganizationPage({
           <p className="mt-2 text-sm text-muted-foreground">
             {workspace.organization.description || "Sin descripción"}
           </p>
+          {workspace.organization.status === "ARCHIVED" ? (
+            <div className="mt-4 rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100/90">
+              Esta organización está archivada. Solo puedes consultarla; no se
+              pueden crear ni editar eventos.
+            </div>
+          ) : null}
         </section>
 
         <OrganizationWorkspace
           organization={workspace.organization}
-          initialAdmins={workspace.admins}
           initialEvents={workspace.events}
+          readOnly={workspace.organization.status === "ARCHIVED"}
         />
       </main>
     </div>
