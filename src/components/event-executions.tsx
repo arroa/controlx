@@ -6,10 +6,11 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { DateTimePicker } from "@/components/datetime-picker";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
@@ -41,6 +42,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -51,8 +60,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { EventSummary, ExecutionSummary } from "@/lib/admin-data";
+import type { EventActorSummary } from "@/lib/event-actors";
 import type { EventReadiness } from "@/lib/event-readiness-types";
-import { formatDayLabel } from "@/lib/execution-schedule";
+import { formatDayLabel, formatDayTimeLabel } from "@/lib/execution-schedule";
 import { cn } from "@/lib/utils";
 
 type TypeFilter = "all" | "SIMULACRO" | "REAL";
@@ -70,10 +80,15 @@ export function EventExecutions({
   event,
   initialExecutions,
   initialReadiness,
+  canImpersonate = false,
+  actors = [],
 }: {
   event: EventSummary;
   initialExecutions: ExecutionSummary[];
   initialReadiness: EventReadiness;
+  /** Dev/MVP: elegir ejecutor al entrar a Mi turno. */
+  canImpersonate?: boolean;
+  actors?: EventActorSummary[];
 }) {
   const router = useRouter();
   const [executions, setExecutions] = useState(initialExecutions);
@@ -309,7 +324,7 @@ export function EventExecutions({
                   <CardDescription>
                     {execution.timezone}
                     {execution.anchorStartAt
-                      ? ` · T0 ${formatDayLabel(execution.anchorStartAt, execution.timezone)}`
+                      ? ` · T0 ${formatDayTimeLabel(execution.anchorStartAt, execution.timezone)}`
                       : ""}
                   </CardDescription>
                 </CardHeader>
@@ -321,9 +336,12 @@ export function EventExecutions({
                       Abrir panel
                     </Link>
                   </Button>
-                  <Button variant="secondary" className="w-full" asChild>
-                    <Link href={`/run/${execution.id}`}>Mi turno</Link>
-                  </Button>
+                  <MiTurnoButton
+                    eventId={event.id}
+                    executionId={execution.id}
+                    canImpersonate={canImpersonate}
+                    actors={actors}
+                  />
                   {execution.type === "SIMULACRO" ? (
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
@@ -641,5 +659,113 @@ function CreateExecutionDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Entra a Mi turno; en dev/MVP el admin elige ejecutor antes de abrir el cockpit. */
+function MiTurnoButton({
+  eventId,
+  executionId,
+  canImpersonate,
+  actors,
+}: {
+  eventId: string;
+  executionId: string;
+  canImpersonate: boolean;
+  actors: EventActorSummary[];
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState("");
+
+  const executors = useMemo(
+    () =>
+      actors.filter(
+        (actor) =>
+          actor.roles.includes("EXECUTOR") ||
+          actor.roles.includes("APPROVER"),
+      ),
+    [actors],
+  );
+
+  async function enterAs(actorId: string | null) {
+    setError("");
+    if (canImpersonate) {
+      const response = await fetch("/api/dev/impersonate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventId, actorId }),
+      }).catch(() => null);
+      if (!response?.ok) {
+        const payload = (await response?.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        setError(payload?.error ?? "No se pudo elegir el actor.");
+        return;
+      }
+    }
+    startTransition(() => {
+      router.push(`/run/${executionId}`);
+    });
+  }
+
+  if (!canImpersonate || !executors.length) {
+    return (
+      <Button variant="secondary" className="w-full" asChild>
+        <Link href={`/run/${executionId}`}>Mi turno</Link>
+      </Button>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-full"
+            disabled={pending}
+          >
+            {pending ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <UserRound className="size-4" />
+            )}
+            Mi turno
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuLabel>Entrar como…</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {executors.map((actor) => (
+            <DropdownMenuItem
+              key={actor.id}
+              disabled={pending}
+              onSelect={() => {
+                void enterAs(actor.id);
+              }}
+            >
+              <span className="min-w-0 flex-1 truncate">{actor.name}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {actor.roles.includes("EXECUTOR") ? "ej" : ""}
+                {actor.roles.includes("APPROVER")
+                  ? actor.roles.includes("EXECUTOR")
+                    ? " · ap"
+                    : "ap"
+                  : ""}
+              </span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {error ? (
+        <p className="text-[11px] text-destructive">{error}</p>
+      ) : (
+        <p className="text-center text-[10px] text-muted-foreground">
+          Mock · elige ejecutor / aprobador
+        </p>
+      )}
+    </div>
   );
 }

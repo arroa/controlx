@@ -1,5 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ControlX">
-  <!-- Marca del header: rounded-xl + bg-primary + Command -->
   <rect width="512" height="512" rx="144" fill="#54dfce"/>
   <g
     fill="none"
@@ -9,7 +8,6 @@
     stroke-linejoin="round"
     transform="translate(96 96) scale(13.333)"
   >
-    <!-- Lucide Command -->
     <path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/>
   </g>
 </svg>

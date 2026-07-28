@@ -3,20 +3,15 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AuthHeader } from "@/components/auth-header";
-import { DevActorSwitcher } from "@/components/dev-actor-switcher";
 import { ExecutionTimesPanel } from "@/components/execution-times-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   canAccessEvent,
   getEventActorByEmail,
-  listEventActors,
 } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
-import {
-  canUseDevActorImpersonation,
-  getEffectiveEventActor,
-} from "@/lib/dev-impersonation";
+import { canUseDevActorImpersonation } from "@/lib/dev-impersonation";
 import { canViewExecution } from "@/lib/execution-auth";
 import { getExecutionDetail } from "@/lib/execution-runtime";
 
@@ -37,9 +32,6 @@ export default async function ExecutionPage({
 
   const isAdmin =
     user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
-  const showImpersonation = canUseDevActorImpersonation(user);
-  const actors = showImpersonation ? await listEventActors(eventId) : [];
-  const { actor, impersonating } = await getEffectiveEventActor(eventId, user);
   const realActor = await getEventActorByEmail(eventId, user.email);
 
   // Ejecutor puro (sin ser admin) → cockpit.
@@ -47,8 +39,10 @@ export default async function ExecutionPage({
     redirect(`/run/${executionId}`);
   }
 
+  // Panel = observación / admin. Sin impersonación (eso vive en Mi turno).
   const canOpenCockpit =
-    Boolean(actor?.roles.includes("EXECUTOR")) || showImpersonation;
+    Boolean(realActor?.roles.includes("EXECUTOR")) ||
+    canUseDevActorImpersonation(user);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -77,13 +71,6 @@ export default async function ExecutionPage({
           <span className="truncate text-sm font-medium">{detail.name}</span>
           <div className="ml-auto flex items-center gap-2">
             <Badge variant="outline">{detail.type}</Badge>
-            {showImpersonation ? (
-              <DevActorSwitcher
-                eventId={eventId}
-                actors={actors}
-                selectedActorId={impersonating && actor ? actor.id : null}
-              />
-            ) : null}
             {canOpenCockpit ? (
               <Button size="sm" variant="secondary" asChild>
                 <Link href={`/run/${executionId}`}>
@@ -99,14 +86,14 @@ export default async function ExecutionPage({
       <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 pb-4">
         <ExecutionTimesPanel
           initial={detail}
-          actorId={actor?.id ?? null}
-          actorName={actor?.name ?? null}
-          canOperateAny={isAdmin && !impersonating}
+          actorId={realActor?.id ?? null}
+          actorName={realActor?.name ?? null}
+          canOperateAny={isAdmin}
           canForceSuccess={
-            (!impersonating && user.isSuperAdmin) ||
-            Boolean(actor?.roles.includes("EVENT_ADMIN"))
+            user.isSuperAdmin ||
+            Boolean(realActor?.roles.includes("EVENT_ADMIN"))
           }
-          title="Consola"
+          title="Panel"
         />
       </main>
     </div>

@@ -22,6 +22,19 @@ export function formatDayLabel(isoOrDate: string | Date, timezone: string) {
   }).format(new Date(isoOrDate));
 }
 
+/** Etiqueta dd/mm/yyyy HH:mm en TZ (T0 de ejecución). */
+export function formatDayTimeLabel(isoOrDate: string | Date, timezone: string) {
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: timezone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(isoOrDate));
+}
+
 export type ScheduleStepInput = {
   id: string;
   /** Ancla “no antes de” del diseño (ISO), relativa al Día D de diseño. */

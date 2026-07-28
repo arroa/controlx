@@ -106,8 +106,14 @@ function PreparationCard({
   readOnly?: boolean;
 }) {
   return (
-    <Card className={readOnly ? "opacity-80" : undefined}>
-      <CardHeader>
+    <Card
+      className={
+        readOnly
+          ? "flex h-full flex-col opacity-80"
+          : "flex h-full flex-col"
+      }
+    >
+      <CardHeader className="flex-1">
         <div className="flex items-center justify-between">
           <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Icon className="size-5" />
@@ -117,9 +123,11 @@ function PreparationCard({
           </span>
         </div>
         <CardTitle className="pt-2">{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
+        <CardDescription className="min-h-[2.5rem] line-clamp-2">
+          {description}
+        </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="mt-auto pt-0">
         {readOnly ? (
           <Button variant="outline" className="w-full" disabled>
             Solo lectura

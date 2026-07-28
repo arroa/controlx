@@ -254,7 +254,7 @@ export function DateTimePicker({
             defaultMonth={selectedDate}
             className="border-b sm:border-r sm:border-b-0"
           />
-          <div className="flex w-full flex-col gap-3 p-3 sm:w-40">
+          <div className="flex w-full flex-col gap-3 p-3 sm:w-52">
             <div className="space-y-1.5">
               <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                 Hora

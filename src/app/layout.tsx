@@ -21,6 +21,10 @@ export const metadata: Metadata = {
   description:
     "Orquestación, ejecución y gobierno de eventos operativos críticos.",
   applicationName: "ControlX",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/icon.svg", type: "image/svg+xml" }],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",

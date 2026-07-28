@@ -8,8 +8,10 @@ import { EventExecutions } from "@/components/event-executions";
 import {
   canAccessEvent,
   getEventWorkspace,
+  listEventActors,
 } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
+import { canUseDevActorImpersonation } from "@/lib/dev-impersonation";
 import { getEventReadinessSnapshot } from "@/lib/event-readiness";
 
 export default async function EventExecutionsPage({
@@ -25,9 +27,11 @@ export default async function EventExecutionsPage({
     user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
   if (!canAccess) redirect("/");
 
-  const [workspace, readiness] = await Promise.all([
+  const canImpersonate = canUseDevActorImpersonation(user);
+  const [workspace, readiness, actors] = await Promise.all([
     getEventWorkspace(eventId),
     getEventReadinessSnapshot(eventId),
+    canImpersonate ? listEventActors(eventId) : Promise.resolve([]),
   ]);
   if (!workspace || !readiness) notFound();
 
@@ -70,6 +74,8 @@ export default async function EventExecutionsPage({
             event={workspace.event}
             initialExecutions={workspace.executions}
             initialReadiness={readiness}
+            canImpersonate={canImpersonate}
+            actors={actors}
           />
         </div>
       </main>

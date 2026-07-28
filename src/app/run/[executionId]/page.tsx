@@ -44,27 +44,29 @@ export default async function ExecutorRunPage({
   if (!actor) {
     return (
       <div className="flex h-dvh flex-col">
-        <header className="flex h-14 items-center gap-3 border-b px-4">
-          <Link
-            href={`/events/${detail.eventId}/executions/${detail.id}`}
-            className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-          >
-            <Command className="size-4" />
-          </Link>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{detail.name}</p>
-            <p className="text-xs text-muted-foreground">Vista ejecutor</p>
+        <header className="shrink-0 border-b">
+          <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-6">
+            <Link
+              href={`/events/${detail.eventId}/executions/${detail.id}`}
+              className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+            >
+              <Command className="size-4" />
+            </Link>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{detail.name}</p>
+              <p className="text-xs text-muted-foreground">Vista ejecutor</p>
+            </div>
+            {showImpersonation ? (
+              <DevActorSwitcher
+                eventId={detail.eventId}
+                actors={actors}
+                selectedActorId={null}
+              />
+            ) : null}
+            <AuthHeader />
           </div>
-          {showImpersonation ? (
-            <DevActorSwitcher
-              eventId={detail.eventId}
-              actors={actors}
-              selectedActorId={null}
-            />
-          ) : null}
-          <AuthHeader />
         </header>
-        <main className="flex flex-1 items-center justify-center px-6 text-center">
+        <main className="mx-auto flex w-full max-w-7xl flex-1 items-center justify-center px-6 text-center">
           <div className="max-w-sm space-y-2">
             <p className="font-semibold">
               {showImpersonation
@@ -73,7 +75,7 @@ export default async function ExecutorRunPage({
             </p>
             <p className="text-sm text-muted-foreground">
               {showImpersonation
-                ? "Usa el combo ámbar “actuar como” y selecciona un ejecutor con pasos asignados."
+                ? "En Mi turno elige “actuar como” un ejecutor del mapa con pasos asignados."
                 : "Agrégate en Setup con rol Ejecutor y asígnate pasos en Roles."}
             </p>
             {isAdmin ? (
@@ -92,35 +94,37 @@ export default async function ExecutorRunPage({
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-        <Link
-          href={
-            isAdmin
-              ? `/events/${detail.eventId}/executions/${detail.id}`
-              : `/events/${detail.eventId}`
-          }
-          className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-        >
-          <Command className="size-4" />
-        </Link>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{detail.name}</p>
-          <p className="truncate text-xs text-muted-foreground">
-            Cockpit · {actor.name}
-            {impersonating ? " (mock)" : ""}
-          </p>
+      <header className="shrink-0 border-b bg-background/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-6">
+          <Link
+            href={
+              isAdmin
+                ? `/events/${detail.eventId}/executions/${detail.id}`
+                : `/events/${detail.eventId}`
+            }
+            className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+          >
+            <Command className="size-4" />
+          </Link>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{detail.name}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              Cockpit · {actor.name}
+              {impersonating ? " (mock)" : ""}
+            </p>
+          </div>
+          <Badge variant="outline">{detail.type}</Badge>
+          {showImpersonation ? (
+            <DevActorSwitcher
+              eventId={detail.eventId}
+              actors={actors}
+              selectedActorId={impersonating ? actor.id : null}
+            />
+          ) : null}
+          <AuthHeader />
         </div>
-        <Badge variant="outline">{detail.type}</Badge>
-        {showImpersonation ? (
-          <DevActorSwitcher
-            eventId={detail.eventId}
-            actors={actors}
-            selectedActorId={impersonating ? actor.id : null}
-          />
-        ) : null}
-        <AuthHeader />
       </header>
-      <main className="mx-auto flex min-h-0 w-full flex-1 flex-col">
+      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 pb-4">
         <ExecutionTimesPanel
           initial={detail}
           actorId={actor.id}

@@ -18,7 +18,6 @@ import {
   useState,
 } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -386,10 +385,10 @@ export const EventReadinessBoard = forwardRef<
             desactualizado hasta recalcular.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           <p
             className={cn(
-              "mr-1 font-mono text-2xl font-semibold tabular-nums",
+              "font-mono text-2xl font-semibold tabular-nums",
               readiness.stale
                 ? "text-amber-200"
                 : readiness.canStart
@@ -400,28 +399,34 @@ export const EventReadinessBoard = forwardRef<
             {boardTotals.score}
             <span className="text-sm font-medium text-muted-foreground">%</span>
           </p>
-          <Badge
-            variant={
-              readiness.canStart && !readiness.stale ? "default" : "outline"
-            }
+          <span
+            className={cn(
+              "inline-flex items-center rounded-lg border px-3 py-2 text-sm font-semibold tracking-tight",
+              readiness.stale
+                ? "border-amber-500/40 bg-amber-500/15 text-amber-100"
+                : readiness.canStart
+                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-100"
+                  : "border-rose-500/40 bg-rose-500/15 text-rose-100",
+            )}
           >
             {readiness.stale
               ? "Desactualizado"
               : readiness.canStart
                 ? "Listo para ejecutar"
                 : "No listo"}
-          </Badge>
+          </span>
           <Button
             type="button"
-            size="sm"
-            variant="outline"
+            size="lg"
+            variant={readiness.stale ? "default" : "outline"}
             disabled={busy}
+            className="min-h-11 gap-2 px-4 text-sm font-semibold"
             onClick={() => void recompute()}
           >
             {busy ? (
-              <LoaderCircle className="size-3.5 animate-spin" />
+              <LoaderCircle className="size-4 animate-spin" />
             ) : (
-              <RefreshCw className="size-3.5" />
+              <RefreshCw className="size-4" />
             )}
             Recalcular
           </Button>
