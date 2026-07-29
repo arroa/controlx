@@ -650,7 +650,7 @@ export function ExecutionTimesPanel({
             <h1 className="truncate text-lg font-semibold tracking-tight">
               {detail.name}
             </h1>
-            <p className="text-xs text-muted-foreground">
+            <p className="hidden text-xs text-muted-foreground sm:block">
               Móvil: tiempo hacia abajo · PC: Times panorámico
             </p>
           </div>

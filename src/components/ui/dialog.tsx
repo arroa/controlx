@@ -55,17 +55,23 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
-  const closeRef = React.useRef<HTMLButtonElement>(null)
+  /**
+   * En móvil el mismo toque que abre el dialog puede “aterrizar” en el overlay
+   * y cerrarlo al instante (pointerdown). Bloqueamos dismiss un instante.
+   */
+  const [overlayReady, setOverlayReady] = React.useState(false)
+
+  React.useEffect(() => {
+    const id = window.setTimeout(() => setOverlayReady(true), 320)
+    return () => {
+      window.clearTimeout(id)
+      setOverlayReady(false)
+    }
+  }, [])
 
   return (
     <DialogPortal>
-      <DialogOverlay
-        onPointerDown={(event) => {
-          if (event.target === event.currentTarget) {
-            closeRef.current?.click()
-          }
-        }}
-      />
+      <DialogOverlay className={overlayReady ? undefined : "pointer-events-none"} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
@@ -75,18 +81,6 @@ function DialogContent({
         {...props}
       >
         {children}
-        {/* Siempre presente para poder cerrar desde el overlay aunque no haya X */}
-        <DialogPrimitive.Close asChild>
-          <button
-            ref={closeRef}
-            type="button"
-            className="sr-only"
-            tabIndex={-1}
-            aria-hidden={!showCloseButton}
-          >
-            Close
-          </button>
-        </DialogPrimitive.Close>
         {showCloseButton && (
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <Button

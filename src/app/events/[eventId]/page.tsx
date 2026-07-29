@@ -51,7 +51,7 @@ export default async function EventPage({
   return (
     <div className="min-h-screen">
       <header className="border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 overflow-hidden px-3 sm:h-16 sm:gap-3 sm:px-6">
           <Link
             href={
               role === "SuperAdmin"
@@ -60,7 +60,7 @@ export default async function EventPage({
                   ? `/organizations/${workspace.organization.id}`
                   : "/"
             }
-            className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
           >
             <Command className="size-4" />
           </Link>
@@ -69,20 +69,22 @@ export default async function EventPage({
               {role === "SuperAdmin" || role === "OrgAdmin" ? (
                 <Link
                   href={`/organizations/${workspace.organization.id}`}
-                  className="text-sm text-muted-foreground hover:text-foreground"
+                  className="hidden min-w-0 truncate text-sm text-muted-foreground hover:text-foreground sm:inline"
                 >
                   {workspace.organization.name}
                 </Link>
               ) : (
-                <span className="text-sm text-muted-foreground">
+                <span className="hidden min-w-0 truncate text-sm text-muted-foreground sm:inline">
                   {workspace.organization.name}
                 </span>
               )}
-              <ChevronRight className="size-4 text-muted-foreground" />
+              <ChevronRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
             </>
           ) : null}
-          <span className="text-sm font-medium">{workspace.event.name}</span>
-          <div className="ml-auto flex items-center gap-2">
+          <span className="min-w-0 truncate text-sm font-medium">
+            {workspace.event.name}
+          </span>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             {showImpersonation ? (
               <DevActorSwitcher
                 eventId={eventId}

@@ -19,24 +19,29 @@ export async function AuthHeader() {
   }
 
   return (
-    <>
-      <Button variant="ghost" size="sm" asChild>
-        <Link href="/novedades" className="gap-1.5">
+    <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+      <Button variant="ghost" size="icon-sm" asChild className="sm:size-auto sm:h-8 sm:px-2.5">
+        <Link href="/novedades" className="gap-1.5" title="Novedades">
           <Newspaper className="size-4" />
-          Novedades
+          <span className="hidden sm:inline">Novedades</span>
         </Link>
       </Button>
-      <Button variant="ghost" size="sm" asChild>
-        <Link href="/feedback" className="gap-1.5">
+      <Button variant="ghost" size="icon-sm" asChild className="sm:size-auto sm:h-8 sm:px-2.5">
+        <Link href="/feedback" className="gap-1.5" title="Mejoras">
           <MessageSquareText className="size-4" />
-          Mejoras
+          <span className="hidden sm:inline">Mejoras</span>
         </Link>
       </Button>
       {user.isSuperAdmin ? (
-        <Button variant="ghost" size="sm" asChild>
-          <Link href="/admin/ai-audit" className="gap-1.5">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          asChild
+          className="sm:size-auto sm:h-8 sm:px-2.5"
+        >
+          <Link href="/admin/ai-audit" className="gap-1.5" title="Auditoría IA">
             <ScrollText className="size-4" />
-            Auditoría IA
+            <span className="hidden md:inline">Auditoría IA</span>
           </Link>
         </Button>
       ) : null}
@@ -45,6 +50,6 @@ export async function AuthHeader() {
         roleLabel={user.isSuperAdmin ? "SuperAdmin" : "Usuario"}
         bypassEnabled={bypassEnabled}
       />
-    </>
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import { ChevronRight, Command, Smartphone } from "lucide-react";
+import { ChevronRight, Command, Play } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -39,7 +39,7 @@ export default async function ExecutionPage({
     redirect(`/run/${executionId}`);
   }
 
-  // Panel = observación / admin. Sin impersonación (eso vive en Mi turno).
+  // Panel = solo observación. Impersonar / operar vive en Mi turno (/run).
   const canOpenCockpit =
     Boolean(realActor?.roles.includes("EXECUTOR")) ||
     canUseDevActorImpersonation(user);
@@ -47,34 +47,38 @@ export default async function ExecutionPage({
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <header className="shrink-0 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 overflow-hidden px-3 sm:h-16 sm:gap-3 sm:px-6">
           <Link
             href={user.isSuperAdmin ? "/dashboard" : "/"}
-            className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
           >
             <Command className="size-4" />
           </Link>
-          <Link
-            href={`/events/${eventId}`}
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            Evento
-          </Link>
-          <ChevronRight className="size-4 text-muted-foreground" />
-          <Link
-            href={`/events/${eventId}/executions`}
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            Ejecuciones
-          </Link>
-          <ChevronRight className="size-4 text-muted-foreground" />
-          <span className="truncate text-sm font-medium">{detail.name}</span>
-          <div className="ml-auto flex items-center gap-2">
-            <Badge variant="outline">{detail.type}</Badge>
+          <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden sm:gap-2">
+            <Link
+              href={`/events/${eventId}`}
+              className="hidden shrink-0 text-sm text-muted-foreground hover:text-foreground sm:inline"
+            >
+              Evento
+            </Link>
+            <ChevronRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
+            <Link
+              href={`/events/${eventId}/executions`}
+              className="shrink-0 text-sm text-muted-foreground hover:text-foreground"
+            >
+              Ejecuciones
+            </Link>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate text-sm font-medium">{detail.name}</span>
+          </nav>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <Badge variant="outline" className="hidden sm:inline-flex">
+              {detail.type}
+            </Badge>
             {canOpenCockpit ? (
               <Button size="sm" variant="secondary" asChild>
                 <Link href={`/run/${executionId}`}>
-                  <Smartphone className="size-3.5" />
+                  <Play className="size-3.5" />
                   Mi turno
                 </Link>
               </Button>
@@ -83,7 +87,7 @@ export default async function ExecutionPage({
           </div>
         </div>
       </header>
-      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 pb-4">
+      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-x-hidden px-3 pb-4 sm:px-6">
         <ExecutionTimesPanel
           initial={detail}
           actorId={realActor?.id ?? null}

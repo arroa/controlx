@@ -12,7 +12,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,13 +28,18 @@ export function LandingAccess({
   destination,
 }: LandingAccessProps) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   if (isAuthenticated) {
     return (
-      <Button size="lg" onClick={() => router.push(destination)}>
+      <Button
+        size="lg"
+        className="h-11 min-h-11 px-5 text-base"
+        onClick={() => router.push(destination)}
+      >
         Ir al sistema
         <ArrowRight className="size-4" />
       </Button>
@@ -73,63 +77,74 @@ export function LandingAccess({
   }
 
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button size="lg">
-          Ingresar al sistema
-          <ArrowRight className="size-4" />
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Ingresar a ControlX</DialogTitle>
-          <DialogDescription>
-            {bypassEnabled
-              ? "Acceso beta habilitado para usuarios autorizados."
-              : "Te enviaremos un código por email. Solo usuarios autorizados."}
-          </DialogDescription>
-        </DialogHeader>
-        {bypassEnabled ? (
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div className="space-y-2">
-              <Label htmlFor="access-email">Correo electrónico</Label>
-              <Input
-                id="access-email"
-                type="email"
-                autoComplete="email"
-                autoFocus
-                required
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="nombre@empresa.com"
-              />
-            </div>
-            {error ? (
-              <p
-                role="alert"
-                className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-red-300"
+    <>
+      <Button
+        type="button"
+        size="lg"
+        className="h-11 min-h-11 px-5 text-base"
+        onClick={() => setOpen(true)}
+      >
+        Ingresar al sistema
+        <ArrowRight className="size-4" />
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ingresar a ControlX</DialogTitle>
+            <DialogDescription>
+              {bypassEnabled
+                ? "Acceso beta habilitado para usuarios autorizados."
+                : "Te enviaremos un código por email. Solo usuarios autorizados."}
+            </DialogDescription>
+          </DialogHeader>
+          {bypassEnabled ? (
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <div className="space-y-2">
+                <Label htmlFor="access-email">Correo electrónico</Label>
+                <Input
+                  id="access-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  enterKeyHint="go"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="nombre@empresa.com"
+                />
+              </div>
+              {error ? (
+                <p
+                  role="alert"
+                  className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-red-300"
+                >
+                  {error}
+                </p>
+              ) : null}
+              <Button
+                className="h-11 w-full text-base"
+                type="submit"
+                disabled={loading}
               >
-                {error}
+                {loading ? (
+                  <>
+                    <LoaderCircle className="size-4 animate-spin" />
+                    Validando…
+                  </>
+                ) : (
+                  "Continuar"
+                )}
+              </Button>
+              <p className="text-center text-xs text-muted-foreground">
+                ControlX Beta · Acceso administrado
               </p>
-            ) : null}
-            <Button className="w-full" type="submit" disabled={loading}>
-              {loading ? (
-                <>
-                  <LoaderCircle className="size-4 animate-spin" />
-                  Validando…
-                </>
-              ) : (
-                "Continuar"
-              )}
-            </Button>
-            <p className="text-center text-xs text-muted-foreground">
-              ControlX Beta · Acceso administrado
-            </p>
-          </form>
-        ) : (
-          <ControlXSignInForm destination={destination} />
-        )}
-      </DialogContent>
-    </Dialog>
+            </form>
+          ) : (
+            <ControlXSignInForm destination={destination} />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
