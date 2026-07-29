@@ -2,6 +2,7 @@ import { Command, LockKeyhole, Network, RadioTower } from "lucide-react";
 
 import { LandingAccess } from "@/components/landing-access";
 import { LoginChangelogModal } from "@/components/login-changelog-modal";
+import { PwaInstallHint } from "@/components/pwa-install-hint";
 import { Badge } from "@/components/ui/badge";
 import { getFirstAssignedPath } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
@@ -57,12 +58,13 @@ export default async function Home() {
           completa.
         </p>
 
-        <div className="mt-10">
+        <div className="mt-10 flex w-full max-w-md flex-col items-center gap-3">
           <LandingAccess
             bypassEnabled={isDevBypassEnabled()}
             isAuthenticated={Boolean(currentUser)}
             destination={destination}
           />
+          <PwaInstallHint variant="landing" className="w-full" />
         </div>
 
         <div className="mt-16 grid w-full max-w-3xl gap-4 text-left sm:grid-cols-3">

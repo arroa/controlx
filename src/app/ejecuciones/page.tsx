@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { AuthHeader } from "@/components/auth-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PwaInstallHint } from "@/components/pwa-install-hint";
 import { hasAssignedAccess } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { formatDayTimeLabel } from "@/lib/execution-schedule";
@@ -165,10 +166,11 @@ export default async function EjecucionesPage() {
       </header>
 
       <main className="mx-auto min-h-0 w-full max-w-7xl flex-1 overflow-y-auto px-3 py-4 sm:px-6">
-        <p className="mb-4 text-sm text-muted-foreground">
+        <p className="mb-3 text-sm text-muted-foreground">
           Simulacros y corridas de tus organizaciones. Entrá a Mi turno o al
           Panel según tu rol.
         </p>
+        <PwaInstallHint className="mb-4" />
 
         {!executions.length ? (
           <div className="rounded-xl border border-dashed px-4 py-10 text-center">
