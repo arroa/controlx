@@ -4,7 +4,8 @@ import { getFirstAssignedPath } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 
 /**
- * Resolver post-login: SuperAdmin → dashboard; resto con acceso → /ejecuciones.
+ * Resolver post-login: home operativo = /ejecuciones (también SuperAdmin).
+ * Administración sigue en /dashboard desde el header.
  */
 export default async function EntrarPage() {
   const user = await getCurrentUser();
@@ -13,7 +14,7 @@ export default async function EntrarPage() {
   }
 
   if (user.isSuperAdmin) {
-    redirect("/dashboard");
+    redirect("/ejecuciones");
   }
 
   const path = await getFirstAssignedPath(user.email);

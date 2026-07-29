@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   const token = await createDevSessionToken(userId);
   const destination =
     email === getSuperAdminEmail()
-      ? "/dashboard"
+      ? "/ejecuciones"
       : await getFirstAssignedPath(email);
   const response = NextResponse.json({ ok: true, userId, destination });
   const cookie = devSessionCookieOptions(token);

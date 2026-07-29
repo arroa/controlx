@@ -12,7 +12,7 @@ export default async function Home() {
   const currentUser = await getCurrentUser();
   const destination = currentUser
     ? currentUser.isSuperAdmin
-      ? "/dashboard"
+      ? "/ejecuciones"
       : await getFirstAssignedPath(currentUser.email)
     : "/entrar";
 

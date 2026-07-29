@@ -8,7 +8,7 @@ import {
   RotateCcw,
   ShieldAlert,
 } from "lucide-react";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import {
   EXECUTION_ACT_LABELS,
@@ -90,6 +90,17 @@ function startBlockedLabel(step: RuntimeStepSummary, all: RuntimeStepSummary[]) 
     return `Deps fallidas — rearrancar el fallido o Event Admin puede Forzar: ${failed.map((item) => item.name).join(", ")}`;
   }
   return `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`;
+}
+
+/** Firma liviana para detectar cambios remotos (sync en vivo). */
+function executionSyncKey(detail: ExecutionDetail) {
+  return [
+    detail.status,
+    ...detail.steps.map(
+      (step) =>
+        `${step.id}:${step.status}:${step.actualStartedAt ?? ""}:${step.actualEndedAt ?? ""}:${step.iterations?.length ?? 0}`,
+    ),
+  ].join("|");
 }
 
 type WorkstreamOption = {
@@ -190,6 +201,52 @@ export function ExecutionTimesPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+
+  // Sync en vivo: polling ligero mientras la pestaña está visible.
+  useEffect(() => {
+    const executionId = detail.id;
+    let cancelled = false;
+
+    async function pull() {
+      if (cancelled || busy || outcome || document.visibilityState !== "visible") {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/executions/${executionId}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          execution?: ExecutionDetail;
+        };
+        const next = payload.execution;
+        if (!next || cancelled) return;
+        setDetail((current) => {
+          if (executionSyncKey(current) === executionSyncKey(next)) {
+            return current;
+          }
+          return next;
+        });
+      } catch {
+        // Silencioso: la red puede fallar un ciclo sin alertar.
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void pull();
+    }, 4_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void pull();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    void pull();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [detail.id, busy, outcome]);
 
   const mineCount = useMemo(
     () =>

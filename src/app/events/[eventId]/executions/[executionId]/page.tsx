@@ -49,7 +49,7 @@ export default async function ExecutionPage({
       <header className="shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 overflow-hidden px-3 sm:h-16 sm:gap-3 sm:px-6">
           <Link
-            href={user.isSuperAdmin ? "/dashboard" : "/ejecuciones"}
+            href="/ejecuciones"
             className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
           >
             <Command className="size-4" />

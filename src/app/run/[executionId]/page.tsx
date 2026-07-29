@@ -107,7 +107,7 @@ export default async function ExecutorRunPage({
     detail.eventId,
     user,
   );
-  const homeHref = user.isSuperAdmin ? "/dashboard" : "/ejecuciones";
+  const homeHref = "/ejecuciones";
 
   if (!actor) {
     return (

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  LayoutDashboard,
   ListChecks,
   MessageSquareText,
   Newspaper,
@@ -36,6 +37,19 @@ export async function AuthHeader() {
           <span className="hidden sm:inline">Ejecuciones</span>
         </Link>
       </Button>
+      {user.isSuperAdmin ? (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          asChild
+          className="sm:size-auto sm:h-8 sm:px-2.5"
+        >
+          <Link href="/dashboard" className="gap-1.5" title="Administración">
+            <LayoutDashboard className="size-4" />
+            <span className="hidden sm:inline">Admin</span>
+          </Link>
+        </Button>
+      ) : null}
       <Button
         variant="ghost"
         size="icon-sm"

@@ -19,7 +19,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
   const authResult = await requireUser();
   if ("error" in authResult) return authResult.error;
 
-  const detail = await getExecutionDetail(executionId);
+  const detail = await getExecutionDetail(executionId, { syncPlan: false });
   if (!detail) {
     return NextResponse.json({ error: "No encontrada." }, { status: 404 });
   }
