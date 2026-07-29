@@ -1,4 +1,4 @@
-import { Command } from "lucide-react";
+import { ChevronRight, Command } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -14,6 +14,34 @@ import {
 } from "@/lib/dev-impersonation";
 import { canViewExecution } from "@/lib/execution-auth";
 import { getExecutionDetail } from "@/lib/execution-runtime";
+
+function RunBreadcrumb({
+  eventId,
+  executionName,
+}: {
+  eventId: string;
+  executionName: string;
+}) {
+  return (
+    <>
+      <Link
+        href={`/events/${eventId}`}
+        className="shrink-0 text-sm text-muted-foreground hover:text-foreground"
+      >
+        Evento
+      </Link>
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      <Link
+        href={`/events/${eventId}/executions`}
+        className="shrink-0 text-sm text-muted-foreground hover:text-foreground"
+      >
+        Ejecuciones
+      </Link>
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      <span className="truncate text-sm font-medium">{executionName}</span>
+    </>
+  );
+}
 
 export default async function ExecutorRunPage({
   params,
@@ -47,23 +75,25 @@ export default async function ExecutorRunPage({
         <header className="shrink-0 border-b">
           <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-6">
             <Link
-              href={`/events/${detail.eventId}/executions/${detail.id}`}
-              className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+              href={user.isSuperAdmin ? "/dashboard" : "/"}
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
             >
               <Command className="size-4" />
             </Link>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{detail.name}</p>
-              <p className="text-xs text-muted-foreground">Vista ejecutor</p>
+            <RunBreadcrumb
+              eventId={detail.eventId}
+              executionName={detail.name}
+            />
+            <div className="ml-auto flex items-center gap-2">
+              {showImpersonation ? (
+                <DevActorSwitcher
+                  eventId={detail.eventId}
+                  actors={actors}
+                  selectedActorId={null}
+                />
+              ) : null}
+              <AuthHeader />
             </div>
-            {showImpersonation ? (
-              <DevActorSwitcher
-                eventId={detail.eventId}
-                actors={actors}
-                selectedActorId={null}
-              />
-            ) : null}
-            <AuthHeader />
           </div>
         </header>
         <main className="mx-auto flex w-full max-w-7xl flex-1 items-center justify-center px-6 text-center">
@@ -97,31 +127,26 @@ export default async function ExecutorRunPage({
       <header className="shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-6">
           <Link
-            href={
-              isAdmin
-                ? `/events/${detail.eventId}/executions/${detail.id}`
-                : `/events/${detail.eventId}`
-            }
-            className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+            href={user.isSuperAdmin ? "/dashboard" : "/"}
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
           >
             <Command className="size-4" />
           </Link>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{detail.name}</p>
-            <p className="truncate text-xs text-muted-foreground">
-              Cockpit · {actor.name}
-              {impersonating ? " (mock)" : ""}
-            </p>
+          <RunBreadcrumb
+            eventId={detail.eventId}
+            executionName={detail.name}
+          />
+          <div className="ml-auto flex items-center gap-2">
+            <Badge variant="outline">{detail.type}</Badge>
+            {showImpersonation ? (
+              <DevActorSwitcher
+                eventId={detail.eventId}
+                actors={actors}
+                selectedActorId={impersonating ? actor.id : null}
+              />
+            ) : null}
+            <AuthHeader />
           </div>
-          <Badge variant="outline">{detail.type}</Badge>
-          {showImpersonation ? (
-            <DevActorSwitcher
-              eventId={detail.eventId}
-              actors={actors}
-              selectedActorId={impersonating ? actor.id : null}
-            />
-          ) : null}
-          <AuthHeader />
         </div>
       </header>
       <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-6 pb-4">

@@ -1,7 +1,13 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
@@ -37,6 +43,13 @@ function resolveTone(action: FlowerAction): FlowerTone {
   return "neutral";
 }
 
+type MenuCoords = {
+  top?: number;
+  bottom?: number;
+  left?: number;
+  right?: number;
+};
+
 /** Menú tipo “flor” — horizontal (planificador) o vertical a la derecha (móvil). */
 export function StepActionFlower({
   open,
@@ -55,20 +68,114 @@ export function StepActionFlower({
   actions: FlowerAction[];
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<MenuCoords | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null);
+      return;
+    }
+    function update() {
+      const node = rootRef.current;
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      if (layout === "vertical") {
+        setCoords({
+          top: rect.top,
+          left: rect.right + 8,
+        });
+        return;
+      }
+      const bottom = window.innerHeight - rect.top + 8;
+      if (openToRight) {
+        setCoords({ bottom, left: rect.left });
+      } else {
+        setCoords({ bottom, right: window.innerWidth - rect.right });
+      }
+    }
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open, layout, openToRight]);
 
   useEffect(() => {
     if (!open) return;
     function onPointerDown(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        onClose();
-      }
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      const menu = document.getElementById("step-action-flower-menu");
+      if (menu?.contains(target)) return;
+      onClose();
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open, onClose]);
 
+  const menu =
+    open && mounted && coords
+      ? createPortal(
+          <div
+            id="step-action-flower-menu"
+            className={cn(
+              "pointer-events-auto fixed z-[200] flex gap-2",
+              layout === "vertical" ? "flex-col" : "flex-row items-center",
+            )}
+            style={{
+              top: coords.top,
+              bottom: coords.bottom,
+              left: coords.left,
+              right: coords.right,
+            }}
+          >
+            {actions.map((action, index) => {
+              const Icon = action.icon;
+              const tone = resolveTone(action);
+              return (
+                <button
+                  key={action.key}
+                  type="button"
+                  title={action.title ?? action.label}
+                  aria-label={action.label}
+                  disabled={action.disabled}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (!action.disabled) action.onClick();
+                  }}
+                  className={cn(
+                    "flex size-11 items-center justify-center rounded-full border-2 shadow-xl ring-2 ring-black/50 transition-transform animate-in fade-in-0 zoom-in-95 fill-mode-both",
+                    layout === "vertical"
+                      ? "slide-in-from-left-2"
+                      : "slide-in-from-bottom-2",
+                    action.disabled
+                      ? "cursor-not-allowed border-zinc-500 bg-zinc-400 text-zinc-700 opacity-70"
+                      : TONE_STYLES[tone],
+                  )}
+                  style={{ animationDelay: `${index * 50}ms` }}
+                >
+                  <Icon
+                    className="size-5 drop-shadow-sm"
+                    strokeWidth={2.75}
+                    absoluteStrokeWidth
+                  />
+                </button>
+              );
+            })}
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
-    <div ref={rootRef} className="relative size-6 shrink-0">
+    <div ref={rootRef} className="relative size-6 shrink-0 overflow-visible">
       <button
         type="button"
         aria-label="Acciones del paso"
@@ -87,54 +194,7 @@ export function StepActionFlower({
       >
         ?
       </button>
-
-      {open ? (
-        <div
-          className={cn(
-            "absolute z-30 flex gap-2",
-            layout === "vertical"
-              ? "top-0 left-full ml-2 flex-col"
-              : cn(
-                  "bottom-full mb-2 flex-row items-center",
-                  openToRight ? "left-0" : "right-0",
-                ),
-          )}
-        >
-          {actions.map((action, index) => {
-            const Icon = action.icon;
-            const tone = resolveTone(action);
-            return (
-              <button
-                key={action.key}
-                type="button"
-                title={action.title ?? action.label}
-                aria-label={action.label}
-                disabled={action.disabled}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (!action.disabled) action.onClick();
-                }}
-                className={cn(
-                  "flex size-11 items-center justify-center rounded-full border-2 shadow-xl ring-2 ring-black/50 transition-transform animate-in fade-in-0 zoom-in-95 fill-mode-both",
-                  layout === "vertical"
-                    ? "slide-in-from-left-2"
-                    : "slide-in-from-bottom-2",
-                  action.disabled
-                    ? "cursor-not-allowed border-zinc-500 bg-zinc-400 text-zinc-700 opacity-70"
-                    : TONE_STYLES[tone],
-                )}
-                style={{ animationDelay: `${index * 50}ms` }}
-              >
-                <Icon
-                  className="size-5 drop-shadow-sm"
-                  strokeWidth={2.75}
-                  absoluteStrokeWidth
-                />
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {menu}
     </div>
   );
 }

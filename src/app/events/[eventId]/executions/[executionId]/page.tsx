@@ -88,7 +88,8 @@ export default async function ExecutionPage({
           initial={detail}
           actorId={realActor?.id ?? null}
           actorName={realActor?.name ?? null}
-          canOperateAny={isAdmin}
+          canOperateAny={false}
+          allowStepOperations={false}
           canForceSuccess={
             user.isSuperAdmin ||
             Boolean(realActor?.roles.includes("EVENT_ADMIN"))

@@ -24,13 +24,14 @@ import {
 } from "@/lib/execution-focus";
 import {
   unmetStepDependencies,
-  type RuntimeStepAction,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
 import { cn } from "@/lib/utils";
 
-/** Acciones de cierre que abren el diálogo con adjuntos opcionales. */
+/** Acciones que abren el diálogo con hora (y adjuntos opcionales al cerrar). */
 export type OutcomeAction =
+  | "start"
+  | "restart"
   | "complete_success"
   | "complete_fail"
   | "force_success";
@@ -138,7 +139,7 @@ function flowerActionsFor(input: {
   busy: boolean;
   canAct: boolean;
   canForceSuccess: boolean;
-  onAction: (action: RuntimeStepAction) => void;
+  allowStepOperations?: boolean;
   onOutcome: (action: OutcomeAction) => void;
   onInfo: () => void;
 }): FlowerAction[] {
@@ -148,7 +149,7 @@ function flowerActionsFor(input: {
     busy,
     canAct,
     canForceSuccess,
-    onAction,
+    allowStepOperations = true,
     onOutcome,
     onInfo,
   } = input;
@@ -161,6 +162,21 @@ function flowerActionsFor(input: {
       onClick: onInfo,
     },
   ];
+
+  if (!allowStepOperations) {
+    if (step.status === "FALLIDO" && canForceSuccess) {
+      actions.push({
+        key: "force",
+        label: "Forzar OK",
+        icon: ShieldAlert,
+        tone: "neutral",
+        disabled: busy,
+        title: "Requiere comentario. Desbloquea dependientes.",
+        onClick: () => onOutcome("force_success"),
+      });
+    }
+    return actions;
+  }
 
   if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
     const blocked = startBlockedLabel(step, allSteps);
@@ -179,7 +195,7 @@ function flowerActionsFor(input: {
       title: blocked ?? undefined,
       onClick: () => {
         if (!canAct || blocked) return;
-        onAction("start");
+        onOutcome("start");
       },
     });
   }
@@ -220,7 +236,7 @@ function flowerActionsFor(input: {
         tone: "go",
         disabled: busy,
         title: "Vuelve a Iniciado para intentarlo de nuevo.",
-        onClick: () => onAction("restart"),
+        onClick: () => onOutcome("restart"),
       });
     }
     if (canForceSuccess) {
@@ -272,10 +288,11 @@ export function ExecutorTimesMap({
   canOperateAny = false,
   /** Event Admin: Forzar OK en Fallido. */
   canForceSuccess = false,
+  /** Panel: false = sin Iniciar/cerrar en la flor. */
+  allowStepOperations = true,
   selectedId,
   busy,
   onSelect,
-  onAction,
   onOutcome,
   onOpenInfo,
 }: {
@@ -287,10 +304,10 @@ export function ExecutorTimesMap({
   focusMode?: ExecutionFocusMode;
   canOperateAny?: boolean;
   canForceSuccess?: boolean;
+  allowStepOperations?: boolean;
   selectedId: string | null;
   busy: boolean;
   onSelect: (stepId: string | null) => void;
-  onAction: (stepId: string, action: RuntimeStepAction) => void;
   onOutcome: (stepId: string, action: OutcomeAction) => void;
   onOpenInfo: (stepId: string) => void;
 }) {
@@ -637,11 +654,7 @@ export function ExecutorTimesMap({
                               busy,
                               canAct: item.mine || canOperateAny,
                               canForceSuccess,
-                              onAction: (action) => {
-                                setFlowerOpenId(null);
-                                onSelect(null);
-                                onAction(item.step.id, action);
-                              },
+                              allowStepOperations,
                               onOutcome: (action) => {
                                 setFlowerOpenId(null);
                                 onSelect(null);

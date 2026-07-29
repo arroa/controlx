@@ -22,7 +22,9 @@ import {
   type RuntimeStepAction,
   type RuntimeStepStatus,
   type RuntimeStepSummary,
+  type StepAct,
   type StepComment,
+  type StepIteration,
 } from "@/lib/execution-types";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -70,6 +72,7 @@ type RuntimeStepDoc = {
   forced: boolean;
   actualStartedAt?: Date | null;
   actualEndedAt?: Date | null;
+  iterations?: StepIteration[];
   comments: StepComment[];
   evidence: EvidenceMeta[];
   createdAt: Date;
@@ -79,8 +82,10 @@ type RuntimeStepDoc = {
 export const stepTransitionSchema = z.object({
   action: runtimeStepActionSchema,
   comment: z.string().trim().max(4000).optional(),
-  /** Hora real del acto (cierre OK/fallo/forzado). ISO. */
+  /** Hora real del acto (inicio, rearranque o cierre). ISO. */
   occurredAt: z.string().datetime().optional(),
+  /** Evidencias subidas en este acto (pathnames ya en el paso). */
+  evidencePathnames: z.array(z.string().min(1)).max(8).optional(),
 });
 
 const SCHEDULE_MUTABLE_STATUSES = new Set<RuntimeStepStatus>([
@@ -124,6 +129,7 @@ function toStepSummary(
     overdue: stepIsOverdue({ status: doc.status, plannedStartAt }),
     actualStartedAt: doc.actualStartedAt?.toISOString() ?? null,
     actualEndedAt: doc.actualEndedAt?.toISOString() ?? null,
+    iterations: doc.iterations ?? [],
     comments: doc.comments ?? [],
     evidence: doc.evidence ?? [],
     updatedAt: doc.updatedAt.toISOString(),
@@ -446,6 +452,7 @@ export async function materializeExecutionSteps(input: {
       ),
       status: "PLANIFICADO",
       forced: false,
+      iterations: [],
       comments: [],
       evidence: [],
       createdAt: now,
@@ -644,6 +651,7 @@ export async function syncExecutionPlanFromDesign(input: {
       ),
       status: "PLANIFICADO",
       forced: false,
+      iterations: [],
       comments: [],
       evidence: [],
       createdAt: now,
@@ -908,6 +916,7 @@ export async function transitionRuntimeStep(input: {
   action: RuntimeStepAction;
   comment?: string;
   occurredAt?: string;
+  evidencePathnames?: string[];
   actorId: string;
   actorLabel: string;
 }): Promise<{ step: RuntimeStepSummary; steps: RuntimeStepSummary[] }> {
@@ -987,22 +996,44 @@ export async function transitionRuntimeStep(input: {
   const now = new Date();
   let occurredAt = now;
   if (actionNeedsOccurredAt(input.action)) {
+    const isStartTime =
+      input.action === "start" || input.action === "restart";
     if (!input.occurredAt) {
-      throw new Error("Indica la hora en que terminó la actividad.");
+      throw new Error(
+        isStartTime
+          ? "Indica la hora en que arrancó la actividad."
+          : "Indica la hora en que terminó la actividad.",
+      );
     }
     occurredAt = new Date(input.occurredAt);
     if (Number.isNaN(occurredAt.getTime())) {
-      throw new Error("Hora de término inválida.");
+      throw new Error(
+        isStartTime ? "Hora de inicio inválida." : "Hora de término inválida.",
+      );
     }
     if (execution.anchorStartAt && occurredAt < execution.anchorStartAt) {
       throw new Error(
-        "La hora de término no puede ser anterior al arranque de la ejecución.",
+        isStartTime
+          ? "La hora de inicio no puede ser anterior al arranque de la ejecución."
+          : "La hora de término no puede ser anterior al arranque de la ejecución.",
       );
     }
-    if (step.actualStartedAt && occurredAt < step.actualStartedAt) {
+    if (
+      !isStartTime &&
+      step.actualStartedAt &&
+      occurredAt < step.actualStartedAt
+    ) {
       throw new Error(
         "La hora de término no puede ser anterior al inicio del paso.",
       );
+    }
+    if (input.action === "restart") {
+      const prevEnd = step.actualEndedAt ?? step.actualStartedAt;
+      if (prevEnd && occurredAt < prevEnd) {
+        throw new Error(
+          "La hora de rearranque no puede ser anterior al fin de la iteración anterior.",
+        );
+      }
     }
   }
 
@@ -1013,25 +1044,98 @@ export async function transitionRuntimeStep(input: {
     hasApprovers: step.approverActorIds.length > 0,
   });
 
-  const comments = [...(step.comments ?? [])];
-  if (input.comment?.trim() || input.action !== "start") {
-    const text =
-      input.comment?.trim() ||
-      (input.action === "start"
-        ? "Paso iniciado."
-        : input.action === "restart"
-          ? "Paso rearrancado tras fallo."
-          : undefined);
-    if (text) {
-      comments.push({
-        id: new ObjectId().toHexString(),
-        text,
-        authorId: input.actorId,
-        authorLabel: input.actorLabel,
-        createdAt: now.toISOString(),
-        kind: commentKind(input.action),
-      });
+  const actEvidence = pickActEvidence(
+    step.evidence ?? [],
+    input.evidencePathnames,
+  );
+  const actBase: StepAct = {
+    at: occurredAt.toISOString(),
+    comment: input.comment?.trim() || undefined,
+    evidence: actEvidence,
+    by: { id: input.actorId, label: input.actorLabel },
+    recordedAt: now.toISOString(),
+  };
+
+  const iterations = [...(step.iterations ?? [])];
+  if (input.action === "start") {
+    if (iterations.length) {
+      throw new Error("El paso ya tiene iteraciones; usa Rearrancar.");
     }
+    iterations.push({
+      n: 1,
+      status: "EN_CURSO",
+      start: actBase,
+    });
+  } else if (input.action === "restart") {
+    const last = iterations[iterations.length - 1];
+    if (!last || last.status !== "FALLIDA") {
+      throw new Error("Solo se puede rearrancar tras un fallo.");
+    }
+    iterations.push({
+      n: last.n + 1,
+      status: "EN_CURSO",
+      start: actBase,
+    });
+  } else if (
+    input.action === "complete_success" ||
+    input.action === "complete_fail" ||
+    input.action === "force_success"
+  ) {
+    const last = iterations[iterations.length - 1];
+    const outcome =
+      input.action === "complete_success"
+        ? ("success" as const)
+        : input.action === "complete_fail"
+          ? ("fail" as const)
+          : ("force" as const);
+    const iterStatus =
+      outcome === "success"
+        ? ("EXITOSA" as const)
+        : outcome === "fail"
+          ? ("FALLIDA" as const)
+          : ("FORZADA_OK" as const);
+
+    if (input.action === "force_success") {
+      if (!last || last.status !== "FALLIDA") {
+        throw new Error("Solo se puede forzar una iteración fallida.");
+      }
+      last.end = { ...actBase, outcome };
+      last.status = iterStatus;
+    } else {
+      if (!last || last.status !== "EN_CURSO" || last.end) {
+        throw new Error("No hay una iteración en curso para cerrar.");
+      }
+      last.end = { ...actBase, outcome };
+      last.status = iterStatus;
+    }
+  }
+
+  const comments = [...(step.comments ?? [])];
+  const text =
+    input.comment?.trim() ||
+    (input.action === "start"
+      ? "Paso iniciado."
+      : input.action === "restart"
+        ? "Paso rearrancado tras fallo."
+        : input.action === "complete_success"
+          ? "Marcado como exitoso."
+          : input.action === "complete_fail"
+            ? "Marcado como fallido."
+            : input.action === "force_success"
+              ? "Forzado a OK."
+              : undefined);
+  if (text) {
+    comments.push({
+      id: new ObjectId().toHexString(),
+      text,
+      authorId: input.actorId,
+      authorLabel: input.actorLabel,
+      createdAt: now.toISOString(),
+      occurredAt: actionNeedsOccurredAt(input.action)
+        ? occurredAt.toISOString()
+        : undefined,
+      kind: commentKind(input.action),
+    });
   }
 
   const forced = input.action === "force_success" ? true : step.forced;
@@ -1039,16 +1143,14 @@ export async function transitionRuntimeStep(input: {
     status,
     forced,
     comments,
+    iterations,
     updatedAt: now,
   };
 
-  if (input.action === "start") {
-    $set.actualStartedAt = now;
+  if (input.action === "start" || input.action === "restart") {
+    $set.actualStartedAt = occurredAt;
     $set.actualEndedAt = null;
-  } else if (input.action === "restart") {
-    $set.actualStartedAt = now;
-    $set.actualEndedAt = null;
-    $set.forced = false;
+    if (input.action === "restart") $set.forced = false;
   } else if (actionNeedsOccurredAt(input.action)) {
     $set.actualEndedAt = occurredAt;
     if (!step.actualStartedAt) {
@@ -1070,10 +1172,7 @@ export async function transitionRuntimeStep(input: {
     );
   }
 
-  if (
-    execution.anchorStartAt &&
-    (actionNeedsOccurredAt(input.action) || input.action === "restart")
-  ) {
+  if (execution.anchorStartAt && actionNeedsOccurredAt(input.action)) {
     const design = await getEventDesign(execution.eventId.toHexString());
     await recomputeScheduleFromActuals({
       executionId,
@@ -1108,6 +1207,15 @@ export async function transitionRuntimeStep(input: {
     detail.steps.find((item) => item.id === input.stepId) ??
     toStepSummary(updated);
   return { step: nextStep, steps: detail.steps };
+}
+
+function pickActEvidence(
+  all: EvidenceMeta[],
+  pathnames: string[] | undefined,
+): EvidenceMeta[] {
+  if (!pathnames?.length) return [];
+  const wanted = new Set(pathnames);
+  return all.filter((item) => wanted.has(item.pathname));
 }
 
 export async function addStepComment(input: {

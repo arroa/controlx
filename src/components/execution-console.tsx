@@ -13,28 +13,27 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { DateTimePicker } from "@/components/datetime-picker";
+import {
+  EXECUTION_ACT_LABELS,
+  ExecutionActDialog,
+  type ExecutionActAction,
+} from "@/components/execution-act-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   actionNeedsOccurredAt,
+  actTimeFloor,
+  defaultActOccurredAt,
   RUNTIME_STEP_STATUS_LABELS,
   type ExecutionDetail,
   type RuntimeStepAction,
   type RuntimeStepStatus,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
+import { evidenceFileHref } from "@/lib/evidence-url";
 import { cn } from "@/lib/utils";
 
 const STATUS_TONE: Record<RuntimeStepStatus, string> = {
@@ -62,10 +61,11 @@ export function ExecutionConsole({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
-  const [pendingAction, setPendingAction] = useState<RuntimeStepAction | null>(
+  const [pendingAction, setPendingAction] = useState<ExecutionActAction | null>(
     null,
   );
   const [occurredAt, setOccurredAt] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
 
   const selected = useMemo(
     () => detail.steps.find((step) => step.id === selectedId) ?? null,
@@ -100,6 +100,44 @@ export function ExecutionConsole({
     if (!selected) return;
     setBusy(true);
     setError("");
+
+    const evidencePathnames: string[] = [];
+    if (opts?.occurredAt && files.length) {
+      const beforePathnames = new Set(
+        selected.evidence.map((item) => item.pathname),
+      );
+      for (const file of files) {
+        const body = new FormData();
+        body.set("file", file);
+        if (comment.trim()) body.set("caption", comment.trim());
+        const upload = await fetch(
+          `/api/executions/${detail.id}/steps/${selected.id}/evidence`,
+          { method: "POST", body },
+        ).catch(() => null);
+        const uploadPayload = upload
+          ? ((await upload.json()) as {
+              step?: RuntimeStepSummary;
+              error?: string;
+            })
+          : null;
+        if (!upload?.ok || !uploadPayload?.step) {
+          setBusy(false);
+          setError(
+            uploadPayload?.error ??
+              "No fue posible adjuntar el archivo. Revisá Blob o probá sin adjunto.",
+          );
+          return;
+        }
+        for (const item of uploadPayload.step.evidence) {
+          if (!beforePathnames.has(item.pathname)) {
+            evidencePathnames.push(item.pathname);
+            beforePathnames.add(item.pathname);
+          }
+        }
+        applySteps(undefined, uploadPayload.step);
+      }
+    }
+
     const response = await fetch(
       `/api/executions/${detail.id}/steps/${selected.id}/transition`,
       {
@@ -109,6 +147,9 @@ export function ExecutionConsole({
           action,
           comment: comment || undefined,
           occurredAt: opts?.occurredAt,
+          evidencePathnames: evidencePathnames.length
+            ? evidencePathnames
+            : undefined,
         }),
       },
     ).catch(() => null);
@@ -128,18 +169,39 @@ export function ExecutionConsole({
     setComment("");
     setPendingAction(null);
     setOccurredAt(null);
-    setToast(action === "restart" ? "Paso rearrancado" : "Paso actualizado");
+    setFiles([]);
+    setToast(
+      action === "restart"
+        ? "Paso rearrancado"
+        : action in EXECUTION_ACT_LABELS
+          ? EXECUTION_ACT_LABELS[action as ExecutionActAction]
+          : "Paso actualizado",
+    );
     window.setTimeout(() => setToast(""), 2000);
   }
 
   function requestAction(action: RuntimeStepAction) {
     if (actionNeedsOccurredAt(action)) {
-      setOccurredAt(new Date().toISOString());
-      setPendingAction(action);
+      const floor = actTimeFloor({
+        action,
+        anchorStartAt: detail.anchorStartAt,
+        actualStartedAt: selected?.actualStartedAt,
+        actualEndedAt: selected?.actualEndedAt,
+      });
+      setOccurredAt(defaultActOccurredAt(floor));
+      setPendingAction(action as ExecutionActAction);
+      setFiles([]);
       setError("");
       return;
     }
     void runAction(action);
+  }
+
+  function closeActDialog() {
+    if (busy) return;
+    setPendingAction(null);
+    setOccurredAt(null);
+    setFiles([]);
   }
 
   async function startExecution() {
@@ -396,7 +458,7 @@ export function ExecutionConsole({
                     <Button
                       size="sm"
                       disabled={busy}
-                      onClick={() => void runAction("restart")}
+                      onClick={() => requestAction("restart")}
                     >
                       <RotateCcw className="size-3.5" />
                       Rearrancar
@@ -444,7 +506,7 @@ export function ExecutionConsole({
 
               <div className="space-y-2">
                 <Label>
-                  Evidencia (imagen / PDF)
+                  Evidencia (cualquier archivo ≤ 10 MB)
                   {detail.type === "REAL" ? (
                     <span className="text-amber-300"> · obligatoria al cerrar</span>
                   ) : (
@@ -453,7 +515,6 @@ export function ExecutionConsole({
                 </Label>
                 <Input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,application/pdf"
                   disabled={busy || !detail.blobConfigured}
                   onChange={(event) => {
                     const file = event.target.files?.[0] ?? null;
@@ -481,7 +542,7 @@ export function ExecutionConsole({
                     {selected.evidence.map((item) => (
                       <li key={item.url}>
                         <a
-                          href={item.url}
+                          href={evidenceFileHref(detail.id, item.pathname)}
                           target="_blank"
                           rel="noreferrer"
                           className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted/40"
@@ -538,82 +599,52 @@ export function ExecutionConsole({
         </section>
       </div>
 
-      <Dialog
+      <ExecutionActDialog
         open={Boolean(pendingAction)}
-        onOpenChange={(open) => {
-          if (!open && !busy) {
-            setPendingAction(null);
-            setOccurredAt(null);
-          }
+        action={pendingAction}
+        stepName={selected?.name ?? "Paso"}
+        stepMeta={
+          selected
+            ? `${selected.workstreamName} · ${selected.activityName}`
+            : undefined
+        }
+        timezone={detail.timezone}
+        anchorStartAt={detail.anchorStartAt}
+        plannedStartAt={selected?.plannedStartAt ?? null}
+        minOccurredAt={
+          pendingAction
+            ? actTimeFloor({
+                action: pendingAction,
+                anchorStartAt: detail.anchorStartAt,
+                actualStartedAt: selected?.actualStartedAt,
+                actualEndedAt: selected?.actualEndedAt,
+              })
+            : null
+        }
+        minOccurredLabel={
+          pendingAction === "restart"
+            ? "No puede ser anterior al fin de la iteración anterior."
+            : pendingAction === "start"
+              ? "No puede ser anterior al T0 de la ejecución."
+              : selected?.actualStartedAt
+                ? "No puede ser anterior al inicio del paso."
+                : "No puede ser anterior al T0 de la ejecución."
+        }
+        occurredAt={occurredAt}
+        onOccurredAtChange={setOccurredAt}
+        comment={comment}
+        onCommentChange={setComment}
+        files={files}
+        onFilesChange={setFiles}
+        blobConfigured={detail.blobConfigured}
+        busy={busy}
+        error={error}
+        onCancel={closeActDialog}
+        onConfirm={() => {
+          if (!pendingAction || !occurredAt) return;
+          void runAction(pendingAction, { occurredAt });
         }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {pendingAction === "complete_fail"
-                ? "Marcar como Fallido"
-                : pendingAction === "force_success"
-                  ? "Forzar OK"
-                  : "Marcar como Exitoso"}
-            </DialogTitle>
-            <DialogDescription>
-              Indica cuándo terminó la actividad. El plan se redibuja con esa
-              hora.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>Hora de término</Label>
-              <DateTimePicker
-                value={occurredAt}
-                timezone={detail.timezone}
-                onChange={setOccurredAt}
-                placeholder="Elegir día y hora"
-                disabled={busy}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Por defecto: ahora. En simulacro ajústala al tiempo del ensayo.
-              </p>
-            </div>
-            {pendingAction === "force_success" ? (
-              <p className="text-xs text-amber-200">
-                Forzar requiere un comentario con el motivo (campo de arriba).
-              </p>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                setPendingAction(null);
-                setOccurredAt(null);
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={
-                busy ||
-                !occurredAt ||
-                !pendingAction ||
-                (pendingAction === "force_success" && !comment.trim())
-              }
-              variant={
-                pendingAction === "complete_fail" ? "destructive" : "default"
-              }
-              onClick={() => {
-                if (!pendingAction || !occurredAt) return;
-                void runAction(pendingAction, { occurredAt });
-              }}
-            >
-              {busy ? "Guardando…" : "Confirmar"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      />
     </div>
   );
 }

@@ -21,6 +21,14 @@ import { cn } from "@/lib/utils";
 export const DEFAULT_DURATION_MINUTES = 30;
 /** Densidad mínima del eje; si el viewport es más ancho, se escala para llenarlo. */
 const MIN_PIXELS_PER_MINUTE = 2.4;
+/**
+ * Ancho mínimo de barra: pasos cortos (p.ej. 5 min) seguirían siendo un punto
+ * a la densidad del eje. Se dibujan más anchos para poder leer/tocar; la
+ * duración real sigue en el title y en la modal de info.
+ */
+const MIN_BAR_WIDTH_PX = 56;
+/** Con flor abierta hace falta sitio para el trigger "?" + un poco de etiqueta. */
+const MIN_BAR_WIDTH_WITH_FLOWER_PX = 84;
 const GATE_COLORS = [
   "border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-300",
   "border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300",
@@ -377,6 +385,7 @@ function formatDurationCompact(totalMin: number) {
 }
 
 type LaneStatsDisplay = {
+  /** Conteo de grupo (bloques o actividades); null en el nivel actividad. */
   blocksLabel: string | null;
   stepsLabel: string;
   durationLabel: string;
@@ -394,7 +403,7 @@ export function TimesLaneHeader({
   expanded: boolean;
   onToggle: () => void;
   stats: LaneStatsDisplay;
-  tone: "workstream" | "block";
+  tone: "workstream" | "block" | "activity";
 }) {
   const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
@@ -404,16 +413,21 @@ export function TimesLaneHeader({
       aria-expanded={expanded}
       className={cn(
         "sticky left-0 right-0 flex w-full items-center gap-2 py-1.5 pr-3 text-left backdrop-blur transition-colors",
-        tone === "workstream"
-          ? "z-[5] border-l-2 border-l-cyan-500/80 bg-slate-700/55 pl-3 text-slate-100 hover:bg-slate-700/70"
-          : "z-[4] border-l-2 border-l-slate-500/70 bg-slate-800/40 pl-5 text-slate-200 hover:bg-slate-800/55",
+        tone === "workstream" &&
+          "z-[5] border-l-2 border-l-cyan-500/80 bg-slate-700/55 pl-3 text-slate-100 hover:bg-slate-700/70",
+        tone === "block" &&
+          "z-[4] border-l-2 border-l-slate-500/70 bg-slate-800/40 pl-5 text-slate-200 hover:bg-slate-800/55",
+        tone === "activity" &&
+          "z-[3] border-l-2 border-l-teal-500/50 bg-slate-900/35 pl-7 text-slate-300 hover:bg-slate-900/50",
       )}
     >
       <Chevron className="size-4 shrink-0 opacity-70" />
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-left font-semibold tracking-wide",
-          tone === "workstream" ? "text-sm" : "text-[13px]",
+          tone === "workstream" && "text-sm",
+          tone === "block" && "text-[13px]",
+          tone === "activity" && "text-xs font-medium",
         )}
       >
         {title}
@@ -429,7 +443,7 @@ export function TimesLaneHeader({
           .filter(Boolean)
           .join(" · ")}
       >
-        <span className="inline-block w-[4.75rem] text-right whitespace-nowrap">
+        <span className="inline-block w-[5.5rem] text-right whitespace-nowrap">
           {stats.blocksLabel ?? "\u00A0"}
         </span>
         <span className="inline-block w-[4.25rem] text-right whitespace-nowrap">
@@ -529,7 +543,11 @@ export function TimesView({
 
   const lanes = useMemo(() => {
     const visibleIds = new Set(rows.map((row) => row.id));
-    const byWs = new Map<string, Map<string, TimesViewRow[]>>();
+    // workstream → block → activity → steps
+    const byWs = new Map<
+      string,
+      Map<string, Map<string, TimesViewRow[]>>
+    >();
     for (const row of allRows) {
       if (!visibleIds.has(row.id)) continue;
       let byBlock = byWs.get(row.workstreamName);
@@ -537,9 +555,15 @@ export function TimesView({
         byBlock = new Map();
         byWs.set(row.workstreamName, byBlock);
       }
-      const list = byBlock.get(row.blockName) ?? [];
+      let byActivity = byBlock.get(row.blockName);
+      if (!byActivity) {
+        byActivity = new Map();
+        byBlock.set(row.blockName, byActivity);
+      }
+      const activityName = row.activityName?.trim() || "Sin actividad";
+      const list = byActivity.get(activityName) ?? [];
       list.push(row);
-      byBlock.set(row.blockName, list);
+      byActivity.set(activityName, list);
     }
 
     function earliestStart(laneRows: TimesViewRow[]) {
@@ -551,17 +575,34 @@ export function TimesView({
       return min;
     }
 
+    function sortSteps(stepRows: TimesViewRow[]) {
+      return [...stepRows].sort((a, b) => {
+        const aStart = items.get(a.id)?.startMin ?? Number.POSITIVE_INFINITY;
+        const bStart = items.get(b.id)?.startMin ?? Number.POSITIVE_INFINITY;
+        return aStart - bStart || a.order - b.order;
+      });
+    }
+
     return [...byWs.entries()]
       .map(([workstreamName, byBlock]) => {
         const blocks = [...byBlock.entries()]
-          .map(([blockName, blockRows]) => ({
-            blockName,
-            rows: [...blockRows].sort((a, b) => {
-              const aStart = items.get(a.id)?.startMin ?? Number.POSITIVE_INFINITY;
-              const bStart = items.get(b.id)?.startMin ?? Number.POSITIVE_INFINITY;
-              return aStart - bStart || a.order - b.order;
-            }),
-          }))
+          .map(([blockName, byActivity]) => {
+            const activities = [...byActivity.entries()]
+              .map(([activityName, activityRows]) => ({
+                activityName,
+                rows: sortSteps(activityRows),
+              }))
+              .sort(
+                (a, b) =>
+                  earliestStart(a.rows) - earliestStart(b.rows) ||
+                  a.activityName.localeCompare(b.activityName, "es"),
+              );
+            return {
+              blockName,
+              activities,
+              rows: activities.flatMap((activity) => activity.rows),
+            };
+          })
           .sort(
             (a, b) =>
               earliestStart(a.rows) - earliestStart(b.rows) ||
@@ -613,14 +654,17 @@ export function TimesView({
 
   function laneStatsFor(
     laneRows: TimesViewRow[],
-    blockCount?: number,
+    meta?: { blocks?: number; activities?: number },
   ): LaneStatsDisplay {
     const stats = computeLaneStats(laneRows, items);
+    let groupLabel: string | null = null;
+    if (meta?.blocks != null) {
+      groupLabel = `${meta.blocks} bloque${meta.blocks === 1 ? "" : "s"}`;
+    } else if (meta?.activities != null) {
+      groupLabel = `${meta.activities} actividad${meta.activities === 1 ? "" : "es"}`;
+    }
     return {
-      blocksLabel:
-        blockCount == null
-          ? null
-          : `${blockCount} bloque${blockCount === 1 ? "" : "s"}`,
+      blocksLabel: groupLabel,
       stepsLabel: `${stats.stepCount} paso${stats.stepCount === 1 ? "" : "s"}`,
       durationLabel: formatDurationCompact(stats.durationMin),
       rangeLabel:
@@ -628,6 +672,112 @@ export function TimesView({
           ? `${formatAxisLabel(stats.startMin, t0Ms, eventTimezone, useClockLabels)}–${formatAxisLabel(stats.endMin, t0Ms, eventTimezone, useClockLabels)}`
           : "—",
     };
+  }
+
+  function renderStepBars(stepRows: TimesViewRow[], laneKey: string) {
+    return (
+      <div
+        className="relative py-1.5"
+        style={{
+          width: chartWidth,
+          minHeight: stepRows.length * 32,
+        }}
+      >
+        {ticks.map((tick) => (
+          <div
+            key={`${laneKey}-${tick}`}
+            className="absolute inset-y-0 border-l border-border/40"
+            style={{ left: tick * pxPerMin }}
+          />
+        ))}
+        {gateMarkers.map((marker) => (
+          <div
+            key={`${laneKey}-${marker.id}`}
+            className={cn(
+              "pointer-events-none absolute inset-y-0 z-[1] border-l-2 border-dashed opacity-70",
+              gateColorClass(marker.colorIndex).split(" ")[0],
+            )}
+            style={{
+              left: marker.openMin * pxPerMin,
+            }}
+          />
+        ))}
+        {stepRows.map((row, index) => {
+          const item = items.get(row.id);
+          if (!item) return null;
+          const top = 2 + index * 30;
+          const left = item.startMin * pxPerMin;
+          const active = selectedId === row.id;
+          const flowerOpen = flowerOpenId === row.id;
+          const operable = row.operable !== false;
+          const naturalWidth = item.durationMin * pxPerMin;
+          const minWidth =
+            active && operable
+              ? MIN_BAR_WIDTH_WITH_FLOWER_PX
+              : MIN_BAR_WIDTH_PX;
+          const width = Math.max(minWidth, naturalWidth);
+          const openFlowerToRight = left + width < 220;
+          return (
+            <div
+              key={row.id}
+              className={cn(
+                "absolute flex h-6 items-center overflow-visible rounded-md border shadow-sm",
+                flowerOpen ? "z-50" : active ? "z-20" : "z-[2]",
+                item.usedDefaultDuration && "opacity-70",
+                getBarClass(row, active, flowerOpen),
+              )}
+              style={{ top, left, width }}
+              title={`${row.name} · ${item.durationMin} min · ${formatAxisLabel(item.startMin, t0Ms, eventTimezone, useClockLabels)}`}
+            >
+              <button
+                type="button"
+                disabled={!operable}
+                onClick={() => {
+                  if (!operable) return;
+                  onSelect(active ? null : row.id);
+                }}
+                className="min-w-0 flex-1 truncate py-0 pr-1.5 pl-2.5 text-left text-[11px] font-medium disabled:cursor-not-allowed"
+              >
+                {row.mine ? "★ " : ""}
+                {row.name}
+              </button>
+              {active && operable ? (
+                <div className="relative mr-0.5 shrink-0">
+                  <StepActionFlower
+                    open={flowerOpen}
+                    layout="horizontal"
+                    openToRight={openFlowerToRight}
+                    onToggle={() =>
+                      setFlowerOpenId((current) =>
+                        current === row.id ? null : row.id,
+                      )
+                    }
+                    onClose={() => setFlowerOpenId(null)}
+                    actions={[
+                      {
+                        key: "info",
+                        label: "Más información",
+                        icon: BadgeInfo,
+                        tone: "info",
+                        onClick: () => {
+                          setFlowerOpenId(null);
+                          if (showBuiltInInfoDialog) {
+                            setInfoRowId(row.id);
+                          } else {
+                            onOpenInfo?.(row);
+                          }
+                        },
+                      },
+                      ...getFlowerActions(row),
+                    ]}
+                  />
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   return (
@@ -710,10 +860,10 @@ export function TimesView({
                   expanded={wsExpanded}
                   onToggle={() => toggleCollapsed(wsKey)}
                   tone="workstream"
-                  stats={laneStatsFor(wsRows, blocks.length)}
+                  stats={laneStatsFor(wsRows, { blocks: blocks.length })}
                 />
                 {wsExpanded
-                  ? blocks.map(({ blockName, rows: blockRows }) => {
+                  ? blocks.map(({ blockName, activities, rows: blockRows }) => {
                       const laneKey = `${workstreamName}::${blockName}`;
                       const blockKey = `block:${laneKey}`;
                       const blockExpanded = !collapsed.has(blockKey);
@@ -724,119 +874,38 @@ export function TimesView({
                             expanded={blockExpanded}
                             onToggle={() => toggleCollapsed(blockKey)}
                             tone="block"
-                            stats={laneStatsFor(blockRows)}
+                            stats={laneStatsFor(blockRows, {
+                              activities: activities.length,
+                            })}
                           />
-                          {blockExpanded ? (
-                            <div
-                              className="relative py-1.5"
-                              style={{
-                                width: chartWidth,
-                                minHeight: blockRows.length * 32,
-                              }}
-                            >
-                              {ticks.map((tick) => (
-                                <div
-                                  key={`${laneKey}-${tick}`}
-                                  className="absolute inset-y-0 border-l border-border/40"
-                                  style={{ left: tick * pxPerMin }}
-                                />
-                              ))}
-                              {gateMarkers.map((marker) => (
-                                <div
-                                  key={`${laneKey}-${marker.id}`}
-                                  className={cn(
-                                    "pointer-events-none absolute inset-y-0 z-[1] border-l-2 border-dashed opacity-70",
-                                    gateColorClass(marker.colorIndex).split(
-                                      " ",
-                                    )[0],
-                                  )}
-                                  style={{
-                                    left: marker.openMin * pxPerMin,
-                                  }}
-                                />
-                              ))}
-                              {blockRows.map((row, index) => {
-                                const item = items.get(row.id);
-                                if (!item) return null;
-                                const top = 2 + index * 30;
-                                const left =
-                                  item.startMin * pxPerMin;
-                                const width = Math.max(
-                                  8,
-                                  item.durationMin * pxPerMin,
-                                );
-                                const active = selectedId === row.id;
-                                const flowerOpen = flowerOpenId === row.id;
-                                const operable = row.operable !== false;
-                                // ~2 botones: abrir a la derecha si no cabe a la izquierda.
-                                const openFlowerToRight = left + width < 120;
-                                return (
-                                  <div
-                                    key={row.id}
-                                    className={cn(
-                                      "absolute flex h-6 items-center rounded-md border shadow-sm",
-                                      flowerOpen
-                                        ? "z-50"
-                                        : active
-                                          ? "z-20"
-                                          : "z-[2]",
-                                      item.usedDefaultDuration && "opacity-70",
-                                      getBarClass(row, active, flowerOpen),
-                                    )}
-                                    style={{ top, left, width }}
-                                    title={`${row.name} · ${item.durationMin} min · ${formatAxisLabel(item.startMin, t0Ms, eventTimezone, useClockLabels)}`}
-                                  >
-                                    <button
-                                      type="button"
-                                      disabled={!operable}
-                                      onClick={() => {
-                                        if (!operable) return;
-                                        onSelect(active ? null : row.id);
-                                      }}
-                                      className="min-w-0 flex-1 truncate py-0 pl-2.5 pr-1.5 text-left text-[11px] font-medium disabled:cursor-not-allowed"
-                                    >
-                                      {row.mine ? "★ " : ""}
-                                      {row.name}
-                                    </button>
-                                    {active && operable ? (
-                                      <div className="relative mr-0.5 shrink-0">
-                                        <StepActionFlower
-                                          open={flowerOpen}
-                                          layout="horizontal"
-                                          openToRight={openFlowerToRight}
-                                          onToggle={() =>
-                                            setFlowerOpenId((current) =>
-                                              current === row.id
-                                                ? null
-                                                : row.id,
-                                            )
-                                          }
-                                          onClose={() => setFlowerOpenId(null)}
-                                          actions={[
-                                            {
-                                              key: "info",
-                                              label: "Más información",
-                                              icon: BadgeInfo,
-                                              tone: "info",
-                                              onClick: () => {
-                                                setFlowerOpenId(null);
-                                                if (showBuiltInInfoDialog) {
-                                                  setInfoRowId(row.id);
-                                                } else {
-                                                  onOpenInfo?.(row);
-                                                }
-                                              },
-                                            },
-                                            ...getFlowerActions(row),
-                                          ]}
-                                        />
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : null}
+                          {blockExpanded
+                            ? activities.map(
+                                ({ activityName, rows: activityRows }) => {
+                                  const activityKey = `activity:${laneKey}::${activityName}`;
+                                  const activityExpanded =
+                                    !collapsed.has(activityKey);
+                                  return (
+                                    <div key={activityKey}>
+                                      <TimesLaneHeader
+                                        title={activityName}
+                                        expanded={activityExpanded}
+                                        onToggle={() =>
+                                          toggleCollapsed(activityKey)
+                                        }
+                                        tone="activity"
+                                        stats={laneStatsFor(activityRows)}
+                                      />
+                                      {activityExpanded
+                                        ? renderStepBars(
+                                            activityRows,
+                                            activityKey,
+                                          )
+                                        : null}
+                                    </div>
+                                  );
+                                },
+                              )
+                            : null}
                         </div>
                       );
                     })
@@ -867,11 +936,8 @@ export function TimesView({
                   <div className="flex flex-wrap gap-1.5">
                     <Badge variant="outline">{infoRow.workstreamName}</Badge>
                     <Badge variant="secondary">{infoRow.blockName}</Badge>
+                    <Badge variant="outline">{infoRow.activityName}</Badge>
                   </div>
-                  <p>
-                    <span className="text-muted-foreground">Actividad: </span>
-                    {infoRow.activityName}
-                  </p>
                   {infoRow.status ? (
                     <p>
                       <span className="text-muted-foreground">Estado: </span>

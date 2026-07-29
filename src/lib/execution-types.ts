@@ -55,6 +55,8 @@ export const stepCommentSchema = z.object({
   authorId: z.string().min(1),
   authorLabel: z.string().min(1),
   createdAt: z.string().datetime(),
+  /** Hora declarada del acto (reloj de la ejecución), si aplica. */
+  occurredAt: z.string().datetime().optional(),
   kind: z
     .enum([
       "note",
@@ -78,6 +80,38 @@ export type RuntimeStepStatus = z.infer<typeof runtimeStepStatusSchema>;
 export type RuntimeStepAction = z.infer<typeof runtimeStepActionSchema>;
 export type EvidenceMeta = z.infer<typeof evidenceMetaSchema>;
 export type StepComment = z.infer<typeof stepCommentSchema>;
+
+/** Acto de una iteración (inicio o fin). */
+export type StepAct = {
+  at: string;
+  comment?: string;
+  evidence: EvidenceMeta[];
+  by: { id: string; label: string };
+  recordedAt: string;
+};
+
+export type StepIterationStatus =
+  | "EN_CURSO"
+  | "EXITOSA"
+  | "FALLIDA"
+  | "FORZADA_OK";
+
+export type StepIteration = {
+  n: number;
+  status: StepIterationStatus;
+  start: StepAct;
+  end?: StepAct & { outcome: "success" | "fail" | "force" };
+};
+
+export const STEP_ITERATION_STATUS_LABELS: Record<
+  StepIterationStatus,
+  string
+> = {
+  EN_CURSO: "En curso",
+  EXITOSA: "Exitosa",
+  FALLIDA: "Fallida",
+  FORZADA_OK: "Forzada OK",
+};
 
 export type RuntimeStepSummary = {
   id: string;
@@ -112,18 +146,63 @@ export type RuntimeStepSummary = {
   actualStartedAt: string | null;
   /** Fin real declarado al cerrar OK/fallo/forzado. */
   actualEndedAt: string | null;
+  /** Intentos Inicio→Fin; el más nuevo tiene n más alto. */
+  iterations: StepIteration[];
   comments: StepComment[];
   evidence: EvidenceMeta[];
   updatedAt: string;
 };
 
-/** Acciones de cierre que piden hora real de término. */
+/**
+ * Acciones que piden hora real del acto (reloj de la ejecución).
+ * En simulacro el reloj de pared no es el del ensayo; en real también conviene poder ajustarla.
+ */
 export function actionNeedsOccurredAt(action: RuntimeStepAction): boolean {
   return (
+    action === "start" ||
+    action === "restart" ||
     action === "complete_success" ||
     action === "complete_fail" ||
     action === "force_success"
   );
+}
+
+/** Inicio / rearranque: la hora pedida es de arranque, no de término. */
+export function actionNeedsStartTime(action: RuntimeStepAction): boolean {
+  return action === "start" || action === "restart";
+}
+
+/**
+ * Default del reloj al abrir un acto.
+ * No puede quedar antes del piso → max(ahora, piso).
+ */
+export function defaultActOccurredAt(floorIso?: string | null): string {
+  const nowMs = Date.now();
+  const floorMs = floorIso ? new Date(floorIso).getTime() : NaN;
+  if (Number.isFinite(floorMs) && floorMs > nowMs) {
+    return new Date(floorMs).toISOString();
+  }
+  return new Date(nowMs).toISOString();
+}
+
+/**
+ * Piso del reloj según el acto:
+ * - start: T0
+ * - restart: fin (o inicio) de la iteración anterior
+ * - cierre/forzar: inicio real del paso
+ */
+export function actTimeFloor(input: {
+  action: RuntimeStepAction;
+  anchorStartAt?: string | null;
+  actualStartedAt?: string | null;
+  actualEndedAt?: string | null;
+}): string | null {
+  const { action, anchorStartAt, actualStartedAt, actualEndedAt } = input;
+  if (action === "start") return anchorStartAt ?? null;
+  if (action === "restart") {
+    return actualEndedAt ?? actualStartedAt ?? anchorStartAt ?? null;
+  }
+  return actualStartedAt ?? anchorStartAt ?? null;
 }
 
 export type ExecutionGateSummary = {
@@ -173,6 +252,27 @@ export const RUNTIME_STEP_STATUS_LABELS: Record<RuntimeStepStatus, string> = {
   APROBADO: "Aprobado",
   RECHAZADO: "Rechazado",
 };
+
+/** Estado “de botón” para el encabezado del paso (vista info). */
+export function stepHeaderStatusLabel(step: {
+  status: RuntimeStepStatus;
+  forced: boolean;
+}): string {
+  if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
+    return "No iniciada";
+  }
+  if (step.status === "INICIADO" || step.status === "PENDIENTE_APROBACION") {
+    return "En curso";
+  }
+  if (step.status === "FALLIDO") return "Fallida";
+  if (step.status === "EXITOSO" || step.status === "APROBADO") {
+    return step.forced ? "Forzada OK" : "Exitosa";
+  }
+  if (step.status === "OMITIDO" || step.status === "SIMULADO") {
+    return "Omitida";
+  }
+  return RUNTIME_STEP_STATUS_LABELS[step.status];
+}
 
 /** Terminales según tipo de ejecución. */
 export function isTerminalStepStatus(

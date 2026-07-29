@@ -62,6 +62,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       action: parsed.data.action,
       comment: parsed.data.comment,
       occurredAt: parsed.data.occurredAt,
+      evidencePathnames: parsed.data.evidencePathnames,
       actorId: authResult.user.id,
       actorLabel: authResult.user.email,
     });

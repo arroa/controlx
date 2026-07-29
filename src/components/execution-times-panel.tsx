@@ -5,15 +5,17 @@ import {
   CirclePlay,
   CircleX,
   Layers,
-  Paperclip,
   RotateCcw,
   ShieldAlert,
-  X,
 } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore } from "react";
 
-import { DateTimePicker } from "@/components/datetime-picker";
-import type { OutcomeAction } from "@/components/executor-times-map";
+import {
+  EXECUTION_ACT_LABELS,
+  ExecutionActDialog,
+  type ExecutionActAction,
+} from "@/components/execution-act-dialog";
+import { ExecutionStepInfoDialog } from "@/components/execution-step-info-dialog";
 import { ExecutorTimesMap } from "@/components/executor-times-map";
 import type { FlowerAction } from "@/components/step-action-flower";
 import { TimesView, type TimesViewRow } from "@/components/times-view";
@@ -27,15 +29,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
 import type { GateSummary } from "@/lib/admin-data";
 import {
   EXECUTION_FOCUS_OPTIONS,
@@ -46,14 +39,19 @@ import {
   type ExecutionFocusMode,
 } from "@/lib/execution-focus";
 import {
-  RUNTIME_STEP_STATUS_LABELS,
+  actionNeedsStartTime,
+  actTimeFloor,
+  defaultActOccurredAt,
   unmetStepDependencies,
   type ExecutionDetail,
-  type RuntimeStepAction,
   type RuntimeStepStatus,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
 import { cn } from "@/lib/utils";
+
+type TimedAction = ExecutionActAction;
+
+const TIMED_ACTION_LABELS = EXECUTION_ACT_LABELS;
 
 function toTimesViewRow(
   step: RuntimeStepSummary,
@@ -101,12 +99,6 @@ type WorkstreamOption = {
   name: string;
   stepCount: number;
   mineCount: number;
-};
-
-const OUTCOME_LABELS: Record<OutcomeAction, string> = {
-  complete_success: "Exitoso",
-  complete_fail: "Fallido",
-  force_success: "Forzado OK",
 };
 
 const MOBILE_MQ = "(max-width: 767px)";
@@ -161,6 +153,8 @@ export function ExecutionTimesPanel({
   actorName,
   canOperateAny = false,
   canForceSuccess = false,
+  /** Si false (Panel), la flor no ofrece Iniciar/cerrar/rearrancar: solo info (+ Forzar OK admin). */
+  allowStepOperations = true,
   title = "Panel de tiempos",
 }: {
   initial: ExecutionDetail;
@@ -170,6 +164,7 @@ export function ExecutionTimesPanel({
   canOperateAny?: boolean;
   /** Event Admin (o SuperAdmin): puede Forzar un paso Fallido. */
   canForceSuccess?: boolean;
+  allowStepOperations?: boolean;
   title?: string;
 }) {
   const hasActor = Boolean(actorId);
@@ -189,7 +184,7 @@ export function ExecutionTimesPanel({
   const [infoId, setInfoId] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{
     stepId: string;
-    action: OutcomeAction;
+    action: TimedAction;
   } | null>(null);
   const [comment, setComment] = useState("");
   const [occurredAt, setOccurredAt] = useState<string | null>(null);
@@ -317,6 +312,41 @@ export function ExecutionTimesPanel({
   function getFlowerActions(row: TimesViewRow): FlowerAction[] {
     const step = stepsById.get(row.id);
     if (!step) return [];
+
+    // Panel = observación: sin acciones de ejecución en la flor.
+    if (!allowStepOperations) {
+      if (step.status === "FALLIDO" && canForceSuccess) {
+        return [
+          {
+            key: "force",
+            label: "Forzar OK",
+            icon: ShieldAlert,
+            tone: "neutral",
+            disabled: busy,
+            title: "Requiere comentario. Desbloquea dependientes.",
+            onClick: () => {
+              setSelectedId(null);
+              setError("");
+              setComment("");
+              setFiles([]);
+              setOccurredAt(
+                defaultActOccurredAt(
+                  actTimeFloor({
+                    action: "force_success",
+                    anchorStartAt: detail.anchorStartAt,
+                    actualStartedAt: step.actualStartedAt,
+                    actualEndedAt: step.actualEndedAt,
+                  }),
+                ),
+              );
+              setOutcome({ stepId: step.id, action: "force_success" });
+            },
+          },
+        ];
+      }
+      return [];
+    }
+
     const canAct = Boolean(row.mine) || canOperateAny;
     const actions: FlowerAction[] = [];
     if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
@@ -337,7 +367,18 @@ export function ExecutionTimesPanel({
         onClick: () => {
           if (!canAct || blocked) return;
           setSelectedId(null);
-          void runAction(step.id, "start");
+          setError("");
+          setComment("");
+          setFiles([]);
+          setOccurredAt(
+            defaultActOccurredAt(
+              actTimeFloor({
+                action: "start",
+                anchorStartAt: detail.anchorStartAt,
+              }),
+            ),
+          );
+          setOutcome({ stepId: step.id, action: "start" });
         },
       });
     }
@@ -355,7 +396,16 @@ export function ExecutionTimesPanel({
             setError("");
             setComment("");
             setFiles([]);
-            setOccurredAt(new Date().toISOString());
+            setOccurredAt(
+              defaultActOccurredAt(
+                actTimeFloor({
+                  action: "complete_success",
+                  anchorStartAt: detail.anchorStartAt,
+                  actualStartedAt: step.actualStartedAt,
+                  actualEndedAt: step.actualEndedAt,
+                }),
+              ),
+            );
             setOutcome({ stepId: step.id, action: "complete_success" });
           },
         },
@@ -371,7 +421,16 @@ export function ExecutionTimesPanel({
             setError("");
             setComment("");
             setFiles([]);
-            setOccurredAt(new Date().toISOString());
+            setOccurredAt(
+              defaultActOccurredAt(
+                actTimeFloor({
+                  action: "complete_fail",
+                  anchorStartAt: detail.anchorStartAt,
+                  actualStartedAt: step.actualStartedAt,
+                  actualEndedAt: step.actualEndedAt,
+                }),
+              ),
+            );
             setOutcome({ stepId: step.id, action: "complete_fail" });
           },
         },
@@ -388,7 +447,20 @@ export function ExecutionTimesPanel({
           title: "Vuelve a Iniciado para intentarlo de nuevo.",
           onClick: () => {
             setSelectedId(null);
-            void runAction(step.id, "restart");
+            setError("");
+            setComment("");
+            setFiles([]);
+            setOccurredAt(
+              defaultActOccurredAt(
+                actTimeFloor({
+                  action: "restart",
+                  anchorStartAt: detail.anchorStartAt,
+                  actualStartedAt: step.actualStartedAt,
+                  actualEndedAt: step.actualEndedAt,
+                }),
+              ),
+            );
+            setOutcome({ stepId: step.id, action: "restart" });
           },
         });
       }
@@ -405,7 +477,16 @@ export function ExecutionTimesPanel({
             setError("");
             setComment("");
             setFiles([]);
-            setOccurredAt(new Date().toISOString());
+            setOccurredAt(
+              defaultActOccurredAt(
+                actTimeFloor({
+                  action: "force_success",
+                  anchorStartAt: detail.anchorStartAt,
+                  actualStartedAt: step.actualStartedAt,
+                  actualEndedAt: step.actualEndedAt,
+                }),
+              ),
+            );
             setOutcome({ stepId: step.id, action: "force_success" });
           },
         });
@@ -453,49 +534,9 @@ export function ExecutionTimesPanel({
     window.setTimeout(() => setToast(""), 1600);
   }
 
-  async function runAction(stepId: string, action: RuntimeStepAction) {
-    const step = detail.steps.find((item) => item.id === stepId);
-    if (!step) return;
-    if (action === "force_success") {
-      if (!canForceSuccess) return;
-    } else {
-      const canAct = isMineStep(step, actorId) || canOperateAny;
-      if (!canAct) return;
-    }
-    setBusy(true);
-    setError("");
-    const response = await fetch(
-      `/api/executions/${detail.id}/steps/${step.id}/transition`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, comment: comment || undefined }),
-      },
-    ).catch(() => null);
-    const payload = response
-      ? ((await response.json()) as {
-          step?: RuntimeStepSummary;
-          steps?: RuntimeStepSummary[];
-          error?: string;
-        })
-      : null;
-    setBusy(false);
-    if (!response?.ok || !payload?.step) {
-      setError(payload?.error ?? "No fue posible actualizar el paso.");
-      setInfoId(stepId);
-      return;
-    }
-    setDetail((current) =>
-      payload.steps?.length
-        ? patchSteps(current, payload.steps)
-        : patchStep(current, payload.step!),
-    );
-    setComment("");
-    flash(action === "restart" ? "Rearrancado" : "Listo");
-  }
-
   async function confirmOutcome() {
     if (!outcome || !outcomeStep) return;
+    const isStart = actionNeedsStartTime(outcome.action);
     const isForce = outcome.action === "force_success";
     if (isForce) {
       if (!canForceSuccess) return;
@@ -508,7 +549,11 @@ export function ExecutionTimesPanel({
       if (!canAct) return;
     }
     if (!occurredAt) {
-      setError("Indica la hora en que terminó la actividad.");
+      setError(
+        isStart
+          ? "Indica la hora en que arrancó la actividad."
+          : "Indica la hora en que terminó la actividad.",
+      );
       return;
     }
 
@@ -516,6 +561,10 @@ export function ExecutionTimesPanel({
     setError("");
 
     let latest = outcomeStep;
+    const beforePathnames = new Set(
+      outcomeStep.evidence.map((item) => item.pathname),
+    );
+    const evidencePathnames: string[] = [];
     for (const file of files) {
       const body = new FormData();
       body.set("file", file);
@@ -539,6 +588,12 @@ export function ExecutionTimesPanel({
         return;
       }
       latest = uploadPayload.step;
+      for (const item of latest.evidence) {
+        if (!beforePathnames.has(item.pathname)) {
+          evidencePathnames.push(item.pathname);
+          beforePathnames.add(item.pathname);
+        }
+      }
       setDetail((current) => patchStep(current, latest));
     }
 
@@ -551,6 +606,9 @@ export function ExecutionTimesPanel({
           action: outcome.action,
           comment: comment.trim() || undefined,
           occurredAt,
+          evidencePathnames: evidencePathnames.length
+            ? evidencePathnames
+            : undefined,
         }),
       },
     ).catch(() => null);
@@ -563,7 +621,7 @@ export function ExecutionTimesPanel({
       : null;
     setBusy(false);
     if (!response?.ok || !payload?.step) {
-      setError(payload?.error ?? "No fue posible cerrar el paso.");
+      setError(payload?.error ?? "No fue posible actualizar el paso.");
       return;
     }
     setDetail((current) =>
@@ -572,7 +630,7 @@ export function ExecutionTimesPanel({
         : patchStep(current, payload.step!),
     );
     closeOutcome();
-    flash(OUTCOME_LABELS[outcome.action]);
+    flash(TIMED_ACTION_LABELS[outcome.action]);
   }
 
   return (
@@ -655,15 +713,22 @@ export function ExecutionTimesPanel({
             focusMode={effectiveFocus}
             canOperateAny={canOperateAny}
             canForceSuccess={canForceSuccess}
+            allowStepOperations={allowStepOperations}
             selectedId={selectedId}
             busy={busy}
             onSelect={setSelectedId}
-            onAction={(stepId, action) => void runAction(stepId, action)}
             onOutcome={(stepId, action) => {
+              const step = stepsById.get(stepId);
+              const floor = actTimeFloor({
+                action,
+                anchorStartAt: detail.anchorStartAt,
+                actualStartedAt: step?.actualStartedAt,
+                actualEndedAt: step?.actualEndedAt,
+              });
               setError("");
               setComment("");
               setFiles([]);
-              setOccurredAt(new Date().toISOString());
+              setOccurredAt(defaultActOccurredAt(floor));
               setOutcome({ stepId, action });
             }}
             onOpenInfo={setInfoId}
@@ -782,175 +847,58 @@ export function ExecutionTimesPanel({
         </DialogContent>
       </Dialog>
 
-      <Sheet
+      <ExecutionStepInfoDialog
         open={Boolean(infoStep)}
-        onOpenChange={(open) => {
-          if (!open) setInfoId(null);
-        }}
-      >
-        <SheetContent side="bottom" className="max-h-[75vh] overflow-y-auto">
-          {infoStep ? (
-            <>
-              <SheetHeader>
-                <SheetTitle>{infoStep.name}</SheetTitle>
-                <SheetDescription>
-                  {infoStep.workstreamName} · {infoStep.activityName}
-                  {" · "}
-                  {RUNTIME_STEP_STATUS_LABELS[infoStep.status]}
-                </SheetDescription>
-              </SheetHeader>
-              <div className="space-y-4 px-4 pb-6">
-                <section className="space-y-1">
-                  <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-                    Descripción corta
-                  </p>
-                  <p className="text-sm">
-                    {infoStep.description || "Sin descripción corta."}
-                  </p>
-                </section>
-                <section className="space-y-1">
-                  <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-                    Descripción larga
-                  </p>
-                  <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                    {infoStep.longDescription || "Sin descripción larga."}
-                  </p>
-                </section>
-                {actorId && infoStep.executorActorId !== actorId ? (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-                    Lo ejecuta {infoStep.executorName ?? "otro actor"}.
-                  </div>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+        step={infoStep}
+        timezone={detail.timezone}
+        executionId={detail.id}
+        viewerActorId={actorId}
+        onClose={() => setInfoId(null)}
+      />
 
-      <Dialog
+      <ExecutionActDialog
         open={Boolean(outcome)}
-        onOpenChange={(open) => {
-          if (!open && !busy) closeOutcome();
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              Marcar como {outcome ? OUTCOME_LABELS[outcome.action] : ""}
-            </DialogTitle>
-            <DialogDescription>
-              {outcome?.action === "force_success"
-                ? `${outcomeStep?.name ?? "Paso"} · el Forzado requiere motivo y desbloquea dependientes.`
-                : `${outcomeStep?.name ?? "Paso"} · indica cuándo terminó (el plan se redibuja con esa hora).`}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>Hora de término</Label>
-              <DateTimePicker
-                value={occurredAt}
-                timezone={detail.timezone}
-                onChange={setOccurredAt}
-                placeholder="Elegir día y hora"
-                disabled={busy}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Por defecto: ahora (reloj del dispositivo). En simulacro ajústala
-                al tiempo del ensayo.
-              </p>
-            </div>
-
-            <Textarea
-              value={comment}
-              onChange={(event) => setComment(event.target.value)}
-              placeholder={
-                outcome?.action === "force_success"
-                  ? "Motivo del forzado (obligatorio)…"
-                  : "Nota opcional…"
-              }
-              rows={2}
-            />
-
-            <div className="space-y-2">
-              <label className="flex cursor-pointer items-center gap-2 rounded-md border border-dashed px-3 py-2 text-sm hover:bg-muted/40">
-                <Paperclip className="size-4 shrink-0" />
-                <span>
-                  {detail.blobConfigured
-                    ? "Adjuntar archivo(s)"
-                    : "Adjuntos no disponibles (Blob sin configurar)"}
-                </span>
-                <input
-                  type="file"
-                  multiple
-                  className="sr-only"
-                  disabled={!detail.blobConfigured || busy}
-                  accept="image/*,application/pdf"
-                  onChange={(event) => {
-                    const next = [...(event.target.files ?? [])];
-                    if (!next.length) return;
-                    setFiles((current) => [...current, ...next]);
-                    event.target.value = "";
-                  }}
-                />
-              </label>
-              {files.length ? (
-                <ul className="space-y-1">
-                  {files.map((file, index) => (
-                    <li
-                      key={`${file.name}-${index}`}
-                      className="flex items-center gap-2 rounded-md bg-muted/40 px-2 py-1 text-xs"
-                    >
-                      <span className="min-w-0 flex-1 truncate">
-                        {file.name}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label="Quitar archivo"
-                        disabled={busy}
-                        onClick={() =>
-                          setFiles((current) =>
-                            current.filter((_, i) => i !== index),
-                          )
-                        }
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={closeOutcome}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={
-                busy ||
-                !occurredAt ||
-                (outcome?.action === "force_success" && !comment.trim())
-              }
-              variant={
-                outcome?.action === "complete_fail" ? "destructive" : "default"
-              }
-              onClick={() => void confirmOutcome()}
-            >
-              {busy
-                ? "Guardando…"
-                : `Confirmar ${outcome ? OUTCOME_LABELS[outcome.action] : ""}`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        action={outcome?.action ?? null}
+        stepName={outcomeStep?.name ?? "Paso"}
+        stepMeta={
+          outcomeStep
+            ? `${outcomeStep.workstreamName} · ${outcomeStep.activityName}`
+            : undefined
+        }
+        timezone={detail.timezone}
+        anchorStartAt={detail.anchorStartAt}
+        plannedStartAt={outcomeStep?.plannedStartAt ?? null}
+        minOccurredAt={
+          outcome
+            ? actTimeFloor({
+                action: outcome.action,
+                anchorStartAt: detail.anchorStartAt,
+                actualStartedAt: outcomeStep?.actualStartedAt,
+                actualEndedAt: outcomeStep?.actualEndedAt,
+              })
+            : null
+        }
+        minOccurredLabel={
+          outcome?.action === "restart"
+            ? "No puede ser anterior al fin de la iteración anterior."
+            : outcome && actionNeedsStartTime(outcome.action)
+              ? "No puede ser anterior al T0 de la ejecución."
+              : outcomeStep?.actualStartedAt
+                ? "No puede ser anterior al inicio del paso."
+                : "No puede ser anterior al T0 de la ejecución."
+        }
+        occurredAt={occurredAt}
+        onOccurredAtChange={setOccurredAt}
+        comment={comment}
+        onCommentChange={setComment}
+        files={files}
+        onFilesChange={setFiles}
+        blobConfigured={detail.blobConfigured}
+        busy={busy}
+        error={error}
+        onCancel={closeOutcome}
+        onConfirm={() => void confirmOutcome()}
+      />
     </div>
   );
 }

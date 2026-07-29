@@ -1,18 +1,30 @@
 import "server-only";
 
-import { del, list, put } from "@vercel/blob";
+import { del, get, list, put } from "@vercel/blob";
 
-export const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024;
-export const EVIDENCE_MAX_PER_STEP = 8;
-export const EVIDENCE_ALLOWED_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "application/pdf",
-] as const;
+import { EVIDENCE_MAX_BYTES } from "@/lib/evidence-limits";
+
+export { EVIDENCE_MAX_BYTES, EVIDENCE_MAX_PER_STEP } from "@/lib/evidence-limits";
 
 export function isBlobConfigured() {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
+function blobToken() {
+  return process.env.BLOB_READ_WRITE_TOKEN;
+}
+
+/** ¿El pathname pertenece a evidencias de esta ejecución? */
+export function isEvidencePathForExecution(
+  executionId: string,
+  pathname: string,
+) {
+  const prefix = `evidences/${executionId}/`;
+  return (
+    pathname.startsWith(prefix) &&
+    !pathname.includes("..") &&
+    !pathname.includes("\\")
+  );
 }
 
 export async function uploadEvidenceBlob(input: {
@@ -26,33 +38,44 @@ export async function uploadEvidenceBlob(input: {
       "Evidencias no configuradas: falta BLOB_READ_WRITE_TOKEN en el entorno.",
     );
   }
+  if (input.file.size <= 0) {
+    throw new Error("El archivo está vacío.");
+  }
   if (input.file.size > EVIDENCE_MAX_BYTES) {
     throw new Error("El archivo supera el límite de 10 MB.");
-  }
-  if (
-    !EVIDENCE_ALLOWED_TYPES.includes(
-      input.file.type as (typeof EVIDENCE_ALLOWED_TYPES)[number],
-    )
-  ) {
-    throw new Error("Solo se permiten JPG, PNG, WEBP o PDF.");
   }
 
   const safeName = input.file.name.replace(/[^\w.\-]+/g, "_").slice(0, 80);
   const pathname = `evidences/${input.executionId}/${input.stepId}/${Date.now()}-${safeName}`;
+  const contentType = input.file.type || "application/octet-stream";
   const blob = await put(pathname, input.file, {
-    access: "public",
-    contentType: input.file.type,
-    token: process.env.BLOB_READ_WRITE_TOKEN,
+    access: "private",
+    contentType,
+    token: blobToken(),
   });
 
   return {
     url: blob.url,
     pathname: blob.pathname,
-    contentType: input.file.type,
+    contentType,
     size: input.file.size,
     uploadedBy: input.uploadedBy,
     uploadedAt: new Date().toISOString(),
   };
+}
+
+/** Lee un blob privado (stream) para servirlo tras autenticación. */
+export async function getEvidenceBlob(pathname: string) {
+  if (!isBlobConfigured()) {
+    throw new Error(
+      "Evidencias no configuradas: falta BLOB_READ_WRITE_TOKEN en el entorno.",
+    );
+  }
+
+  return get(pathname, {
+    access: "private",
+    token: blobToken(),
+  });
 }
 
 /** Borra evidencias en Blob de una ejecución (best-effort). */
@@ -62,7 +85,7 @@ export async function deleteExecutionEvidenceBlobs(
   if (!isBlobConfigured() || !executionId.trim()) return;
 
   try {
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    const token = blobToken();
     const prefix = `evidences/${executionId}/`;
     let cursor: string | undefined;
 
