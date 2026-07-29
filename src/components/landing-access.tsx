@@ -2,7 +2,7 @@
 
 import { ArrowRight, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ControlXSignInForm } from "@/components/controlx-sign-in-form";
 import { Button } from "@/components/ui/button";
@@ -33,15 +33,22 @@ export function LandingAccess({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Si ya hay sesión (p. ej. bounce post-OTP a /), no dejar al usuario
+  // clavado en la landing con un botón extra.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    router.replace(destination);
+  }, [destination, isAuthenticated, router]);
+
   if (isAuthenticated) {
     return (
       <Button
         size="lg"
         className="h-11 min-h-11 px-5 text-base"
-        onClick={() => router.push(destination)}
+        disabled
       >
-        Ir al sistema
-        <ArrowRight className="size-4" />
+        <LoaderCircle className="size-4 animate-spin" />
+        Entrando…
       </Button>
     );
   }

@@ -2,11 +2,17 @@ import { redirect } from "next/navigation";
 
 import { ControlXSignInForm } from "@/components/controlx-sign-in-form";
 import { LoginChangelogModal } from "@/components/login-changelog-modal";
+import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
 
 export default async function SignInPage() {
   if (isDevBypassEnabled()) {
     redirect("/");
+  }
+
+  // Ya hay sesión (p. ej. cookie lista tras un reintento): ir al hub.
+  if (await getCurrentUser()) {
+    redirect("/entrar");
   }
 
   return (

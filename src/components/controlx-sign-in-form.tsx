@@ -13,14 +13,31 @@ import { Label } from "@/components/ui/label";
 
 type Step = "email" | "code";
 
+type SetActiveFn = (params: {
+  session: string | null;
+  redirectUrl?: string;
+  navigate?: (opts: {
+    decorateUrl: (url: string) => string;
+  }) => void | Promise<void>;
+}) => Promise<void>;
+
 type ClerkSignInFormInnerProps = {
   signIn: SignInResource;
-  setActive: (params: { session: string | null }) => Promise<void>;
+  setActive: SetActiveFn;
   destination: string;
 };
 
 function normalizeIdentifier(email: string) {
   return email.trim().toLowerCase();
+}
+
+function goToDestination(url: string) {
+  // decorateUrl a veces devuelve URL absoluta (refresh de cookie / Safari ITP).
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    window.location.href = url;
+    return;
+  }
+  window.location.assign(url);
 }
 
 function ClerkSignInFormInner({
@@ -38,9 +55,21 @@ function ClerkSignInFormInner({
 
   async function finishSignIn(sessionId: string) {
     setLoading(true);
-    await setActive({ session: sessionId });
-    // Navegación completa: asegura cookie de sesión antes de resolver el destino.
-    window.location.assign(destination);
+    // Navegar DENTRO de setActive: evita el race en PWA/móvil donde
+    // /entrar veía sesión vacía y devolvía a la landing.
+    let navigated = false;
+    await setActive({
+      session: sessionId,
+      redirectUrl: destination,
+      navigate: async ({ decorateUrl }) => {
+        navigated = true;
+        goToDestination(decorateUrl(destination));
+      },
+    });
+    // Fallback si el setActive legacy no dispara navigate/redirectUrl.
+    if (!navigated) {
+      goToDestination(destination);
+    }
   }
 
   async function clearClerkState() {
