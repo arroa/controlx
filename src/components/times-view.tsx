@@ -65,14 +65,13 @@ export type TimesViewRow = {
   /** Campos opcionales de runtime (ejecución). Ausentes en el planificador. */
   status?: string;
   mine?: boolean;
-  isNext?: boolean;
   /** false = el paso no se puede seleccionar/operar (p. ej. no es mío ni admin). */
   operable?: boolean;
   actualStartedAt?: string | null;
   actualEndedAt?: string | null;
 };
 
-type ScheduleItem = {
+export type ScheduleItem = {
   id: string;
   startMin: number;
   endMin: number;
@@ -104,7 +103,7 @@ function stepsForTargets(
   );
 }
 
-function computeSchedule(
+export function computeSchedule(
   rows: TimesViewRow[],
   gates: GateSummary[],
   dayDStartAt: string | null,

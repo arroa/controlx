@@ -32,9 +32,9 @@ import {
 import type { GateSummary } from "@/lib/admin-data";
 import {
   EXECUTION_FOCUS_OPTIONS,
+  RUNTIME_BAR_LEGEND,
   filterStepsByFocus,
   isMineStep,
-  nextMineStepId,
   runtimeBarTone,
   type ExecutionFocusMode,
 } from "@/lib/execution-focus";
@@ -56,7 +56,6 @@ const TIMED_ACTION_LABELS = EXECUTION_ACT_LABELS;
 function toTimesViewRow(
   step: RuntimeStepSummary,
   actorId: string | null,
-  nextId: string | null,
 ): TimesViewRow {
   const mine = isMineStep(step, actorId);
   return {
@@ -76,7 +75,6 @@ function toTimesViewRow(
     order: step.order,
     status: step.status,
     mine,
-    isNext: step.id === nextId,
     actualStartedAt: step.actualStartedAt,
     actualEndedAt: step.actualEndedAt,
     // Siempre se puede abrir la flor; las acciones de guardar se deshabilitan aparte.
@@ -244,15 +242,6 @@ export function ExecutionTimesPanel({
 
   const effectiveFocus: ExecutionFocusMode = hasActor ? focusMode : "all";
   const dimOthers = effectiveFocus === "highlight-mine";
-  const [mountMs] = useState(() => Date.now());
-  const t0Ms = detail.anchorStartAt
-    ? new Date(detail.anchorStartAt).getTime()
-    : mountMs;
-
-  const nextId = useMemo(
-    () => nextMineStepId(detail.steps, actorId, t0Ms),
-    [detail.steps, actorId, t0Ms],
-  );
 
   const stepsById = useMemo(
     () => new Map(detail.steps.map((step) => [step.id, step])),
@@ -260,8 +249,8 @@ export function ExecutionTimesPanel({
   );
 
   const allTimesRows = useMemo(
-    () => detail.steps.map((step) => toTimesViewRow(step, actorId, nextId)),
-    [detail.steps, actorId, nextId],
+    () => detail.steps.map((step) => toTimesViewRow(step, actorId)),
+    [detail.steps, actorId],
   );
 
   const timesGates = useMemo<GateSummary[]>(
@@ -301,11 +290,9 @@ export function ExecutionTimesPanel({
       runtimeBarTone({
         status: (row.status ?? "PLANIFICADO") as RuntimeStepStatus,
         mine,
-        isNext: Boolean(row.isNext),
         dimOthers,
       }),
       active && "ring-2 ring-white/70",
-      dimOthers && !mine && "opacity-70",
     );
   }
 
@@ -694,6 +681,21 @@ export function ExecutionTimesPanel({
           ) : null}
         </div>
 
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+          <span className="font-medium text-foreground/80">★ tuyo</span>
+          {RUNTIME_BAR_LEGEND.filter((item) =>
+            dimOthers ? true : item.key !== "other",
+          ).map((item) => (
+            <span key={item.key} className="inline-flex items-center gap-1">
+              <span
+                className={cn("size-2.5 shrink-0 rounded-sm border", item.swatch)}
+                aria-hidden
+              />
+              {item.label}
+            </span>
+          ))}
+        </div>
+
         {error ? (
           <p role="alert" className="text-xs text-red-300">
             {error}
@@ -709,6 +711,7 @@ export function ExecutionTimesPanel({
             actorId={actorId}
             timezone={detail.timezone}
             anchorStartAt={detail.anchorStartAt}
+            gates={timesGates}
             workstreamIds={workstreamIds}
             focusMode={effectiveFocus}
             canOperateAny={canOperateAny}

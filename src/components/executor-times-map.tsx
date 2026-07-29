@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowLeft,
   BadgeInfo,
   ChevronRight,
   CircleCheck,
@@ -16,12 +17,16 @@ import {
   type FlowerAction,
 } from "@/components/step-action-flower";
 import {
+  computeSchedule,
+  type TimesViewRow,
+} from "@/components/times-view";
+import {
   filterStepsByFocus,
   isMineStep,
-  nextMineStepId,
   runtimeBarTone,
   type ExecutionFocusMode,
 } from "@/lib/execution-focus";
+import type { GateSummary } from "@/lib/admin-data";
 import {
   unmetStepDependencies,
   type RuntimeStepSummary,
@@ -38,23 +43,83 @@ export type OutcomeAction =
 
 const DEFAULT_DURATION_MINUTES = 30;
 const SLOT_MINUTES = 15;
-const ROW_PX = 36;
-const TIME_COL_PX = 52;
-/** Ancho cómodo (texto legible + flor). */
-const STEP_COL_MAX_PX = 96;
+/** Alto por slot de 15 min (baja densidad = más aire). */
+const ROW_PX = 52;
 /**
- * Mínimo usable: se lee el nombre en 1–2 líneas y cabe la “i”.
- * Por debajo de esto el scroll horizontal es mejor que aplastar más.
+ * Alto mínimo visible de tarjeta de paso, aunque dure 1–5 min.
+ * Debe caber título + actividad sin verse como una raya.
  */
-const STEP_COL_MIN_PX = 64;
+const MIN_CARD_PX = 52;
+const TIME_COL_PX = 52;
+/** Ancho fijo de columna de jerarquía (WS / bloque / actividad). */
+const LANE_COL_PX = 88;
+const DAY_STICKY_H = 40;
+const LANE_STICKY_H = 48;
 
-function computeStepColPx(containerWidth: number, columnCount: number) {
-  if (columnCount <= 0) return STEP_COL_MAX_PX;
-  const available = Math.max(0, containerWidth - TIME_COL_PX);
-  const ideal = available / columnCount;
-  return Math.round(
-    Math.min(STEP_COL_MAX_PX, Math.max(STEP_COL_MIN_PX, ideal)),
-  );
+type DrillPath =
+  | { kind: "root" }
+  | {
+      kind: "workstream";
+      workstreamId: string;
+      workstreamName: string;
+    }
+  | {
+      kind: "block";
+      workstreamId: string;
+      workstreamName: string;
+      blockId: string;
+      blockName: string;
+    }
+  | {
+      kind: "activity";
+      workstreamId: string;
+      workstreamName: string;
+      blockId: string;
+      blockName: string;
+      activityId: string;
+      activityName: string;
+    };
+
+type LaneStats = {
+  total: number;
+  ok: number;
+  fail: number;
+  running: number;
+};
+
+type Lane = {
+  key: string;
+  label: string;
+  stats: LaneStats;
+  /** Drill target al tocar el chip / envelope. */
+  drill: DrillPath;
+};
+
+function emptyStats(): LaneStats {
+  return { total: 0, ok: 0, fail: 0, running: 0 };
+}
+
+function addStepToStats(stats: LaneStats, step: RuntimeStepSummary) {
+  stats.total += 1;
+  if (
+    step.status === "EXITOSO" ||
+    step.status === "APROBADO" ||
+    step.status === "OMITIDO" ||
+    step.status === "SIMULADO"
+  ) {
+    stats.ok += 1;
+  } else if (step.status === "FALLIDO") {
+    stats.fail += 1;
+  } else if (
+    step.status === "INICIADO" ||
+    step.status === "PENDIENTE_APROBACION"
+  ) {
+    stats.running += 1;
+  }
+}
+
+function formatLaneStatsTitle(stats: LaneStats): string {
+  return `${stats.total} pasos · ${stats.ok} ok · ${stats.fail} fallidos · ${stats.running} en curso`;
 }
 
 type TimedStep = {
@@ -65,9 +130,12 @@ type TimedStep = {
   durationMin: number;
   dayKey: string;
   mine: boolean;
-  /** Siguiente en tu secuencia (en curso o próximo a ejecutar). */
-  isNext: boolean;
   column: number;
+};
+
+type TimedItem = TimedStep & {
+  /** Presente en envelopes de WS/bloque (no en pasos). */
+  laneKey?: string;
 };
 
 function dayKeyFromMs(ms: number, timezone: string) {
@@ -81,7 +149,6 @@ function dayKeyFromMs(ms: number, timezone: string) {
 
 function dayLabelFromKey(dayKey: string, timezone: string) {
   const [y, m, d] = dayKey.split("-").map(Number);
-  // Mediodía UTC aproximado para etiquetar el día civil sin pelear DST extremo.
   const probe = new Date(Date.UTC(y, m - 1, d, 16, 0, 0));
   return new Intl.DateTimeFormat("es-PE", {
     timeZone: timezone,
@@ -108,16 +175,12 @@ function ceilToSlot(ms: number) {
   return Math.ceil(ms / (SLOT_MINUTES * 60_000)) * (SLOT_MINUTES * 60_000);
 }
 
-/**
- * Colores del mapa: ver runtimeBarTone.
- */
 function barTone(
   status: RuntimeStepSummary["status"],
   mine: boolean,
-  isNext: boolean,
   dimOthers: boolean,
 ) {
-  return runtimeBarTone({ status, mine, isNext, dimOthers });
+  return runtimeBarTone({ status, mine, dimOthers });
 }
 
 function startBlockedLabel(
@@ -255,14 +318,71 @@ function flowerActionsFor(input: {
   return actions;
 }
 
-/** Empaqueta pasos en columnas sin solape. Sin tope: el scroll horizontal cubre el resto. */
-function assignColumns(items: Omit<TimedStep, "column">[]): TimedStep[] {
+function stepTimeBounds(
+  step: RuntimeStepSummary,
+  t0Ms: number,
+  schedule?: Map<string, { startMin: number; endMin: number }>,
+): { startMs: number; endMs: number } {
+  const scheduled = schedule?.get(step.id);
+  if (scheduled) {
+    return {
+      startMs: t0Ms + scheduled.startMin * 60_000,
+      endMs: t0Ms + scheduled.endMin * 60_000,
+    };
+  }
+  const durationMin = step.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
+  const startMs = step.actualStartedAt
+    ? new Date(step.actualStartedAt).getTime()
+    : step.plannedStartAt
+      ? new Date(step.plannedStartAt).getTime()
+      : t0Ms;
+  const endMs = step.actualEndedAt
+    ? new Date(step.actualEndedAt).getTime()
+    : startMs + durationMin * 60_000;
+  return {
+    startMs: Math.min(startMs, endMs),
+    endMs: Math.max(startMs, endMs),
+  };
+}
+
+function toScheduleRow(step: RuntimeStepSummary): TimesViewRow {
+  return {
+    id: step.id,
+    name: step.name,
+    workstreamId: step.workstreamId,
+    blockId: step.blockId,
+    workstreamName: step.workstreamName,
+    blockName: step.blockName,
+    activityName: step.activityName,
+    plannedStartAt: step.plannedStartAt,
+    estimatedDurationMinutes: step.estimatedDurationMinutes,
+    dependencyStepIds: step.dependencyStepIds,
+    producesGateId: step.producesGateId,
+    requiresGateIds: step.requiresGateIds,
+    order: step.order,
+    actualStartedAt: step.actualStartedAt,
+    actualEndedAt: step.actualEndedAt,
+  };
+}
+
+function overlaps(
+  startMs: number,
+  endMs: number,
+  rangeStart: number,
+  rangeEnd: number,
+) {
+  return startMs < rangeEnd && endMs > rangeStart;
+}
+
+/** Empaqueta ítems que se solapan en columnas distintas (como el mapa original). */
+function assignColumns<T extends { startMs: number; endMs: number }>(
+  items: T[],
+): Array<T & { column: number }> {
   const sorted = [...items].sort(
     (a, b) => a.startMs - b.startMs || a.endMs - b.endMs,
   );
   const colEnds: number[] = [];
-  const result: TimedStep[] = [];
-
+  const result: Array<T & { column: number }> = [];
   for (const item of sorted) {
     let col = colEnds.findIndex((end) => end <= item.startMs);
     if (col === -1) {
@@ -276,19 +396,167 @@ function assignColumns(items: Omit<TimedStep, "column">[]): TimedStep[] {
   return result;
 }
 
+function filterByDrill(
+  steps: RuntimeStepSummary[],
+  drill: DrillPath,
+): RuntimeStepSummary[] {
+  if (drill.kind === "root") return steps;
+  if (drill.kind === "workstream") {
+    return steps.filter((s) => s.workstreamId === drill.workstreamId);
+  }
+  if (drill.kind === "block") {
+    return steps.filter(
+      (s) =>
+        s.workstreamId === drill.workstreamId && s.blockId === drill.blockId,
+    );
+  }
+  return steps.filter(
+    (s) =>
+      s.workstreamId === drill.workstreamId &&
+      s.blockId === drill.blockId &&
+      s.activityId === drill.activityId,
+  );
+}
+
+function buildLanes(
+  scoped: RuntimeStepSummary[],
+  drill: DrillPath,
+  t0Ms: number,
+  rangeStart: number,
+  rangeEnd: number,
+  schedule: Map<string, { startMin: number; endMin: number }>,
+): Lane[] {
+  const alive = scoped.filter((step) => {
+    const { startMs, endMs } = stepTimeBounds(step, t0Ms, schedule);
+    return overlaps(startMs, endMs, rangeStart, rangeEnd);
+  });
+  const source = alive.length ? alive : scoped;
+
+  function statsFor(predicate: (step: RuntimeStepSummary) => boolean): LaneStats {
+    const stats = emptyStats();
+    for (const step of scoped) {
+      if (predicate(step)) addStepToStats(stats, step);
+    }
+    return stats;
+  }
+
+  if (drill.kind === "activity") {
+    return [
+      {
+        key: `activity:${drill.activityId}`,
+        label: drill.activityName,
+        stats: statsFor(() => true),
+        drill,
+      },
+    ];
+  }
+
+  if (drill.kind === "block") {
+    const map = new Map<string, Lane>();
+    for (const step of source) {
+      if (map.has(step.activityId)) continue;
+      map.set(step.activityId, {
+        key: `activity:${step.activityId}`,
+        label: step.activityName,
+        stats: statsFor((s) => s.activityId === step.activityId),
+        drill: {
+          kind: "activity",
+          workstreamId: drill.workstreamId,
+          workstreamName: drill.workstreamName,
+          blockId: drill.blockId,
+          blockName: drill.blockName,
+          activityId: step.activityId,
+          activityName: step.activityName,
+        },
+      });
+    }
+    return [...map.values()].sort((a, b) =>
+      a.label.localeCompare(b.label, "es"),
+    );
+  }
+
+  if (drill.kind === "workstream") {
+    const map = new Map<string, Lane>();
+    for (const step of source) {
+      if (map.has(step.blockId)) continue;
+      map.set(step.blockId, {
+        key: `block:${step.blockId}`,
+        label: step.blockName,
+        stats: statsFor((s) => s.blockId === step.blockId),
+        drill: {
+          kind: "block",
+          workstreamId: drill.workstreamId,
+          workstreamName: drill.workstreamName,
+          blockId: step.blockId,
+          blockName: step.blockName,
+        },
+      });
+    }
+    return [...map.values()].sort((a, b) =>
+      a.label.localeCompare(b.label, "es"),
+    );
+  }
+
+  const map = new Map<string, Lane>();
+  for (const step of source) {
+    if (map.has(step.workstreamId)) continue;
+    map.set(step.workstreamId, {
+      key: `ws:${step.workstreamId}`,
+      label: step.workstreamName,
+      stats: statsFor((s) => s.workstreamId === step.workstreamId),
+      drill: {
+        kind: "workstream",
+        workstreamId: step.workstreamId,
+        workstreamName: step.workstreamName,
+      },
+    });
+  }
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, "es"));
+}
+
+function laneKeyForStep(step: RuntimeStepSummary, drill: DrillPath): string {
+  if (drill.kind === "activity") return `activity:${drill.activityId}`;
+  if (drill.kind === "block") return `activity:${step.activityId}`;
+  if (drill.kind === "workstream") return `block:${step.blockId}`;
+  return `ws:${step.workstreamId}`;
+}
+
+function parentDrill(drill: DrillPath): DrillPath | null {
+  if (drill.kind === "root") return null;
+  if (drill.kind === "workstream") return { kind: "root" };
+  if (drill.kind === "block") {
+    return {
+      kind: "workstream",
+      workstreamId: drill.workstreamId,
+      workstreamName: drill.workstreamName,
+    };
+  }
+  return {
+    kind: "block",
+    workstreamId: drill.workstreamId,
+    workstreamName: drill.workstreamName,
+    blockId: drill.blockId,
+    blockName: drill.blockName,
+  };
+}
+
+function drillTitle(drill: DrillPath): string {
+  if (drill.kind === "root") return "Workstreams";
+  if (drill.kind === "workstream") return drill.workstreamName;
+  if (drill.kind === "block") return drill.blockName;
+  return drill.activityName;
+}
+
 export function ExecutorTimesMap({
   steps,
   actorId,
   timezone,
   anchorStartAt,
-  /** null = todos los workstreams; array = solo esos ids */
+  gates = [],
   workstreamIds,
   focusMode = "all",
-  /** Si true, se pueden operar pasos ajenos (admin). */
   canOperateAny = false,
-  /** Event Admin: Forzar OK en Fallido. */
   canForceSuccess = false,
-  /** Panel: false = sin Iniciar/cerrar en la flor. */
   allowStepOperations = true,
   selectedId,
   busy,
@@ -300,6 +568,8 @@ export function ExecutorTimesMap({
   actorId: string | null;
   timezone: string;
   anchorStartAt: string | null;
+  /** Mismos gates que Times: calendariza deps/aperturas. */
+  gates?: GateSummary[];
   workstreamIds: string[] | null;
   focusMode?: ExecutionFocusMode;
   canOperateAny?: boolean;
@@ -315,42 +585,231 @@ export function ExecutorTimesMap({
   const dimOthers = focusMode === "highlight-mine";
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [flowerOpenId, setFlowerOpenId] = useState<string | null>(null);
+  const [drill, setDrill] = useState<DrillPath>({ kind: "root" });
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(360);
   const [moreToRight, setMoreToRight] = useState(false);
+  const [visibleRange, setVisibleRange] = useState<{
+    startMs: number;
+    endMs: number;
+  } | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => window.clearInterval(id);
   }, []);
 
+  /** Misma calendarización que el Panel (deps + gates), sobre todos los pasos. */
+  const schedule = useMemo(() => {
+    const rows = steps.map(toScheduleRow);
+    return computeSchedule(rows, gates, anchorStartAt).items;
+  }, [steps, gates, anchorStartAt]);
+
+  const candidateSteps = useMemo(() => {
+    const wsSet = workstreamIds == null ? null : new Set(workstreamIds);
+    const focused = filterStepsByFocus(steps, actorId, focusMode);
+    return focused.filter((step) => {
+      if (wsSet && !wsSet.has(step.workstreamId)) return false;
+      return true;
+    });
+  }, [steps, workstreamIds, focusMode, actorId]);
+
+  const scopedSteps = useMemo(
+    () => filterByDrill(candidateSteps, drill),
+    [candidateSteps, drill],
+  );
+
+  const fullRange = useMemo(() => {
+    if (!scopedSteps.length) {
+      return { startMs: t0Ms, endMs: t0Ms + 60 * 60_000 };
+    }
+    let minStart = Number.POSITIVE_INFINITY;
+    let maxEnd = Number.NEGATIVE_INFINITY;
+    for (const step of scopedSteps) {
+      const { startMs, endMs } = stepTimeBounds(step, t0Ms, schedule);
+      minStart = Math.min(minStart, startMs);
+      maxEnd = Math.max(maxEnd, endMs);
+    }
+    return {
+      startMs: floorToSlot(minStart),
+      endMs: ceilToSlot(Math.max(maxEnd, nowMs, t0Ms + 60 * 60_000)),
+    };
+  }, [scopedSteps, t0Ms, nowMs, schedule]);
+
+  const viewStart = visibleRange?.startMs ?? fullRange.startMs;
+  const viewEnd = visibleRange?.endMs ?? fullRange.endMs;
+
+  const lanes = useMemo(
+    () =>
+      buildLanes(scopedSteps, drill, t0Ms, viewStart, viewEnd, schedule),
+    [scopedSteps, drill, t0Ms, viewStart, viewEnd, schedule],
+  );
+
+  const showSteps = drill.kind === "activity";
+
+  const timed = useMemo((): TimedItem[] => {
+    const laneIndex = new Map(lanes.map((lane, index) => [lane.key, index]));
+    if (showSteps) {
+      // Pasos concurrentes (mismo inicio) no pueden ir todos en col 0: se tapaban.
+      const raw = scopedSteps.map((step) => {
+        const { startMs, endMs } = stepTimeBounds(step, t0Ms, schedule);
+        return {
+          step,
+          startMs,
+          endMs,
+          startMin: Math.max(0, Math.round((startMs - t0Ms) / 60_000)),
+          durationMin: Math.max(1, Math.round((endMs - startMs) / 60_000)),
+          dayKey: dayKeyFromMs(startMs, timezone),
+          mine: isMineStep(step, actorId),
+        };
+      });
+      return assignColumns(raw);
+    }
+
+    const byLane = new Map<
+      string,
+      {
+        startMs: number;
+        endMs: number;
+        mine: boolean;
+        step: RuntimeStepSummary;
+      }
+    >();
+    for (const step of scopedSteps) {
+      const key = laneKeyForStep(step, drill);
+      if (!laneIndex.has(key)) continue;
+      const { startMs, endMs } = stepTimeBounds(step, t0Ms, schedule);
+      const mine = isMineStep(step, actorId);
+      const current = byLane.get(key);
+      if (!current) {
+        byLane.set(key, {
+          startMs,
+          endMs,
+          mine,
+          step,
+        });
+      } else {
+        current.startMs = Math.min(current.startMs, startMs);
+        current.endMs = Math.max(current.endMs, endMs);
+        current.mine = current.mine || mine;
+      }
+    }
+
+    return [...byLane.entries()].map(([key, envelope]) => ({
+      step: envelope.step,
+      startMs: envelope.startMs,
+      endMs: envelope.endMs,
+      startMin: Math.max(0, Math.round((envelope.startMs - t0Ms) / 60_000)),
+      durationMin: Math.max(
+        1,
+        Math.round((envelope.endMs - envelope.startMs) / 60_000),
+      ),
+      dayKey: dayKeyFromMs(envelope.startMs, timezone),
+      mine: envelope.mine,
+      column: laneIndex.get(key) ?? 0,
+      laneKey: key,
+    }));
+  }, [
+    scopedSteps,
+    lanes,
+    showSteps,
+    drill,
+    t0Ms,
+    timezone,
+    actorId,
+    schedule,
+  ]);
+
+  const columnCount = useMemo(() => {
+    if (showSteps) {
+      return Math.max(1, ...timed.map((item) => item.column + 1), 0);
+    }
+    return Math.max(1, lanes.length);
+  }, [showSteps, timed, lanes.length]);
+  const stepColPx = LANE_COL_PX;
+  const gridWidth = TIME_COL_PX + columnCount * stepColPx;
+
+  const daySections = useMemo(() => {
+    type Slot = { ms: number; label: string; dayKey: string };
+    const slots: Slot[] = [];
+    for (
+      let ms = fullRange.startMs;
+      ms < fullRange.endMs;
+      ms += SLOT_MINUTES * 60_000
+    ) {
+      slots.push({
+        ms,
+        label: clockLabel(ms, timezone),
+        dayKey: dayKeyFromMs(ms, timezone),
+      });
+    }
+    const byDay = new Map<string, Slot[]>();
+    for (const slot of slots) {
+      const list = byDay.get(slot.dayKey) ?? [];
+      list.push(slot);
+      byDay.set(slot.dayKey, list);
+    }
+    return [...byDay.entries()].map(([dayKey, daySlots]) => {
+      const dayStart = daySlots[0]!.ms;
+      const dayEnd = daySlots[daySlots.length - 1]!.ms + SLOT_MINUTES * 60_000;
+      return {
+        dayKey,
+        label: dayLabelFromKey(dayKey, timezone),
+        slots: daySlots,
+        dayStart,
+        dayEnd,
+      };
+    });
+  }, [fullRange, timezone]);
+
+  function updateVisibleRange() {
+    const node = scrollerRef.current;
+    if (!node || !daySections.length) return;
+    const sticky = DAY_STICKY_H + LANE_STICKY_H;
+    const y0 = node.scrollTop + sticky;
+    const y1 = node.scrollTop + node.clientHeight;
+    // Una sola franja continua por ahora (primer día / acumulado).
+    let offset = 0;
+    let startMs = fullRange.startMs;
+    let endMs = fullRange.endMs;
+    for (const section of daySections) {
+      const bodyHeight = section.slots.length * ROW_PX;
+      const sectionTop = offset;
+      const sectionBottom = offset + bodyHeight;
+      const visTop = Math.max(y0, sectionTop);
+      const visBottom = Math.min(y1, sectionBottom);
+      if (visBottom > visTop) {
+        const topRatio = (visTop - sectionTop) / bodyHeight;
+        const bottomRatio = (visBottom - sectionTop) / bodyHeight;
+        startMs =
+          section.dayStart +
+          topRatio * (section.dayEnd - section.dayStart);
+        endMs =
+          section.dayStart +
+          bottomRatio * (section.dayEnd - section.dayStart);
+        break;
+      }
+      offset += bodyHeight + sticky;
+    }
+    setVisibleRange({ startMs, endMs });
+    setContainerWidth(node.clientWidth);
+    const remaining = node.scrollWidth - node.clientWidth - node.scrollLeft;
+    setMoreToRight(remaining > 2);
+  }
+
   useEffect(() => {
     const node = scrollerRef.current;
     if (!node) return;
-
-    const update = () => {
-      setContainerWidth(node.clientWidth);
-      const remaining =
-        node.scrollWidth - node.clientWidth - node.scrollLeft;
-      setMoreToRight(remaining > 2);
-    };
-
-    update();
-    const observer = new ResizeObserver(update);
+    updateVisibleRange();
+    const observer = new ResizeObserver(() => updateVisibleRange());
     observer.observe(node);
-    node.addEventListener("scroll", update, { passive: true });
+    node.addEventListener("scroll", updateVisibleRange, { passive: true });
     return () => {
       observer.disconnect();
-      node.removeEventListener("scroll", update);
+      node.removeEventListener("scroll", updateVisibleRange);
     };
-  }, []);
+  }, [daySections, gridWidth, drill.kind, lanes.length, fullRange.startMs, fullRange.endMs]);
 
-  /**
-   * Click fuera del paso seleccionado (solo dentro de este mapa): apaga el ?
-   * y cierra la flor. No escuchar clics globales: en desktop este mapa sigue
-   * montado con md:hidden y robaba el pointerdown del Times panorámico,
-   * deseleccionando el paso al pulsar el ?.
-   */
   useEffect(() => {
     if (!selectedId) {
       setFlowerOpenId(null);
@@ -358,12 +817,12 @@ export function ExecutorTimesMap({
     }
     const root = scrollerRef.current;
     if (!root) return;
-
     function onPointerDown(event: PointerEvent) {
       const target = event.target as HTMLElement | null;
       if (!target || !root) return;
       if (!root.contains(target)) return;
       if (target.closest(`[data-step-card="${selectedId}"]`)) return;
+      if (target.closest("[data-lane-chip]")) return;
       setFlowerOpenId(null);
       onSelect(null);
     }
@@ -371,128 +830,26 @@ export function ExecutorTimesMap({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [selectedId, onSelect]);
 
-  const nextId = useMemo(
-    () => nextMineStepId(steps, actorId, t0Ms),
-    [steps, actorId, t0Ms],
-  );
+  function goBack() {
+    const parent = parentDrill(drill);
+    if (!parent) return;
+    setDrill(parent);
+    onSelect(null);
+    setFlowerOpenId(null);
+  }
 
-  const candidateSteps = useMemo(() => {
-    const wsSet = workstreamIds == null ? null : new Set(workstreamIds);
-    const focused = filterStepsByFocus(steps, actorId, focusMode);
-    const list = focused.filter((step) => {
-      if (wsSet && !wsSet.has(step.workstreamId)) return false;
-      return true;
-    });
-
-    return [...list].sort((a, b) => {
-      const score = (step: RuntimeStepSummary) =>
-        isMineStep(step, actorId) ? 0 : 1;
-      const diff = score(a) - score(b);
-      if (diff !== 0) return diff;
-      const aStart = a.plannedStartAt
-        ? new Date(a.plannedStartAt).getTime()
-        : t0Ms;
-      const bStart = b.plannedStartAt
-        ? new Date(b.plannedStartAt).getTime()
-        : t0Ms;
-      return aStart - bStart;
-    });
-  }, [steps, workstreamIds, focusMode, actorId, t0Ms]);
-
-  const timed = useMemo(() => {
-    const raw: Omit<TimedStep, "column">[] = candidateSteps.map((step) => {
-      const durationMin =
-        step.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
-      const startMs = step.actualStartedAt
-        ? new Date(step.actualStartedAt).getTime()
-        : step.plannedStartAt
-          ? new Date(step.plannedStartAt).getTime()
-          : t0Ms;
-      const endMs = step.actualEndedAt
-        ? new Date(step.actualEndedAt).getTime()
-        : startMs + durationMin * 60_000;
-      const safeStart = Math.min(startMs, endMs);
-      const safeEnd = Math.max(startMs, endMs);
-      const mine = isMineStep(step, actorId);
-      return {
-        step,
-        startMs: safeStart,
-        endMs: safeEnd,
-        startMin: Math.max(0, Math.round((safeStart - t0Ms) / 60_000)),
-        durationMin: Math.max(
-          1,
-          Math.round((safeEnd - safeStart) / 60_000),
-        ),
-        dayKey: dayKeyFromMs(safeStart, timezone),
-        mine,
-        isNext: step.id === nextId,
-      };
-    });
-    return assignColumns(raw);
-  }, [candidateSteps, t0Ms, timezone, actorId, nextId]);
-
-  const columnCount = useMemo(
-    () => Math.max(1, ...timed.map((item) => item.column + 1), 0),
-    [timed],
-  );
-
-  const daySections = useMemo(() => {
-    if (!timed.length) return [];
-
-    const minStart = Math.min(...timed.map((item) => item.startMs));
-    const maxEnd = Math.max(
-      ...timed.map((item) => item.endMs),
-      nowMs,
-      t0Ms + 60 * 60_000,
-    );
-
-    const rangeStart = floorToSlot(minStart);
-    const rangeEnd = ceilToSlot(maxEnd);
-
-    type Slot = { ms: number; label: string; dayKey: string };
-    const slots: Slot[] = [];
-    for (let ms = rangeStart; ms < rangeEnd; ms += SLOT_MINUTES * 60_000) {
-      slots.push({
-        ms,
-        label: clockLabel(ms, timezone),
-        dayKey: dayKeyFromMs(ms, timezone),
-      });
+  function enterLane(lane: Lane) {
+    if (lane.drill.kind === "activity" && drill.kind === "block") {
+      setDrill(lane.drill);
+      onSelect(null);
+      setFlowerOpenId(null);
+      return;
     }
-
-    const byDay = new Map<string, Slot[]>();
-    for (const slot of slots) {
-      const list = byDay.get(slot.dayKey) ?? [];
-      list.push(slot);
-      byDay.set(slot.dayKey, list);
-    }
-
-    return [...byDay.entries()].map(([dayKey, daySlots]) => {
-      const dayStart = daySlots[0]!.ms;
-      const dayEnd = daySlots[daySlots.length - 1]!.ms + SLOT_MINUTES * 60_000;
-      const daySteps = timed.filter(
-        (item) => item.startMs < dayEnd && item.endMs > dayStart,
-      );
-      return {
-        dayKey,
-        label: dayLabelFromKey(dayKey, timezone),
-        slots: daySlots,
-        dayStart,
-        dayEnd,
-        steps: daySteps,
-      };
-    });
-  }, [timed, timezone, nowMs, t0Ms]);
-
-  const stepColPx = computeStepColPx(containerWidth, columnCount);
-  const gridWidth = TIME_COL_PX + columnCount * stepColPx;
-
-  useEffect(() => {
-    const node = scrollerRef.current;
-    if (!node) return;
-    const remaining =
-      node.scrollWidth - node.clientWidth - node.scrollLeft;
-    setMoreToRight(remaining > 2);
-  }, [gridWidth, columnCount, stepColPx, timed.length]);
+    if (lane.drill.kind === drill.kind) return;
+    setDrill(lane.drill);
+    onSelect(null);
+    setFlowerOpenId(null);
+  }
 
   if (!steps.length) {
     return (
@@ -502,7 +859,7 @@ export function ExecutorTimesMap({
     );
   }
 
-  if (!timed.length) {
+  if (!scopedSteps.length) {
     return (
       <p className="p-6 text-center text-sm text-muted-foreground">
         No hay pasos con este filtro.
@@ -510,172 +867,308 @@ export function ExecutorTimesMap({
     );
   }
 
+  const back = parentDrill(drill);
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
-      <div style={{ minWidth: gridWidth }} className="pb-10">
-        {daySections.map((section) => {
-          const bodyHeight = section.slots.length * ROW_PX;
-          return (
-            <section key={section.dayKey} className="relative">
-              <div
-                className="sticky top-0 left-0 z-30 border-b border-cyan-500/30 bg-background/95 px-3 py-2 backdrop-blur"
-                style={{ width: containerWidth }}
-              >
-                <p className="text-sm font-semibold capitalize">
-                  {section.label}
-                </p>
-              </div>
-
-              <div
-                className="relative"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: `${TIME_COL_PX}px repeat(${columnCount}, ${stepColPx}px)`,
-                  minHeight: bodyHeight,
-                }}
-              >
-                {/* Columna de horas (fija al desplazar horizontal) */}
-                <div className="sticky left-0 z-[25] border-r border-border/60 bg-background/95 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.45)] backdrop-blur">
-                  {section.slots.map((slot) => (
-                    <div
-                      key={slot.ms}
-                      className="flex items-start justify-end border-b border-border/40 bg-muted/30 pr-1.5 pt-0.5 font-mono text-[10px] text-muted-foreground"
-                      style={{ height: ROW_PX }}
-                    >
-                      {slot.label}
-                    </div>
-                  ))}
+        <div style={{ minWidth: gridWidth }} className="pb-10">
+          {daySections.map((section) => {
+            const bodyHeight = section.slots.length * ROW_PX;
+            const sectionItems = timed.filter(
+              (item) =>
+                item.startMs < section.dayEnd && item.endMs > section.dayStart,
+            );
+            return (
+              <section key={section.dayKey} className="relative">
+                {/* Día */}
+                <div
+                  className="sticky top-0 z-30 border-b border-cyan-500/30 bg-background/95 px-3 backdrop-blur"
+                  style={{ width: containerWidth, height: DAY_STICKY_H }}
+                >
+                  <p className="flex h-full items-center text-sm font-semibold capitalize">
+                    {section.label}
+                  </p>
                 </div>
 
-                {/* Columnas de pasos (fondo) */}
-                {Array.from({ length: columnCount }, (_, col) => (
+                {/* Fila de lanes (sombra bajo el día) */}
+                <div
+                  className="sticky z-30 border-b border-amber-500/25 bg-background/95 shadow-[0_6px_12px_-6px_rgba(0,0,0,0.55)] backdrop-blur"
+                  style={{
+                    top: DAY_STICKY_H,
+                    width: Math.max(containerWidth, gridWidth),
+                    height: LANE_STICKY_H,
+                  }}
+                >
                   <div
-                    key={`col-${col}`}
-                    className="relative border-r border-border/30"
-                    style={{ height: bodyHeight }}
-                  >
-                    {section.slots.map((slot) => (
-                      <div
-                        key={`${col}-${slot.ms}`}
-                        className="border-b border-border/25"
-                        style={{ height: ROW_PX }}
-                      />
-                    ))}
-                  </div>
-                ))}
-
-                {/* Línea ahora */}
-                {nowMs >= section.dayStart && nowMs < section.dayEnd ? (
-                  <div
-                    className="pointer-events-none absolute right-0 left-0 z-20 border-t-2 border-rose-400"
+                    className="grid h-full"
                     style={{
-                      top:
-                        ((nowMs - section.dayStart) /
-                          (SLOT_MINUTES * 60_000)) *
-                        ROW_PX,
+                      gridTemplateColumns: `${TIME_COL_PX}px repeat(${columnCount}, ${stepColPx}px)`,
+                      width: gridWidth,
                     }}
                   >
-                    <span className="absolute top-0 left-[52px] -translate-y-1/2 rounded bg-rose-500 px-1 text-[9px] font-bold text-white">
-                      AHORA
-                    </span>
-                  </div>
-                ) : null}
-
-                {/* Barras de pasos */}
-                {section.steps.map((item) => {
-                  const topMs = Math.max(item.startMs, section.dayStart);
-                  const bottomMs = Math.min(item.endMs, section.dayEnd);
-                  const top =
-                    ((topMs - section.dayStart) / (SLOT_MINUTES * 60_000)) *
-                    ROW_PX;
-                  const height = Math.max(
-                    28,
-                    ((bottomMs - topMs) / (SLOT_MINUTES * 60_000)) * ROW_PX - 2,
-                  );
-                  const left = TIME_COL_PX + item.column * stepColPx + 3;
-                  const width = stepColPx - 6;
-                  const selected = selectedId === item.step.id;
-                  const flowerOpen = flowerOpenId === item.step.id;
-
-                  return (
-                    <div
-                      key={`${section.dayKey}-${item.step.id}`}
-                      data-step-card={item.step.id}
+                    <button
+                      type="button"
+                      disabled={!back}
+                      onClick={goBack}
                       className={cn(
-                        "absolute flex flex-col overflow-visible rounded-md border px-1.5 py-1 shadow-sm",
-                        barTone(
-                          item.step.status,
-                          item.mine,
-                          item.isNext,
-                          dimOthers,
-                        ),
-                        flowerOpen
-                          ? "z-40"
-                          : selected
-                            ? "z-30 ring-2 ring-white/70"
-                            : "z-[2]",
-                        dimOthers && !item.mine && "opacity-70",
+                        "sticky left-0 z-[26] flex items-center justify-center border-r border-border/60 bg-background/95",
+                        back
+                          ? "text-amber-200 hover:bg-amber-500/20"
+                          : "text-muted-foreground/50",
                       )}
-                      style={{ top: top + 1, left, width, height }}
+                      title={back ? `Volver a ${drillTitle(back)}` : undefined}
+                      aria-label={
+                        back ? `Volver a ${drillTitle(back)}` : "Nivel raíz"
+                      }
                     >
+                      {back ? (
+                        <ArrowLeft className="size-6 stroke-[2.5]" aria-hidden />
+                      ) : null}
+                    </button>
+                    {showSteps && lanes[0] ? (
                       <button
                         type="button"
-                        className="flex min-h-0 flex-1 flex-col items-stretch gap-0.5 text-left"
-                        onClick={() => {
-                          const next =
-                            selectedId === item.step.id ? null : item.step.id;
-                          onSelect(next);
-                          setFlowerOpenId(null);
-                        }}
+                        data-lane-chip
+                        onClick={() => enterLane(lanes[0]!)}
+                        className="flex min-w-0 flex-col items-stretch justify-center gap-0.5 border-r border-border/40 px-1.5 py-0.5 text-left hover:bg-amber-500/10"
+                        style={{ gridColumn: `span ${columnCount}` }}
+                        title={`${lanes[0].label} · ${formatLaneStatsTitle(lanes[0].stats)}`}
                       >
-                        <span className="line-clamp-2 text-[10px] font-semibold leading-tight">
-                          {item.mine ? "★ " : ""}
-                          {item.step.name}
+                        <span className="truncate text-[10px] font-semibold leading-tight text-amber-50">
+                          {lanes[0].label}
                         </span>
-                        <span className="truncate text-[9px] opacity-80">
-                          {item.step.activityName}
+                        <span className="flex min-w-0 flex-wrap items-center gap-x-1 font-mono text-[9px] leading-tight text-muted-foreground">
+                          <span>{lanes[0].stats.total}</span>
+                          {lanes[0].stats.ok ? (
+                            <span className="text-emerald-400/90">
+                              ✓{lanes[0].stats.ok}
+                            </span>
+                          ) : null}
+                          {lanes[0].stats.fail ? (
+                            <span className="text-rose-400/90">
+                              ✗{lanes[0].stats.fail}
+                            </span>
+                          ) : null}
+                          {lanes[0].stats.running ? (
+                            <span className="text-sky-400/90">
+                              ▶{lanes[0].stats.running}
+                            </span>
+                          ) : null}
                         </span>
                       </button>
-                      {selected ? (
-                        <div className="mt-auto flex justify-end pt-0.5">
-                          <StepActionFlower
-                            open={flowerOpen}
-                            layout="vertical"
-                            onToggle={() =>
-                              setFlowerOpenId((current) =>
-                                current === item.step.id ? null : item.step.id,
-                              )
-                            }
-                            onClose={() => setFlowerOpenId(null)}
-                            actions={flowerActionsFor({
-                              step: item.step,
-                              allSteps: steps,
-                              busy,
-                              canAct: item.mine || canOperateAny,
-                              canForceSuccess,
-                              allowStepOperations,
-                              onOutcome: (action) => {
-                                setFlowerOpenId(null);
-                                onSelect(null);
-                                onOutcome(item.step.id, action);
-                              },
-                              onInfo: () => {
-                                setFlowerOpenId(null);
-                                onOpenInfo(item.step.id);
-                              },
-                            })}
-                          />
-                        </div>
-                      ) : null}
+                    ) : (
+                      lanes.map((lane) => (
+                        <button
+                          key={lane.key}
+                          type="button"
+                          data-lane-chip
+                          onClick={() => enterLane(lane)}
+                          className="flex min-w-0 flex-col items-stretch justify-center gap-0.5 border-r border-border/40 px-1.5 py-0.5 text-left hover:bg-amber-500/10"
+                          title={`${lane.label} · ${formatLaneStatsTitle(lane.stats)}`}
+                        >
+                          <span className="truncate text-[10px] font-semibold leading-tight text-amber-50">
+                            {lane.label}
+                          </span>
+                          <span className="flex min-w-0 flex-wrap items-center gap-x-1 font-mono text-[9px] leading-tight text-muted-foreground">
+                            <span>{lane.stats.total}</span>
+                            {lane.stats.ok ? (
+                              <span className="text-emerald-400/90">
+                                ✓{lane.stats.ok}
+                              </span>
+                            ) : null}
+                            {lane.stats.fail ? (
+                              <span className="text-rose-400/90">
+                                ✗{lane.stats.fail}
+                              </span>
+                            ) : null}
+                            {lane.stats.running ? (
+                              <span className="text-sky-400/90">
+                                ▶{lane.stats.running}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  className="relative"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: `${TIME_COL_PX}px repeat(${columnCount}, ${stepColPx}px)`,
+                    minHeight: bodyHeight,
+                  }}
+                >
+                  <div className="sticky left-0 z-[25] border-r border-border/60 bg-background/95 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.45)] backdrop-blur">
+                    {section.slots.map((slot) => (
+                      <div
+                        key={slot.ms}
+                        className="flex items-start justify-end border-b border-border/40 bg-muted/30 pr-1.5 pt-0.5 font-mono text-[10px] text-muted-foreground"
+                        style={{ height: ROW_PX }}
+                      >
+                        {slot.label}
+                      </div>
+                    ))}
+                  </div>
+
+                  {Array.from({ length: columnCount }, (_, col) => (
+                    <div
+                      key={`col-${col}`}
+                      className="relative border-r border-border/30"
+                      style={{ height: bodyHeight }}
+                    >
+                      {section.slots.map((slot) => (
+                        <div
+                          key={`${col}-${slot.ms}`}
+                          className="border-b border-border/25"
+                          style={{ height: ROW_PX }}
+                        />
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+                  ))}
+
+                  {nowMs >= section.dayStart && nowMs < section.dayEnd ? (
+                    <div
+                      className="pointer-events-none absolute right-0 left-0 z-20 border-t-2 border-rose-400"
+                      style={{
+                        top:
+                          ((nowMs - section.dayStart) /
+                            (SLOT_MINUTES * 60_000)) *
+                          ROW_PX,
+                      }}
+                    >
+                      <span className="absolute top-0 left-[52px] -translate-y-1/2 rounded bg-rose-500 px-1 text-[9px] font-bold text-white">
+                        AHORA
+                      </span>
+                    </div>
+                  ) : null}
+
+                  {sectionItems.map((item) => {
+                    const topMs = Math.max(item.startMs, section.dayStart);
+                    const bottomMs = Math.min(item.endMs, section.dayEnd);
+                    const top =
+                      ((topMs - section.dayStart) / (SLOT_MINUTES * 60_000)) *
+                      ROW_PX;
+                    const height = Math.max(
+                      MIN_CARD_PX,
+                      ((bottomMs - topMs) / (SLOT_MINUTES * 60_000)) * ROW_PX -
+                        2,
+                    );
+                    const left = TIME_COL_PX + item.column * stepColPx + 3;
+                    const width = stepColPx - 6;
+                    const selected = showSteps && selectedId === item.step.id;
+                    const flowerOpen = flowerOpenId === item.step.id;
+                    const lane = !showSteps
+                      ? lanes.find((l) => l.key === item.laneKey)
+                      : null;
+
+                    if (!showSteps) {
+                      return (
+                        <button
+                          key={`${section.dayKey}-env-${item.laneKey ?? item.column}`}
+                          type="button"
+                          data-lane-chip
+                          onClick={() => {
+                            if (lane) enterLane(lane);
+                          }}
+                          className={cn(
+                            "absolute flex flex-col overflow-hidden rounded-md border px-1.5 py-1 text-left shadow-sm",
+                            "border-amber-400/40 bg-amber-500/15 text-amber-50",
+                            "z-[2] hover:bg-amber-500/25",
+                          )}
+                          style={{ top: top + 1, left, width, height }}
+                          title={lane?.label ?? "Abrir"}
+                        >
+                          <span className="line-clamp-3 text-[10px] font-semibold leading-tight">
+                            {lane?.label ?? "…"}
+                          </span>
+                        </button>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={`${section.dayKey}-${item.step.id}`}
+                        data-step-card={item.step.id}
+                        className={cn(
+                          "absolute flex flex-col overflow-visible rounded-md border px-1.5 py-1 shadow-sm",
+                          barTone(
+                            item.step.status,
+                            item.mine,
+                            dimOthers,
+                          ),
+                          flowerOpen
+                            ? "z-40"
+                            : selected
+                              ? "z-30 ring-2 ring-white/70"
+                              : "z-[2]",
+                        )}
+                        style={{ top: top + 1, left, width, height }}
+                      >
+                        <button
+                          type="button"
+                          className="flex min-h-0 flex-1 flex-col items-stretch gap-0.5 text-left"
+                          onClick={() => {
+                            const next =
+                              selectedId === item.step.id
+                                ? null
+                                : item.step.id;
+                            onSelect(next);
+                            setFlowerOpenId(null);
+                          }}
+                        >
+                          <span className="line-clamp-2 text-[10px] font-semibold leading-tight">
+                            {item.mine ? "★ " : ""}
+                            {item.step.name}
+                          </span>
+                          <span className="truncate text-[9px] opacity-80">
+                            {item.step.activityName}
+                          </span>
+                        </button>
+                        {selected ? (
+                          <div className="mt-auto flex justify-end pt-0.5">
+                            <StepActionFlower
+                              open={flowerOpen}
+                              layout="vertical"
+                              onToggle={() =>
+                                setFlowerOpenId((current) =>
+                                  current === item.step.id
+                                    ? null
+                                    : item.step.id,
+                                )
+                              }
+                              onClose={() => setFlowerOpenId(null)}
+                              actions={flowerActionsFor({
+                                step: item.step,
+                                allSteps: steps,
+                                busy,
+                                canAct: item.mine || canOperateAny,
+                                canForceSuccess,
+                                allowStepOperations,
+                                onOutcome: (action) => {
+                                  setFlowerOpenId(null);
+                                  onSelect(null);
+                                  onOutcome(item.step.id, action);
+                                },
+                                onInfo: () => {
+                                  setFlowerOpenId(null);
+                                  onOpenInfo(item.step.id);
+                                },
+                              })}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
       </div>
 
       {moreToRight ? (

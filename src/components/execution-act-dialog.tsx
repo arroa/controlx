@@ -35,9 +35,11 @@ import {
 import { cn } from "@/lib/utils";
 
 const MINUTE_STEP = 5;
-const ITEM_H = 44;
-const VISIBLE = 5;
+/** Compacto para mobile: 3 filas visibles × 34px. */
+const ITEM_H = 34;
+const VISIBLE = 3;
 const PAD = Math.floor(VISIBLE / 2);
+const WHEEL_H = VISIBLE * ITEM_H;
 
 export type ExecutionActAction =
   | "start"
@@ -113,12 +115,14 @@ function WheelColumn({
   onChange,
   disabled,
   ariaLabel,
+  className,
 }: {
   items: WheelItem[];
   value: string;
   onChange: (next: string) => void;
   disabled?: boolean;
   ariaLabel: string;
+  className?: string;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const lockRef = useRef(false);
@@ -156,18 +160,19 @@ function WheelColumn({
   }
 
   return (
-    <div className="relative min-w-0 flex-1">
+    <div className={cn("relative min-w-0", className)}>
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-1/2 z-10 h-11 -translate-y-1/2 rounded-lg border border-primary/35 bg-primary/10"
+        className="pointer-events-none absolute inset-x-0 top-1/2 z-10 -translate-y-1/2 rounded-md border border-primary/35 bg-primary/10"
+        style={{ height: ITEM_H }}
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 z-20 h-14 bg-gradient-to-b from-background to-transparent"
+        className="pointer-events-none absolute inset-x-0 top-0 z-20 h-7 bg-gradient-to-b from-background to-transparent"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-14 bg-gradient-to-t from-background to-transparent"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-7 bg-gradient-to-t from-background to-transparent"
       />
       <div
         ref={scrollerRef}
@@ -177,10 +182,11 @@ function WheelColumn({
         tabIndex={disabled ? -1 : 0}
         onScroll={handleScroll}
         className={cn(
-          "h-[220px] snap-y snap-mandatory overflow-y-auto overscroll-contain px-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+          "snap-y snap-mandatory overflow-y-auto overscroll-contain px-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
           disabled && "pointer-events-none opacity-50",
         )}
         style={{
+          height: WHEEL_H,
           paddingTop: PAD * ITEM_H,
           paddingBottom: PAD * ITEM_H,
         }}
@@ -197,7 +203,7 @@ function WheelColumn({
               disabled={disabled}
               onClick={() => onChange(item.value)}
               className={cn(
-                "flex w-full snap-center items-center justify-center text-center font-mono text-lg transition-colors",
+                "flex w-full snap-center items-center justify-center whitespace-nowrap text-center font-mono text-sm transition-colors",
                 selected
                   ? "font-semibold text-foreground"
                   : "text-muted-foreground/70",
@@ -418,10 +424,11 @@ export function ExecutionActDialog({
               ) : null}
             </div>
 
-            <div className="rounded-xl border bg-muted/20 px-2 py-1">
-              <div className="flex gap-1">
+            <div className="rounded-lg border bg-muted/20 px-1.5 py-0.5">
+              <div className="flex gap-0.5">
                 <WheelColumn
                   ariaLabel="día"
+                  className="min-w-0 flex-[3]"
                   items={dayItems}
                   value={dayValue}
                   disabled={busy}
@@ -436,6 +443,7 @@ export function ExecutionActDialog({
                 />
                 <WheelColumn
                   ariaLabel="hora"
+                  className="w-12 shrink-0"
                   items={hourItems}
                   value={hourValue}
                   disabled={busy}
@@ -451,6 +459,7 @@ export function ExecutionActDialog({
                 />
                 <WheelColumn
                   ariaLabel="minuto"
+                  className="w-12 shrink-0"
                   items={minuteItems}
                   value={minuteValue}
                   disabled={busy}
@@ -465,7 +474,7 @@ export function ExecutionActDialog({
                   }}
                 />
               </div>
-              <p className="pb-2 text-center font-mono text-xs text-muted-foreground">
+              <p className="pb-1.5 text-center font-mono text-[11px] text-muted-foreground">
                 {formatDayTimeLabel(effectiveIso, timezone)} · {timezone}
               </p>
             </div>
