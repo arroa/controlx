@@ -1591,38 +1591,34 @@ export async function deactivateEventAdmin(
 
 export async function hasAssignedAccess(email: string): Promise<boolean> {
   if (!isMongoConfigured()) return false;
+  const normalized = email.trim().toLowerCase();
   const database = await getDatabase();
-  const [organizationAdmin, eventMemberships] = await Promise.all([
+  const [organizationAdmin, eventMembership] = await Promise.all([
     database
       .collection<OrganizationMembershipDocument>("organizationMemberships")
-      .findOne({ email, status: "ACTIVE" }, { projection: { _id: 1 } }),
+      .findOne(
+        { email: normalized, status: "ACTIVE" },
+        { projection: { _id: 1 } },
+      ),
     database
       .collection<EventMembershipDocument>("eventMemberships")
-      .find({ email, status: "ACTIVE" })
-      .toArray(),
+      .findOne(
+        { email: normalized, status: "ACTIVE" },
+        { projection: { _id: 1, roles: 1, role: 1 } },
+      ),
   ]);
+  // OrgAdmin o cualquier actor ACTIVE del mapa (ejecutor, aprobador, etc.).
   return Boolean(
-    organizationAdmin || eventMemberships.some((doc) => hasEventAdminRole(doc)),
+    organizationAdmin ||
+      (eventMembership && membershipRoles(eventMembership).length > 0),
   );
 }
 
+/** Home operativo (PWA): lista de ejecuciones accesibles. */
 export async function getFirstAssignedPath(email: string): Promise<string> {
   if (!isMongoConfigured()) return "/";
-  const database = await getDatabase();
-  const organizationAdmin = await database
-    .collection<OrganizationMembershipDocument>("organizationMemberships")
-    .findOne({ email, status: "ACTIVE" }, { sort: { createdAt: 1 } });
-  if (organizationAdmin) {
-    return `/organizations/${organizationAdmin.organizationId.toHexString()}`;
-  }
-
-  const eventMemberships = await database
-    .collection<EventMembershipDocument>("eventMemberships")
-    .find({ email, status: "ACTIVE" })
-    .sort({ createdAt: 1 })
-    .toArray();
-  const eventAdmin = eventMemberships.find((doc) => hasEventAdminRole(doc));
-  return eventAdmin ? `/events/${eventAdmin.eventId.toHexString()}` : "/";
+  if (await hasAssignedAccess(email)) return "/ejecuciones";
+  return "/";
 }
 
 export async function canAccessOrganization(

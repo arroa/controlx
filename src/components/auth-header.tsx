@@ -1,5 +1,10 @@
 import Link from "next/link";
-import { MessageSquareText, Newspaper, ScrollText } from "lucide-react";
+import {
+  ListChecks,
+  MessageSquareText,
+  Newspaper,
+  ScrollText,
+} from "lucide-react";
 
 import { UserMenu } from "@/components/user-menu";
 import { Button } from "@/components/ui/button";
@@ -20,13 +25,34 @@ export async function AuthHeader() {
 
   return (
     <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
-      <Button variant="ghost" size="icon-sm" asChild className="sm:size-auto sm:h-8 sm:px-2.5">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        asChild
+        className="sm:size-auto sm:h-8 sm:px-2.5"
+      >
+        <Link href="/ejecuciones" className="gap-1.5" title="Ejecuciones">
+          <ListChecks className="size-4" />
+          <span className="hidden sm:inline">Ejecuciones</span>
+        </Link>
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        asChild
+        className="sm:size-auto sm:h-8 sm:px-2.5"
+      >
         <Link href="/novedades" className="gap-1.5" title="Novedades">
           <Newspaper className="size-4" />
           <span className="hidden sm:inline">Novedades</span>
         </Link>
       </Button>
-      <Button variant="ghost" size="icon-sm" asChild className="sm:size-auto sm:h-8 sm:px-2.5">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        asChild
+        className="sm:size-auto sm:h-8 sm:px-2.5"
+      >
         <Link href="/feedback" className="gap-1.5" title="Mejoras">
           <MessageSquareText className="size-4" />
           <span className="hidden sm:inline">Mejoras</span>

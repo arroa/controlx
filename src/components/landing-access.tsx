@@ -107,10 +107,20 @@ export function LandingAccess({
                   type="email"
                   inputMode="email"
                   autoComplete="email"
+                  autoFocus
                   enterKeyHint="go"
                   required
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
+                  onFocus={(event) => {
+                    // Asegura que el campo quede visible sobre el teclado.
+                    window.setTimeout(() => {
+                      event.target.scrollIntoView({
+                        block: "center",
+                        behavior: "smooth",
+                      });
+                    }, 300);
+                  }}
                   placeholder="nombre@empresa.com"
                 />
               </div>

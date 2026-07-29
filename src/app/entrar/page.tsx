@@ -4,8 +4,7 @@ import { getFirstAssignedPath } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 
 /**
- * Resolver post-login: manda a cada rol a su destino correcto.
- * Evita el bug de enviar a todos a /dashboard (solo SuperAdmin).
+ * Resolver post-login: SuperAdmin → dashboard; resto con acceso → /ejecuciones.
  */
 export default async function EntrarPage() {
   const user = await getCurrentUser();

@@ -33,7 +33,7 @@ function RunBreadcrumb({
       </Link>
       <ChevronRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
       <Link
-        href={`/events/${eventId}/executions`}
+        href="/ejecuciones"
         className="hidden shrink-0 text-sm text-muted-foreground hover:text-foreground sm:inline"
       >
         Ejecuciones
@@ -41,7 +41,7 @@ function RunBreadcrumb({
       <ChevronRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
 
       <Link
-        href={`/events/${eventId}/executions`}
+        href="/ejecuciones"
         className="shrink-0 text-sm text-muted-foreground hover:text-foreground sm:hidden"
       >
         Ejecuciones
@@ -107,7 +107,7 @@ export default async function ExecutorRunPage({
     detail.eventId,
     user,
   );
-  const homeHref = user.isSuperAdmin ? "/dashboard" : "/";
+  const homeHref = user.isSuperAdmin ? "/dashboard" : "/ejecuciones";
 
   if (!actor) {
     return (

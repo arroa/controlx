@@ -40,7 +40,7 @@ export default async function EventExecutionsPage({
       <header className="shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
           <Link
-            href={user.isSuperAdmin ? "/dashboard" : "/"}
+            href={user.isSuperAdmin ? "/dashboard" : "/ejecuciones"}
             className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
           >
             <Command className="size-4" />

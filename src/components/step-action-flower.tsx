@@ -48,9 +48,14 @@ type MenuCoords = {
   bottom?: number;
   left?: number;
   right?: number;
+  /** Dirección de apertura en layout vertical. */
+  side?: "left" | "right";
 };
 
-/** Menú tipo “flor” — horizontal (planificador) o vertical a la derecha (móvil). */
+const PETAL_SIZE = 44;
+const PETAL_GAP = 8;
+
+/** Menú tipo “flor” — horizontal (planificador) o vertical (móvil, flip si no cabe). */
 export function StepActionFlower({
   open,
   layout = "horizontal",
@@ -60,7 +65,7 @@ export function StepActionFlower({
   actions,
 }: {
   open: boolean;
-  /** horizontal = encima del botón; vertical = a la derecha, de arriba a abajo */
+  /** horizontal = encima del botón; vertical = columna, flip L/R según espacio */
   layout?: "horizontal" | "vertical";
   openToRight?: boolean;
   onToggle: () => void;
@@ -85,10 +90,35 @@ export function StepActionFlower({
       if (!node) return;
       const rect = node.getBoundingClientRect();
       if (layout === "vertical") {
-        setCoords({
-          top: rect.top,
-          left: rect.right + 8,
-        });
+        const menuH =
+          actions.length * PETAL_SIZE +
+          Math.max(0, actions.length - 1) * PETAL_GAP;
+        const spaceRight = window.innerWidth - rect.right - PETAL_GAP;
+        const spaceLeft = rect.left - PETAL_GAP;
+        const openLeft =
+          spaceRight < PETAL_SIZE + 4 && spaceLeft >= spaceRight;
+
+        const top = Math.max(
+          8,
+          Math.min(rect.top, window.innerHeight - menuH - 8),
+        );
+
+        if (openLeft) {
+          setCoords({
+            top,
+            right: window.innerWidth - rect.left + PETAL_GAP,
+            side: "left",
+          });
+        } else {
+          setCoords({
+            top,
+            left: Math.min(
+              rect.right + PETAL_GAP,
+              window.innerWidth - PETAL_SIZE - 8,
+            ),
+            side: "right",
+          });
+        }
         return;
       }
       const bottom = window.innerHeight - rect.top + 8;
@@ -105,7 +135,7 @@ export function StepActionFlower({
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [open, layout, openToRight]);
+  }, [open, layout, openToRight, actions.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -153,7 +183,9 @@ export function StepActionFlower({
                   className={cn(
                     "flex size-11 items-center justify-center rounded-full border-2 shadow-xl ring-2 ring-black/50 transition-transform animate-in fade-in-0 zoom-in-95 fill-mode-both",
                     layout === "vertical"
-                      ? "slide-in-from-left-2"
+                      ? coords.side === "left"
+                        ? "slide-in-from-right-2"
+                        : "slide-in-from-left-2"
                       : "slide-in-from-bottom-2",
                     action.disabled
                       ? "cursor-not-allowed border-zinc-500 bg-zinc-400 text-zinc-700 opacity-70"

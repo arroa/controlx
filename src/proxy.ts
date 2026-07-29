@@ -11,6 +11,7 @@ const publicPathPrefixes = [
   "/api/auth/dev-login",
   "/api/auth/dev-logout",
   "/manifest.webmanifest",
+  "/sw.js",
 ];
 
 function isPublicPath(pathname: string): boolean {
@@ -54,6 +55,7 @@ export default async function proxy(
     "/api/auth/dev-login(.*)",
     "/api/auth/dev-logout(.*)",
     "/manifest.webmanifest",
+    "/sw.js",
   ]);
 
   const clerkHandler = clerkMiddleware(async (auth, req) => {

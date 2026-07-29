@@ -75,7 +75,11 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border-4 border-amber-400/80 bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-foreground/15 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 gap-4 rounded-xl border-4 border-amber-400/80 bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-foreground/15 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // Móvil: arriba + scroll, para que el teclado no tape el input.
+          "top-[max(1rem,env(safe-area-inset-top))] max-h-[calc(100dvh-2rem)] translate-y-0 overflow-y-auto overscroll-contain",
+          // Desktop: centrado.
+          "sm:top-1/2 sm:max-h-[min(90dvh,800px)] sm:-translate-y-1/2",
           className
         )}
         {...props}
