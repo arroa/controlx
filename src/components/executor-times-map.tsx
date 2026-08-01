@@ -7,10 +7,11 @@ import {
   CircleCheck,
   CirclePlay,
   CircleX,
+  Clock,
   RotateCcw,
   ShieldAlert,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   StepActionFlower,
@@ -54,7 +55,58 @@ const TIME_COL_PX = 52;
 /** Ancho fijo de columna de jerarquía (WS / bloque / actividad). */
 const LANE_COL_PX = 88;
 const DAY_STICKY_H = 40;
-const LANE_STICKY_H = 48;
+const LANE_STICKY_H = 72;
+const STICKY_STACK_H = DAY_STICKY_H + LANE_STICKY_H;
+
+type DaySection = {
+  dayKey: string;
+  label: string;
+  slots: Array<{ ms: number; label: string; dayKey: string }>;
+  dayStart: number;
+  dayEnd: number;
+};
+
+/** Hora absoluta bajo el stack sticky (inicio del viewport útil). */
+function viewportTimeMs(
+  scrollTop: number,
+  sections: DaySection[],
+): number | null {
+  if (!sections.length) return null;
+  const y0 = scrollTop + STICKY_STACK_H;
+  let offset = 0;
+  for (const section of sections) {
+    const bodyHeight = section.slots.length * ROW_PX;
+    if (y0 >= offset && y0 < offset + bodyHeight) {
+      const ratio = (y0 - offset) / bodyHeight;
+      return (
+        section.dayStart + ratio * (section.dayEnd - section.dayStart)
+      );
+    }
+    offset += bodyHeight + STICKY_STACK_H;
+  }
+  const last = sections[sections.length - 1]!;
+  return last.dayEnd;
+}
+
+/** Scroll para que `targetMs` quede justo bajo el sticky. */
+function scrollTopForTimeMs(
+  targetMs: number,
+  sections: DaySection[],
+): number | null {
+  if (!sections.length) return null;
+  let offset = 0;
+  for (const section of sections) {
+    const bodyHeight = section.slots.length * ROW_PX;
+    if (targetMs >= section.dayStart && targetMs < section.dayEnd) {
+      const ratio =
+        (targetMs - section.dayStart) / (section.dayEnd - section.dayStart);
+      return Math.max(0, offset + ratio * bodyHeight - STICKY_STACK_H);
+    }
+    offset += bodyHeight + STICKY_STACK_H;
+  }
+  if (targetMs < sections[0]!.dayStart) return 0;
+  return Math.max(0, offset - STICKY_STACK_H - ROW_PX * 4);
+}
 
 type DrillPath =
   | { kind: "root" }
@@ -85,6 +137,7 @@ type LaneStats = {
   ok: number;
   fail: number;
   running: number;
+  waiting: number;
 };
 
 type Lane = {
@@ -96,7 +149,7 @@ type Lane = {
 };
 
 function emptyStats(): LaneStats {
-  return { total: 0, ok: 0, fail: 0, running: 0 };
+  return { total: 0, ok: 0, fail: 0, running: 0, waiting: 0 };
 }
 
 function addStepToStats(stats: LaneStats, step: RuntimeStepSummary) {
@@ -110,16 +163,46 @@ function addStepToStats(stats: LaneStats, step: RuntimeStepSummary) {
     stats.ok += 1;
   } else if (step.status === "FALLIDO") {
     stats.fail += 1;
-  } else if (
-    step.status === "INICIADO" ||
-    step.status === "PENDIENTE_APROBACION"
-  ) {
+  } else if (step.status === "INICIADO") {
     stats.running += 1;
+  } else {
+    // Pendiente de inicio o espera de aprobación
+    stats.waiting += 1;
   }
 }
 
 function formatLaneStatsTitle(stats: LaneStats): string {
-  return `${stats.total} pasos · ${stats.ok} ok · ${stats.fail} fallidos · ${stats.running} en curso`;
+  return `${stats.ok} ok · ${stats.fail} fallidos · ${stats.running} en curso · ${stats.waiting} en espera`;
+}
+
+/** Contadores reales del carril (ok / fallidos / en curso / en espera). */
+function LaneStatsBlock({ stats }: { stats: LaneStats }) {
+  const cell = "inline-flex items-center gap-0.5";
+  const num = "inline-block min-w-[3ch] text-right text-white tabular-nums";
+  return (
+    <span className="mt-auto flex w-full min-w-0 flex-col items-center gap-0.5 font-mono text-[11px] leading-none">
+      <span className="flex items-center justify-center gap-1.5 whitespace-nowrap">
+        <span className={cell}>
+          <CircleCheck className="size-3 shrink-0 text-emerald-400" aria-hidden />
+          <span className={num}>{stats.ok}</span>
+        </span>
+        <span className={cell}>
+          <CircleX className="size-3 shrink-0 text-rose-400" aria-hidden />
+          <span className={num}>{stats.fail}</span>
+        </span>
+      </span>
+      <span className="flex items-center justify-center gap-1.5 whitespace-nowrap">
+        <span className={cell}>
+          <CirclePlay className="size-3 shrink-0 text-sky-400" aria-hidden />
+          <span className={num}>{stats.running}</span>
+        </span>
+        <span className={cell}>
+          <Clock className="size-3 shrink-0 text-amber-400" aria-hidden />
+          <span className={num}>{stats.waiting}</span>
+        </span>
+      </span>
+    </span>
+  );
 }
 
 type TimedStep = {
@@ -587,6 +670,8 @@ export function ExecutorTimesMap({
   const [flowerOpenId, setFlowerOpenId] = useState<string | null>(null);
   const [drill, setDrill] = useState<DrillPath>({ kind: "root" });
   const scrollerRef = useRef<HTMLDivElement>(null);
+  /** Tras drill in/out: mantener la misma hora bajo el sticky. */
+  const pendingScrollTimeRef = useRef<number | null>(null);
   const [containerWidth, setContainerWidth] = useState(360);
   const [moreToRight, setMoreToRight] = useState(false);
   const [visibleRange, setVisibleRange] = useState<{
@@ -729,7 +814,7 @@ export function ExecutorTimesMap({
   const stepColPx = LANE_COL_PX;
   const gridWidth = TIME_COL_PX + columnCount * stepColPx;
 
-  const daySections = useMemo(() => {
+  const daySections = useMemo((): DaySection[] => {
     type Slot = { ms: number; label: string; dayKey: string };
     const slots: Slot[] = [];
     for (
@@ -762,11 +847,19 @@ export function ExecutorTimesMap({
     });
   }, [fullRange, timezone]);
 
+  function rememberViewportTime() {
+    const node = scrollerRef.current;
+    if (!node) return;
+    pendingScrollTimeRef.current = viewportTimeMs(
+      node.scrollTop,
+      daySections,
+    );
+  }
+
   function updateVisibleRange() {
     const node = scrollerRef.current;
     if (!node || !daySections.length) return;
-    const sticky = DAY_STICKY_H + LANE_STICKY_H;
-    const y0 = node.scrollTop + sticky;
+    const y0 = node.scrollTop + STICKY_STACK_H;
     const y1 = node.scrollTop + node.clientHeight;
     // Una sola franja continua por ahora (primer día / acumulado).
     let offset = 0;
@@ -789,13 +882,26 @@ export function ExecutorTimesMap({
           bottomRatio * (section.dayEnd - section.dayStart);
         break;
       }
-      offset += bodyHeight + sticky;
+      offset += bodyHeight + STICKY_STACK_H;
     }
     setVisibleRange({ startMs, endMs });
     setContainerWidth(node.clientWidth);
     const remaining = node.scrollWidth - node.clientWidth - node.scrollLeft;
     setMoreToRight(remaining > 2);
   }
+
+  useLayoutEffect(() => {
+    const targetMs = pendingScrollTimeRef.current;
+    if (targetMs == null) return;
+    const node = scrollerRef.current;
+    if (!node || !daySections.length) return;
+    pendingScrollTimeRef.current = null;
+    const nextTop = scrollTopForTimeMs(targetMs, daySections);
+    if (nextTop != null) {
+      node.scrollTop = nextTop;
+    }
+    updateVisibleRange();
+  }, [drill, daySections]);
 
   useEffect(() => {
     const node = scrollerRef.current;
@@ -833,6 +939,7 @@ export function ExecutorTimesMap({
   function goBack() {
     const parent = parentDrill(drill);
     if (!parent) return;
+    rememberViewportTime();
     setDrill(parent);
     onSelect(null);
     setFlowerOpenId(null);
@@ -840,12 +947,14 @@ export function ExecutorTimesMap({
 
   function enterLane(lane: Lane) {
     if (lane.drill.kind === "activity" && drill.kind === "block") {
+      rememberViewportTime();
       setDrill(lane.drill);
       onSelect(null);
       setFlowerOpenId(null);
       return;
     }
     if (lane.drill.kind === drill.kind) return;
+    rememberViewportTime();
     setDrill(lane.drill);
     onSelect(null);
     setFlowerOpenId(null);
@@ -893,7 +1002,7 @@ export function ExecutorTimesMap({
 
                 {/* Fila de lanes (sombra bajo el día) */}
                 <div
-                  className="sticky z-30 border-b border-amber-500/25 bg-background/95 shadow-[0_6px_12px_-6px_rgba(0,0,0,0.55)] backdrop-blur"
+                  className="sticky z-30 border-b-2 border-white/35 bg-background/95 shadow-[0_6px_12px_-6px_rgba(0,0,0,0.55)] backdrop-blur"
                   style={{
                     top: DAY_STICKY_H,
                     width: Math.max(containerWidth, gridWidth),
@@ -912,7 +1021,7 @@ export function ExecutorTimesMap({
                       disabled={!back}
                       onClick={goBack}
                       className={cn(
-                        "sticky left-0 z-[26] flex items-center justify-center border-r border-border/60 bg-background/95",
+                        "sticky left-0 z-[26] flex items-center justify-center border-r-2 border-white/30 bg-background/95",
                         back
                           ? "text-amber-200 hover:bg-amber-500/20"
                           : "text-muted-foreground/50",
@@ -931,31 +1040,14 @@ export function ExecutorTimesMap({
                         type="button"
                         data-lane-chip
                         onClick={() => enterLane(lanes[0]!)}
-                        className="flex min-w-0 flex-col items-stretch justify-center gap-0.5 border-r border-border/40 px-1.5 py-0.5 text-left hover:bg-amber-500/10"
+                        className="flex min-w-0 flex-col items-stretch justify-start gap-0.5 border-r-2 border-white/25 px-1 py-0.5 text-left hover:bg-amber-500/10"
                         style={{ gridColumn: `span ${columnCount}` }}
                         title={`${lanes[0].label} · ${formatLaneStatsTitle(lanes[0].stats)}`}
                       >
-                        <span className="truncate text-[10px] font-semibold leading-tight text-amber-50">
+                        <span className="line-clamp-2 text-center text-xs font-semibold leading-tight break-words text-amber-50">
                           {lanes[0].label}
                         </span>
-                        <span className="flex min-w-0 flex-wrap items-center gap-x-1 font-mono text-[9px] leading-tight text-muted-foreground">
-                          <span>{lanes[0].stats.total}</span>
-                          {lanes[0].stats.ok ? (
-                            <span className="text-emerald-400/90">
-                              ✓{lanes[0].stats.ok}
-                            </span>
-                          ) : null}
-                          {lanes[0].stats.fail ? (
-                            <span className="text-rose-400/90">
-                              ✗{lanes[0].stats.fail}
-                            </span>
-                          ) : null}
-                          {lanes[0].stats.running ? (
-                            <span className="text-sky-400/90">
-                              ▶{lanes[0].stats.running}
-                            </span>
-                          ) : null}
-                        </span>
+                        <LaneStatsBlock stats={lanes[0].stats} />
                       </button>
                     ) : (
                       lanes.map((lane) => (
@@ -964,30 +1056,13 @@ export function ExecutorTimesMap({
                           type="button"
                           data-lane-chip
                           onClick={() => enterLane(lane)}
-                          className="flex min-w-0 flex-col items-stretch justify-center gap-0.5 border-r border-border/40 px-1.5 py-0.5 text-left hover:bg-amber-500/10"
+                          className="flex min-w-0 flex-col items-stretch justify-start gap-0.5 border-r-2 border-white/25 px-1 py-0.5 text-left hover:bg-amber-500/10"
                           title={`${lane.label} · ${formatLaneStatsTitle(lane.stats)}`}
                         >
-                          <span className="truncate text-[10px] font-semibold leading-tight text-amber-50">
+                          <span className="line-clamp-2 text-center text-xs font-semibold leading-tight break-words text-amber-50">
                             {lane.label}
                           </span>
-                          <span className="flex min-w-0 flex-wrap items-center gap-x-1 font-mono text-[9px] leading-tight text-muted-foreground">
-                            <span>{lane.stats.total}</span>
-                            {lane.stats.ok ? (
-                              <span className="text-emerald-400/90">
-                                ✓{lane.stats.ok}
-                              </span>
-                            ) : null}
-                            {lane.stats.fail ? (
-                              <span className="text-rose-400/90">
-                                ✗{lane.stats.fail}
-                              </span>
-                            ) : null}
-                            {lane.stats.running ? (
-                              <span className="text-sky-400/90">
-                                ▶{lane.stats.running}
-                              </span>
-                            ) : null}
-                          </span>
+                          <LaneStatsBlock stats={lane.stats} />
                         </button>
                       ))
                     )}
@@ -1002,31 +1077,46 @@ export function ExecutorTimesMap({
                     minHeight: bodyHeight,
                   }}
                 >
-                  <div className="sticky left-0 z-[25] border-r border-border/60 bg-background/95 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.45)] backdrop-blur">
-                    {section.slots.map((slot) => (
-                      <div
-                        key={slot.ms}
-                        className="flex items-start justify-end border-b border-border/40 bg-muted/30 pr-1.5 pt-0.5 font-mono text-[10px] text-muted-foreground"
-                        style={{ height: ROW_PX }}
-                      >
-                        {slot.label}
-                      </div>
-                    ))}
+                  <div className="sticky left-0 z-[25] border-r-2 border-white/30 bg-background/95 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.45)] backdrop-blur">
+                    {section.slots.map((slot) => {
+                      const isHour = slot.label.endsWith(":00");
+                      return (
+                        <div
+                          key={slot.ms}
+                          className={cn(
+                            "flex items-start justify-end bg-muted/30 pr-1.5 pt-0.5 font-mono text-[10px]",
+                            isHour
+                              ? "border-b-2 border-white/40 font-medium text-foreground/80"
+                              : "border-b border-white/20 text-muted-foreground",
+                          )}
+                          style={{ height: ROW_PX }}
+                        >
+                          {slot.label}
+                        </div>
+                      );
+                    })}
                   </div>
 
                   {Array.from({ length: columnCount }, (_, col) => (
                     <div
                       key={`col-${col}`}
-                      className="relative border-r border-border/30"
+                      className="relative border-r-2 border-white/25"
                       style={{ height: bodyHeight }}
                     >
-                      {section.slots.map((slot) => (
-                        <div
-                          key={`${col}-${slot.ms}`}
-                          className="border-b border-border/25"
-                          style={{ height: ROW_PX }}
-                        />
-                      ))}
+                      {section.slots.map((slot) => {
+                        const isHour = slot.label.endsWith(":00");
+                        return (
+                          <div
+                            key={`${col}-${slot.ms}`}
+                            className={cn(
+                              isHour
+                                ? "border-b-2 border-white/35"
+                                : "border-b border-white/18",
+                            )}
+                            style={{ height: ROW_PX }}
+                          />
+                        );
+                      })}
                     </div>
                   ))}
 
@@ -1076,13 +1166,17 @@ export function ExecutorTimesMap({
                           }}
                           className={cn(
                             "absolute flex flex-col overflow-hidden rounded-md border px-1.5 py-1 text-left shadow-sm",
-                            "border-amber-400/40 bg-amber-500/15 text-amber-50",
-                            "z-[2] hover:bg-amber-500/25",
+                            "border-neutral-400 bg-neutral-300 text-black",
+                            "z-[2] hover:bg-neutral-200",
                           )}
                           style={{ top: top + 1, left, width, height }}
-                          title={lane?.label ?? "Abrir"}
+                          title={
+                            lane
+                              ? `${lane.label} · ${formatLaneStatsTitle(lane.stats)}`
+                              : "Abrir"
+                          }
                         >
-                          <span className="line-clamp-3 text-[10px] font-semibold leading-tight">
+                          <span className="line-clamp-2 text-center text-xs font-semibold leading-tight break-words">
                             {lane?.label ?? "…"}
                           </span>
                         </button>

@@ -6,8 +6,9 @@ import {
   createDevSessionToken,
   devSessionCookieOptions,
 } from "@/lib/dev-session";
-import { getFirstAssignedPath, hasAssignedAccess } from "@/lib/admin-data";
+import { getPostLoginPath, hasAssignedAccess } from "@/lib/admin-data";
 import { getSuperAdminEmail } from "@/lib/current-user";
+import { isMobileUserAgent } from "@/lib/request-device";
 
 const bodySchema = z.object({
   email: z.string().email(),
@@ -37,10 +38,14 @@ export async function POST(request: Request) {
 
   const userId = `dev:${email}`;
   const token = await createDevSessionToken(userId);
-  const destination =
-    email === getSuperAdminEmail()
-      ? "/ejecuciones"
-      : await getFirstAssignedPath(email);
+  const isMobile = isMobileUserAgent(
+    request.headers.get("user-agent"),
+    request.headers.get("sec-ch-ua-mobile"),
+  );
+  const destination = await getPostLoginPath(email, {
+    isMobile,
+    isSuperAdmin: email === getSuperAdminEmail(),
+  });
   const response = NextResponse.json({ ok: true, userId, destination });
   const cookie = devSessionCookieOptions(token);
   response.cookies.set(cookie.name, cookie.value, cookie);

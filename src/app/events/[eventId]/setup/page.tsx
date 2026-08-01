@@ -1,9 +1,6 @@
-import { ChevronRight, Command } from "lucide-react";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import { AuthHeader } from "@/components/auth-header";
-import { ControlXGuideChat } from "@/components/controlx-guide-chat";
+import { AppHeader } from "@/components/app-header";
 import { EventSetup } from "@/components/event-setup";
 import {
   canAccessEvent,
@@ -37,27 +34,13 @@ export default async function EventSetupPage({
 
   return (
     <div className="min-h-screen">
-      <header className="border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
-          <Link
-            href={user.isSuperAdmin ? "/dashboard" : "/"}
-            className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-          >
-            <Command className="size-4" />
-          </Link>
-          <Link
-            href={`/events/${eventId}`}
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            {setup.event.name}
-          </Link>
-          <ChevronRight className="size-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Setup</span>
-          <div className="ml-auto">
-            <AuthHeader />
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        homeHref={user.isSuperAdmin ? "/dashboard" : "/ejecuciones"}
+        crumbs={[
+          { label: setup.event.name, href: `/events/${eventId}` },
+          { label: "Setup" },
+        ]}
+      />
 
       <main className="mx-auto max-w-7xl px-6 py-10">
         <section className="mb-8">
@@ -80,13 +63,6 @@ export default async function EventSetupPage({
           canManageEventAdminRole={canManageEventAdminRole}
         />
       </main>
-
-      <ControlXGuideChat
-        zone="setup"
-        organizationId={setup.organization?.id}
-        eventId={eventId}
-        eventName={setup.event.name}
-      />
     </div>
   );
 }

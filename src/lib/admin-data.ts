@@ -1614,10 +1614,69 @@ export async function hasAssignedAccess(email: string): Promise<boolean> {
   );
 }
 
-/** Home operativo (PWA): lista de ejecuciones accesibles. */
+/** Home operativo móvil/PWA: lista de ejecuciones accesibles. */
 export async function getFirstAssignedPath(email: string): Promise<string> {
+  return getPostLoginPath(email, { isMobile: true });
+}
+
+/**
+ * Destino post-login.
+ * - Móvil / responsive: siempre /ejecuciones (hub operativo).
+ * - PC (portal):
+ *   - SuperAdmin → /dashboard
+ *   - OrgAdmin → /organizations/{id} (eventos de la org)
+ *   - EventAdmin → /events/{id}/setup
+ *   - Ejecutor / aprobador / steerco → /ejecuciones
+ */
+export async function getPostLoginPath(
+  email: string,
+  options: { isMobile: boolean; isSuperAdmin?: boolean },
+): Promise<string> {
+  const normalized = email.toLowerCase();
+
+  if (options.isMobile) {
+    if (options.isSuperAdmin || (await hasAssignedAccess(normalized))) {
+      return "/ejecuciones";
+    }
+    return "/";
+  }
+
+  // Desktop / portal
+  if (options.isSuperAdmin) {
+    return "/dashboard";
+  }
+
   if (!isMongoConfigured()) return "/";
-  if (await hasAssignedAccess(email)) return "/ejecuciones";
+
+  const database = await getDatabase();
+
+  const orgAdmin = await database
+    .collection<OrganizationMembershipDocument>("organizationMemberships")
+    .findOne(
+      { email: normalized, status: "ACTIVE", role: "ORG_ADMIN" },
+      { sort: { createdAt: 1 }, projection: { organizationId: 1 } },
+    );
+  if (orgAdmin) {
+    return `/organizations/${orgAdmin.organizationId.toHexString()}`;
+  }
+
+  const eventMemberships = await database
+    .collection<EventMembershipDocument>("eventMemberships")
+    .find({ email: normalized, status: "ACTIVE" })
+    .sort({ createdAt: 1 })
+    .toArray();
+
+  const eventAdmin = eventMemberships.find((row) => hasEventAdminRole(row));
+  if (eventAdmin) {
+    return `/events/${eventAdmin.eventId.toHexString()}/setup`;
+  }
+
+  if (
+    eventMemberships.some((row) => membershipRoles(row).length > 0)
+  ) {
+    return "/ejecuciones";
+  }
+
   return "/";
 }
 

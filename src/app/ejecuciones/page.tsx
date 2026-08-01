@@ -1,14 +1,13 @@
-import { Command, Eye, Play } from "lucide-react";
+import { Eye, Play } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { AuthHeader } from "@/components/auth-header";
+import { AppHeader } from "@/components/app-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PwaInstallHint } from "@/components/pwa-install-hint";
 import { hasAssignedAccess } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
-import { formatDayTimeLabel } from "@/lib/execution-schedule";
 import {
   listAccessibleExecutionsForUser,
   type AccessibleExecutionCard,
@@ -63,45 +62,51 @@ function ExecutionRow({ item }: { item: AccessibleExecutionCard }) {
     <article className="border-b border-border/60 py-3 last:border-b-0">
       <div className="flex items-start justify-between gap-3">
         <Link href={primaryHref} className="min-w-0 flex-1 text-left">
-          <div className="flex flex-wrap items-center gap-1.5">
+          <p className="truncate text-lg font-semibold tracking-tight">
+            {item.organizationName} · {item.eventName}
+          </p>
+          <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
+            <h2 className="truncate text-sm text-muted-foreground">
+              {item.name}
+            </h2>
             <Badge
               variant="outline"
-              className={cn("text-[10px]", statusTone(item.status))}
+              className={cn("shrink-0 px-2 py-0.5 text-xs", statusTone(item.status))}
             >
               {STATUS_LABELS[item.status]}
             </Badge>
-            <Badge variant="outline" className="text-[10px]">
-              {item.type}
-              {item.iteration > 1 ? ` · #${item.iteration}` : ""}
-            </Badge>
-            {item.assignedStepCount > 0 ? (
-              <Badge variant="outline" className="text-[10px] text-cyan-200">
-                {item.assignedStepCount} mío
-                {item.assignedStepCount === 1 ? "" : "s"}
-              </Badge>
-            ) : null}
           </div>
-          <h2 className="mt-1.5 truncate text-base font-semibold tracking-tight">
-            {item.name}
-          </h2>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {item.organizationName} · {item.eventName}
-          </p>
-          {item.anchorStartAt ? (
-            <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-              T0 {formatDayTimeLabel(item.anchorStartAt, item.timezone)}
-            </p>
-          ) : null}
         </Link>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         {canRun ? (
           <Button size="sm" asChild>
             <Link href={`/run/${item.id}`}>
               <Play className="size-3.5" />
-              Mi turno
+              Ir a Mis Pasos
             </Link>
+          </Button>
+        ) : null}
+        {item.assignedStepCount > 0 ? (
+          <Button
+            type="button"
+            size="sm"
+            tabIndex={-1}
+            aria-label={`${item.assignedStepCount} pasos asignados`}
+            className={cn(
+              "pointer-events-none shadow-none",
+              // Mismo borde transparente que el botón primary; el contorno
+              // va por ring inset para no cambiar el alto visual.
+              "border-transparent bg-white text-black ring-1 ring-inset ring-neutral-300",
+              "hover:bg-white hover:text-black",
+              "dark:border-transparent dark:bg-white dark:text-black dark:ring-neutral-300",
+              "dark:hover:bg-white dark:hover:text-black",
+            )}
+          >
+            {item.assignedStepCount} paso
+            {item.assignedStepCount === 1 ? "" : "s"} mío
+            {item.assignedStepCount === 1 ? "" : "s"}
           </Button>
         ) : null}
         {canPanel ? (
@@ -145,29 +150,11 @@ export default async function EjecucionesPage() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      <header className="shrink-0 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-3 sm:h-16 sm:gap-3 sm:px-6">
-          <Link
-            href="/ejecuciones"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-          >
-            <Command className="size-4" />
-          </Link>
-          <div className="min-w-0 flex-1">
-            <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-              ControlX
-            </p>
-            <h1 className="truncate text-sm font-semibold sm:text-base">
-              Ejecuciones
-            </h1>
-          </div>
-          <AuthHeader />
-        </div>
-      </header>
+      <AppHeader homeHref="/ejecuciones" title="Ejecuciones" />
 
       <main className="mx-auto min-h-0 w-full max-w-7xl flex-1 overflow-y-auto px-3 py-4 sm:px-6">
         <p className="mb-3 text-sm text-muted-foreground">
-          Simulacros y corridas de tus organizaciones. Entrá a Mi turno o al
+          Simulacros y corridas de tus organizaciones. Entra a Mis Pasos o al
           Panel según tu rol.
         </p>
         <PwaInstallHint className="mb-4" />

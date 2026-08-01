@@ -1,14 +1,15 @@
 import { redirect } from "next/navigation";
 
-import { getFirstAssignedPath } from "@/lib/admin-data";
+import { getPostLoginPath } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
+import { isMobileRequest } from "@/lib/request-device";
 
 /**
- * Resolver post-login: home operativo = /ejecuciones (también SuperAdmin).
- * Administración sigue en /dashboard desde el header.
+ * Resolver post-login:
+ * - Móvil → /ejecuciones (hub operativo / PWA)
+ * - PC → portal según rol (org → eventos, event admin → setup, resto → ejecuciones)
  *
- * Si aún no hay cookie (race en PWA), manda a /sign-in — no a la landing —
- * para que el usuario no vea el bucle "Ingresar al sistema".
+ * Si aún no hay cookie (race en PWA), manda a /sign-in — no a la landing.
  */
 export default async function EntrarPage() {
   const user = await getCurrentUser();
@@ -16,10 +17,11 @@ export default async function EntrarPage() {
     redirect("/sign-in");
   }
 
-  if (user.isSuperAdmin) {
-    redirect("/ejecuciones");
-  }
-
-  const path = await getFirstAssignedPath(user.email);
-  redirect(path);
+  const isMobile = await isMobileRequest();
+  redirect(
+    await getPostLoginPath(user.email, {
+      isMobile,
+      isSuperAdmin: user.isSuperAdmin,
+    }),
+  );
 }

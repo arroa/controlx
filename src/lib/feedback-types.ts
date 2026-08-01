@@ -16,6 +16,7 @@ export type FeedbackItem = {
   id: string;
   message: string;
   status: FeedbackStatus;
+  authorId: string;
   authorEmail: string;
   createdAt: string;
   updatedAt: string | null;

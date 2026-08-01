@@ -4,16 +4,19 @@ import { LandingAccess } from "@/components/landing-access";
 import { LoginChangelogModal } from "@/components/login-changelog-modal";
 import { PwaInstallHint } from "@/components/pwa-install-hint";
 import { Badge } from "@/components/ui/badge";
-import { getFirstAssignedPath } from "@/lib/admin-data";
+import { getPostLoginPath } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
+import { isMobileRequest } from "@/lib/request-device";
 
 export default async function Home() {
   const currentUser = await getCurrentUser();
+  const isMobile = await isMobileRequest();
   const destination = currentUser
-    ? currentUser.isSuperAdmin
-      ? "/ejecuciones"
-      : await getFirstAssignedPath(currentUser.email)
+    ? await getPostLoginPath(currentUser.email, {
+        isMobile,
+        isSuperAdmin: currentUser.isSuperAdmin,
+      })
     : "/entrar";
 
   return (

@@ -1,9 +1,8 @@
-import { Command, ScrollText } from "lucide-react";
-import Link from "next/link";
+import { ScrollText } from "lucide-react";
 import { redirect } from "next/navigation";
 
 import { AiAuditBoard } from "@/components/ai-audit-board";
-import { AuthHeader } from "@/components/auth-header";
+import { AppHeader } from "@/components/app-header";
 import { listGuideAudits } from "@/lib/ai/guide-audit";
 import {
   GUIDE_MAX_MESSAGE_CHARS,
@@ -21,25 +20,7 @@ export default async function AiAuditPage() {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
-          <Link
-            href="/dashboard"
-            className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-          >
-            <Command className="size-4" />
-          </Link>
-          <div>
-            <p className="text-sm font-semibold leading-none">Auditoría IA</p>
-            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              Solo SuperAdmin
-            </p>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <AuthHeader />
-          </div>
-        </div>
-      </header>
+      <AppHeader homeHref="/dashboard" title="Auditoría IA" />
 
       <main className="mx-auto max-w-7xl px-6 py-6">
         <section className="mb-6">

@@ -5,7 +5,7 @@ import {
   canAccessFeedback,
   createFeedback,
   feedbackInputSchema,
-  listFeedback,
+  listFeedbackForUser,
 } from "@/lib/feedback";
 
 export async function GET() {
@@ -16,7 +16,7 @@ export async function GET() {
     return NextResponse.json({ error: "Sin acceso." }, { status: 403 });
   }
 
-  const items = await listFeedback();
+  const items = await listFeedbackForUser(authResult.user);
   return NextResponse.json({ items });
 }
 

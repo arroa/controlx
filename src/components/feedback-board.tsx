@@ -81,11 +81,23 @@ function statusBadgeVariant(status: FeedbackStatus) {
 
 export function FeedbackBoard({
   initialItems,
+  viewer,
 }: {
   initialItems: FeedbackItem[];
+  viewer: {
+    id: string;
+    email: string;
+    canModerate: boolean;
+  };
 }) {
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
+
+  function canMutate(item: FeedbackItem) {
+    if (viewer.canModerate) return true;
+    if (item.authorId && item.authorId === viewer.id) return true;
+    return item.authorEmail.toLowerCase() === viewer.email.toLowerCase();
+  }
 
   function upsertItem(item: FeedbackItem) {
     setItems((current) => {
@@ -109,7 +121,9 @@ export function FeedbackBoard({
         <div>
           <h2 className="text-lg font-semibold">Comentarios</h2>
           <p className="text-sm text-muted-foreground">
-            Canal temporal · solo OrgAdmin / SuperAdmin
+            {viewer.canModerate
+              ? "Moderación · ves todos los comentarios"
+              : "Solo tus comentarios · puedes editar o borrar los tuyos"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -157,15 +171,19 @@ export function FeedbackBoard({
                   <TableCell>
                     <div className="flex justify-end gap-1">
                       <FeedbackViewDialog item={item} />
-                      <FeedbackFormDialog
-                        mode="edit"
-                        item={item}
-                        onSaved={upsertItem}
-                      />
-                      <FeedbackDeleteButton
-                        item={item}
-                        onDeleted={() => removeItem(item.id)}
-                      />
+                      {canMutate(item) ? (
+                        <>
+                          <FeedbackFormDialog
+                            mode="edit"
+                            item={item}
+                            onSaved={upsertItem}
+                          />
+                          <FeedbackDeleteButton
+                            item={item}
+                            onDeleted={() => removeItem(item.id)}
+                          />
+                        </>
+                      ) : null}
                     </div>
                   </TableCell>
                 </TableRow>

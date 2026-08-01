@@ -1,9 +1,6 @@
-import { ChevronRight, Command } from "lucide-react";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import { AuthHeader } from "@/components/auth-header";
-import { ControlXGuideChat } from "@/components/controlx-guide-chat";
+import { AppHeader } from "@/components/app-header";
 import { OrganizationWorkspace } from "@/components/organization-workspace";
 import { canAccessOrganization, getOrganizationWorkspace } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
@@ -27,24 +24,10 @@ export default async function OrganizationPage({
 
   return (
     <div className="min-h-screen">
-      <header className="border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
-          <Link
-            href={user.isSuperAdmin ? "/dashboard" : "/"}
-            className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-          >
-            <Command className="size-4" />
-          </Link>
-          <span className="text-sm text-muted-foreground">ControlX</span>
-          <ChevronRight className="size-4 text-muted-foreground" />
-          <span className="text-sm font-medium">
-            {workspace.organization.name}
-          </span>
-          <div className="ml-auto flex items-center gap-2">
-            <AuthHeader />
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        homeHref={user.isSuperAdmin ? "/dashboard" : "/ejecuciones"}
+        crumbs={[{ label: workspace.organization.name }]}
+      />
 
       <main className="mx-auto max-w-7xl px-6 py-10">
         <section className="mb-10">
@@ -69,11 +52,6 @@ export default async function OrganizationPage({
           readOnly={workspace.organization.status === "ARCHIVED"}
         />
       </main>
-
-      <ControlXGuideChat
-        zone="events"
-        organizationId={organizationId}
-      />
     </div>
   );
 }

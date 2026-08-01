@@ -13,6 +13,12 @@ import { getDatabase, isMongoConfigured } from "@/lib/mongodb";
 export type { FeedbackItem, FeedbackStatus } from "@/lib/feedback-types";
 export { FEEDBACK_STATUS_LABELS, FEEDBACK_STATUSES } from "@/lib/feedback-types";
 
+export type FeedbackUser = {
+  id: string;
+  email: string;
+  isSuperAdmin: boolean;
+};
+
 export const feedbackInputSchema = z.object({
   message: z.string().trim().min(5).max(4000),
   status: z.enum(FEEDBACK_STATUSES).default("OPEN"),
@@ -38,30 +44,64 @@ function toItem(row: FeedbackDocument): FeedbackItem {
     id: row._id!.toHexString(),
     message: row.message,
     status: row.status ?? "OPEN",
+    authorId: row.authorId,
     authorEmail: row.authorEmail,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
   };
 }
 
+/** OrgAdmin activo en alguna organización. */
 export async function isOrgAdmin(email: string): Promise<boolean> {
   if (!isMongoConfigured()) return false;
   const database = await getDatabase();
   const membership = await database
     .collection("organizationMemberships")
     .findOne(
-      { email: email.toLowerCase(), status: "ACTIVE" },
+      {
+        email: email.toLowerCase(),
+        status: "ACTIVE",
+        role: "ORG_ADMIN",
+      },
       { projection: { _id: 1 } },
     );
   return Boolean(membership);
 }
 
-/** Beta feedback: cualquier usuario autenticado. */
-export async function canAccessFeedback(_user: {
+/** Acceso al canal beta: cualquier usuario autenticado. */
+export async function canAccessFeedback(user: {
   email: string;
   isSuperAdmin: boolean;
 }): Promise<boolean> {
-  return true;
+  return Boolean(user.email);
+}
+
+/** Ver/editar todos los comentarios: SuperAdmin u OrgAdmin. */
+export async function canModerateFeedback(
+  user: FeedbackUser,
+): Promise<boolean> {
+  if (user.isSuperAdmin) return true;
+  return isOrgAdmin(user.email);
+}
+
+export async function canMutateFeedback(
+  user: FeedbackUser,
+  item: Pick<FeedbackItem, "authorId" | "authorEmail">,
+): Promise<boolean> {
+  if (await canModerateFeedback(user)) return true;
+  if (item.authorId && item.authorId === user.id) return true;
+  return item.authorEmail.toLowerCase() === user.email.toLowerCase();
+}
+
+export async function getFeedbackById(
+  id: string,
+): Promise<FeedbackItem | null> {
+  if (!ObjectId.isValid(id) || !isMongoConfigured()) return null;
+  const database = await getDatabase();
+  const row = await database
+    .collection<FeedbackDocument>("feedback")
+    .findOne({ _id: new ObjectId(id) });
+  return row ? toItem(row) : null;
 }
 
 export async function listFeedback(limit = 100): Promise<FeedbackItem[]> {
@@ -70,6 +110,32 @@ export async function listFeedback(limit = 100): Promise<FeedbackItem[]> {
   const rows = await database
     .collection<FeedbackDocument>("feedback")
     .find({})
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+
+  return rows.map(toItem);
+}
+
+/** Lista según rol: moderadores ven todo; el resto solo lo propio. */
+export async function listFeedbackForUser(
+  user: FeedbackUser,
+  limit = 100,
+): Promise<FeedbackItem[]> {
+  if (!isMongoConfigured()) return [];
+  if (await canModerateFeedback(user)) {
+    return listFeedback(limit);
+  }
+
+  const database = await getDatabase();
+  const rows = await database
+    .collection<FeedbackDocument>("feedback")
+    .find({
+      $or: [
+        { authorId: user.id },
+        { authorEmail: user.email.toLowerCase() },
+      ],
+    })
     .sort({ createdAt: -1 })
     .limit(limit)
     .toArray();

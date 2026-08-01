@@ -1,9 +1,8 @@
-import { ChevronRight, Command } from "lucide-react";
+import { Command } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import { AuthHeader } from "@/components/auth-header";
-import { ControlXGuideChat } from "@/components/controlx-guide-chat";
+import { AppHeader } from "@/components/app-header";
 import { DevActorSwitcher } from "@/components/dev-actor-switcher";
 import { EventWorkspace } from "@/components/event-workspace";
 import { Badge } from "@/components/ui/badge";
@@ -48,54 +47,43 @@ export default async function EventPage({
     ? await getEffectiveEventActor(eventId, user)
     : { actor: null, impersonating: false };
 
+  const homeHref =
+    role === "SuperAdmin"
+      ? "/dashboard"
+      : role === "OrgAdmin" && workspace.organization
+        ? `/organizations/${workspace.organization.id}`
+        : "/ejecuciones";
+
+  const crumbs = [
+    ...(workspace.organization
+      ? [
+          {
+            label: workspace.organization.name,
+            href:
+              role === "SuperAdmin" || role === "OrgAdmin"
+                ? `/organizations/${workspace.organization.id}`
+                : undefined,
+          },
+        ]
+      : []),
+    { label: workspace.event.name },
+  ];
+
   return (
     <div className="min-h-screen">
-      <header className="border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 overflow-hidden px-3 sm:h-16 sm:gap-3 sm:px-6">
-          <Link
-            href={
-              role === "SuperAdmin"
-                ? "/dashboard"
-                : role === "OrgAdmin" && workspace.organization
-                  ? `/organizations/${workspace.organization.id}`
-                  : "/"
-            }
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-          >
-            <Command className="size-4" />
-          </Link>
-          {workspace.organization ? (
-            <>
-              {role === "SuperAdmin" || role === "OrgAdmin" ? (
-                <Link
-                  href={`/organizations/${workspace.organization.id}`}
-                  className="hidden min-w-0 truncate text-sm text-muted-foreground hover:text-foreground sm:inline"
-                >
-                  {workspace.organization.name}
-                </Link>
-              ) : (
-                <span className="hidden min-w-0 truncate text-sm text-muted-foreground sm:inline">
-                  {workspace.organization.name}
-                </span>
-              )}
-              <ChevronRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
-            </>
-          ) : null}
-          <span className="min-w-0 truncate text-sm font-medium">
-            {workspace.event.name}
-          </span>
-          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
-            {showImpersonation ? (
-              <DevActorSwitcher
-                eventId={eventId}
-                actors={actors}
-                selectedActorId={impersonating && actor ? actor.id : null}
-              />
-            ) : null}
-            <AuthHeader />
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        homeHref={homeHref}
+        crumbs={crumbs}
+        actions={
+          showImpersonation ? (
+            <DevActorSwitcher
+              eventId={eventId}
+              actors={actors}
+              selectedActorId={impersonating && actor ? actor.id : null}
+            />
+          ) : null
+        }
+      />
 
       <main className="mx-auto max-w-7xl px-6 py-10">
         <section className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -138,13 +126,6 @@ export default async function EventPage({
           readOnly={workspace.event.status === "ARCHIVED"}
         />
       </main>
-
-      <ControlXGuideChat
-        zone="overview"
-        organizationId={workspace.organization?.id}
-        eventId={eventId}
-        eventName={workspace.event.name}
-      />
     </div>
   );
 }

@@ -41,7 +41,7 @@ export const RUNTIME_BAR_LEGEND: Array<{
   { key: "approval", label: "Espera aprobación", swatch: "bg-amber-400 border-amber-300" },
   { key: "ok", label: "OK", swatch: "bg-emerald-500 border-emerald-300" },
   { key: "fail", label: "Fallido", swatch: "bg-rose-500 border-rose-300" },
-  { key: "other", label: "De otro (Destacar)", swatch: "bg-zinc-500/45 border-zinc-400/50" },
+  { key: "other", label: "De otro (Destacar)", swatch: "bg-zinc-500 border-zinc-400" },
 ];
 
 /**
@@ -58,7 +58,7 @@ export function runtimeBarTone(input: {
 
   // En Destacar: ajenos siempre gris — el color solo habla de lo tuyo.
   if (dimOthers && !mine) {
-    return "border-zinc-400/50 bg-zinc-500/40 text-zinc-200";
+    return "border-zinc-400 bg-zinc-500 text-zinc-50";
   }
 
   if (

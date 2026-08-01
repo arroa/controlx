@@ -4,7 +4,6 @@ import {
   CircleCheck,
   CirclePlay,
   CircleX,
-  Layers,
   RotateCcw,
   ShieldAlert,
 } from "lucide-react";
@@ -19,20 +18,9 @@ import { ExecutionStepInfoDialog } from "@/components/execution-step-info-dialog
 import { ExecutorTimesMap } from "@/components/executor-times-map";
 import type { FlowerAction } from "@/components/step-action-flower";
 import { TimesView, type TimesViewRow } from "@/components/times-view";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import type { GateSummary } from "@/lib/admin-data";
 import {
   EXECUTION_FOCUS_OPTIONS,
-  RUNTIME_BAR_LEGEND,
   filterStepsByFocus,
   isMineStep,
   runtimeBarTone,
@@ -103,13 +91,6 @@ function executionSyncKey(detail: ExecutionDetail) {
   ].join("|");
 }
 
-type WorkstreamOption = {
-  id: string;
-  name: string;
-  stepCount: number;
-  mineCount: number;
-};
-
 const MOBILE_MQ = "(max-width: 767px)";
 
 function subscribeMobile(onChange: () => void) {
@@ -159,12 +140,10 @@ function patchSteps(
 export function ExecutionTimesPanel({
   initial,
   actorId,
-  actorName,
   canOperateAny = false,
   canForceSuccess = false,
   /** Si false (Panel), la flor no ofrece Iniciar/cerrar/rearrancar: solo info (+ Forzar OK admin). */
   allowStepOperations = true,
-  title = "Panel de tiempos",
 }: {
   initial: ExecutionDetail;
   actorId: string | null;
@@ -186,9 +165,6 @@ export function ExecutionTimesPanel({
   const [focusMode, setFocusMode] = useState<ExecutionFocusMode>(
     hasActor ? "highlight-mine" : "all",
   );
-  const [workstreamIds, setWorkstreamIds] = useState<string[] | null>(null);
-  const [wsModalOpen, setWsModalOpen] = useState(false);
-  const [pendingWsIds, setPendingWsIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [infoId, setInfoId] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{
@@ -249,48 +225,9 @@ export function ExecutionTimesPanel({
   }, [detail.id, busy, outcome]);
 
   const mineCount = useMemo(
-    () =>
-      detail.steps.filter((step) => isMineStep(step, actorId)).length,
+    () => detail.steps.filter((step) => isMineStep(step, actorId)).length,
     [detail.steps, actorId],
   );
-
-  const workstreams = useMemo(() => {
-    const map = new Map<string, WorkstreamOption>();
-    for (const step of detail.steps) {
-      const current = map.get(step.workstreamId);
-      const mine = isMineStep(step, actorId);
-      if (current) {
-        current.stepCount += 1;
-        if (mine) current.mineCount += 1;
-      } else {
-        map.set(step.workstreamId, {
-          id: step.workstreamId,
-          name: step.workstreamName,
-          stepCount: 1,
-          mineCount: mine ? 1 : 0,
-        });
-      }
-    }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
-  }, [detail.steps, actorId]);
-
-  const allWsIds = useMemo(
-    () => workstreams.map((item) => item.id),
-    [workstreams],
-  );
-
-  const wsLabel = useMemo(() => {
-    if (workstreamIds == null || workstreamIds.length === allWsIds.length) {
-      return "Todos los WS";
-    }
-    if (workstreamIds.length === 1) {
-      return (
-        workstreams.find((item) => item.id === workstreamIds[0])?.name ??
-        "1 WS"
-      );
-    }
-    return `${workstreamIds.length} WS`;
-  }, [workstreamIds, allWsIds.length, workstreams]);
 
   const infoStep = detail.steps.find((step) => step.id === infoId) ?? null;
   const outcomeStep = outcome
@@ -328,18 +265,13 @@ export function ExecutionTimesPanel({
   );
 
   const visibleTimesRows = useMemo(() => {
-    const wsSet = workstreamIds == null ? null : new Set(workstreamIds);
     const focusedIds = new Set(
       filterStepsByFocus(detail.steps, actorId, effectiveFocus).map(
         (step) => step.id,
       ),
     );
-    return allTimesRows.filter((row) => {
-      if (!focusedIds.has(row.id)) return false;
-      if (wsSet && !wsSet.has(row.workstreamId)) return false;
-      return true;
-    });
-  }, [allTimesRows, detail.steps, actorId, effectiveFocus, workstreamIds]);
+    return allTimesRows.filter((row) => focusedIds.has(row.id));
+  }, [allTimesRows, detail.steps, actorId, effectiveFocus]);
 
   function getBarClass(row: TimesViewRow, active: boolean): string {
     const mine = Boolean(row.mine);
@@ -539,33 +471,6 @@ export function ExecutionTimesPanel({
     return actions;
   }
 
-  function openWsModal() {
-    setPendingWsIds(
-      workstreamIds == null ? [...allWsIds] : [...workstreamIds],
-    );
-    setWsModalOpen(true);
-  }
-
-  function togglePending(id: string) {
-    setPendingWsIds((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id],
-    );
-  }
-
-  function applyWsSelection() {
-    if (
-      pendingWsIds.length === 0 ||
-      pendingWsIds.length === allWsIds.length
-    ) {
-      setWorkstreamIds(null);
-    } else {
-      setWorkstreamIds(pendingWsIds);
-    }
-    setWsModalOpen(false);
-  }
-
   function closeOutcome() {
     setOutcome(null);
     setComment("");
@@ -686,37 +591,7 @@ export function ExecutionTimesPanel({
       ) : null}
 
       <div className="shrink-0 space-y-2 border-b py-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-              {actorName ? `${title} · ${actorName}` : title}
-            </p>
-            <h1 className="truncate text-lg font-semibold tracking-tight">
-              {detail.name}
-            </h1>
-            <p className="hidden text-xs text-muted-foreground sm:block">
-              Móvil: tiempo hacia abajo · PC: Times panorámico
-            </p>
-          </div>
-          {hasActor ? (
-            <Badge variant="outline">{mineCount} míos</Badge>
-          ) : (
-            <Badge variant="outline">{detail.steps.length} pasos</Badge>
-          )}
-        </div>
-
         <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="min-w-0 justify-start"
-            onClick={openWsModal}
-          >
-            <Layers className="size-3.5 shrink-0" />
-            <span className="truncate">{wsLabel}</span>
-          </Button>
-
           {hasActor ? (
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-md border">
               {EXECUTION_FOCUS_OPTIONS.map((option) => (
@@ -731,26 +606,13 @@ export function ExecutionTimesPanel({
                       : "bg-muted/20 text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  {option.label}
+                  {option.value === "mine-only"
+                    ? `${option.label} (${mineCount})`
+                    : option.label}
                 </button>
               ))}
             </div>
           ) : null}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-          <span className="font-medium text-foreground/80">★ tuyo</span>
-          {RUNTIME_BAR_LEGEND.filter((item) =>
-            dimOthers ? true : item.key !== "other",
-          ).map((item) => (
-            <span key={item.key} className="inline-flex items-center gap-1">
-              <span
-                className={cn("size-2.5 shrink-0 rounded-sm border", item.swatch)}
-                aria-hidden
-              />
-              {item.label}
-            </span>
-          ))}
         </div>
 
         {error ? (
@@ -769,7 +631,7 @@ export function ExecutionTimesPanel({
             timezone={detail.timezone}
             anchorStartAt={detail.anchorStartAt}
             gates={timesGates}
-            workstreamIds={workstreamIds}
+            workstreamIds={null}
             focusMode={effectiveFocus}
             canOperateAny={canOperateAny}
             canForceSuccess={canForceSuccess}
@@ -811,101 +673,6 @@ export function ExecutionTimesPanel({
           />
         </div>
       )}
-
-      <Dialog open={wsModalOpen} onOpenChange={setWsModalOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Workstreams visibles</DialogTitle>
-            <DialogDescription>
-              Elige uno, varios o todos.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={() => setPendingWsIds([...allWsIds])}
-            >
-              Todos
-            </Button>
-            {hasActor ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  setPendingWsIds(
-                    workstreams
-                      .filter((item) => item.mineCount > 0)
-                      .map((item) => item.id),
-                  )
-                }
-              >
-                Donde tengo pasos
-              </Button>
-            ) : null}
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => setPendingWsIds([])}
-            >
-              Ninguno
-            </Button>
-          </div>
-
-          <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border p-1">
-            {workstreams.map((ws) => {
-              const checked = pendingWsIds.includes(ws.id);
-              return (
-                <label
-                  key={ws.id}
-                  className={cn(
-                    "flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 hover:bg-muted/60",
-                    checked && "bg-muted/40",
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => togglePending(ws.id)}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">
-                      {ws.name}
-                    </span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {ws.stepCount} paso{ws.stepCount === 1 ? "" : "s"}
-                      {ws.mineCount
-                        ? ` · ${ws.mineCount} tuyo${ws.mineCount === 1 ? "" : "s"}`
-                        : ""}
-                    </span>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setWsModalOpen(false)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={pendingWsIds.length === 0}
-              onClick={applyWsSelection}
-            >
-              Aplicar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <ExecutionStepInfoDialog
         open={Boolean(infoStep)}

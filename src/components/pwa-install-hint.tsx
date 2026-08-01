@@ -29,33 +29,56 @@ function isIos() {
   );
 }
 
+/** Chrome/Edge/Firefox en iOS (CriOS, EdgiOS, FxiOS) — no pueden instalar PWA. */
+function isIosNonSafari() {
+  if (!isIos()) return false;
+  const ua = window.navigator.userAgent;
+  return /CriOS|EdgiOS|FxiOS|OPiOS/i.test(ua);
+}
+
+/** Solo móvil/tablet: en PC no mostramos el CTA. */
+function isMobileDevice() {
+  if (typeof window === "undefined") return false;
+  const ua = window.navigator.userAgent;
+  if (/Android|iPhone|iPad|iPod/i.test(ua)) return true;
+  // iPadOS moderno se reporta como MacIntel + touch
+  if (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) {
+    return true;
+  }
+  return false;
+}
+
 /**
- * CTA explícito para instalar la PWA.
- * - Si Chrome dispara beforeinstallprompt → prompt nativo
- * - Si no → muestra cómo hacerlo (menú ⋮ o Compartir en iOS)
+ * CTA explícito para instalar la PWA (solo móvil).
+ * - Android Chrome: beforeinstallprompt → prompt nativo
+ * - iOS Safari: instrucciones Compartir → Añadir a inicio
+ * - iOS Chrome/otros: avisar que hay que usar Safari
+ * - PC: no se muestra
  */
 export function PwaInstallHint({
   className,
   variant = "compact",
 }: {
   className?: string;
-  /** landing = botón grande siempre visible */
+  /** landing = botón grande */
   variant?: "compact" | "landing";
 }) {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(
     null,
   );
   const [ios, setIos] = useState(false);
+  const [iosOtherBrowser, setIosOtherBrowser] = useState(false);
   const [hidden, setHidden] = useState(true);
   const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
-    if (isStandalone()) {
+    if (isStandalone() || !isMobileDevice()) {
       setHidden(true);
       return;
     }
     setHidden(false);
     setIos(isIos());
+    setIosOtherBrowser(isIosNonSafari());
 
     function onBeforeInstall(event: Event) {
       event.preventDefault();
@@ -87,12 +110,26 @@ export function PwaInstallHint({
 
   const help = (
     <div className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2.5 text-left text-xs leading-relaxed text-muted-foreground">
-      {ios ? (
+      {iosOtherBrowser ? (
         <p className="flex items-start gap-2">
           <Share className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            En Safari: tocá <strong className="text-foreground">Compartir</strong>{" "}
-            →{" "}
+            En iPhone, Chrome no puede instalar apps web. Abre{" "}
+            <strong className="text-foreground">controlx.besharpx.com</strong>{" "}
+            en <strong className="text-foreground">Safari</strong> →{" "}
+            <strong className="text-foreground">Compartir</strong> →{" "}
+            <strong className="text-foreground">
+              Añadir a pantalla de inicio
+            </strong>
+            .
+          </span>
+        </p>
+      ) : ios ? (
+        <p className="flex items-start gap-2">
+          <Share className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            En Safari: toca{" "}
+            <strong className="text-foreground">Compartir</strong> →{" "}
             <strong className="text-foreground">
               Añadir a pantalla de inicio
             </strong>
@@ -137,7 +174,7 @@ export function PwaInstallHint({
     <div className={cn("space-y-2", className)}>
       <div className="flex items-center justify-between gap-3 rounded-xl border border-cyan-500/30 bg-cyan-950/40 px-3 py-2.5">
         <p className="min-w-0 text-xs text-cyan-50/90">
-          Instalá ControlX en el teléfono para entrar más rápido.
+          Instala ControlX en el teléfono para entrar más rápido.
         </p>
         <Button size="sm" type="button" onClick={onInstallClick}>
           <Download className="size-3.5" />

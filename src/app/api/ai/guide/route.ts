@@ -146,12 +146,9 @@ export async function POST(req: Request) {
       });
       return NextResponse.json({ error: "No autorizado." }, { status: 403 });
     }
-  } else {
-    return NextResponse.json(
-      { error: "Falta organizationId o eventId." },
-      { status: 400 },
-    );
   }
+  // Sin org/evento: modo conocimiento de producto (Xavier global).
+
 
   const rate = await assertGuideRateLimit(user.id);
   if (!rate.ok) {

@@ -1,10 +1,10 @@
-import { Command } from "lucide-react";
 import { redirect } from "next/navigation";
 
 import { AdminDashboard } from "@/components/admin-dashboard";
-import { AuthHeader } from "@/components/auth-header";
-import { getFirstAssignedPath, listOrganizations } from "@/lib/admin-data";
+import { AppHeader } from "@/components/app-header";
+import { getPostLoginPath, listOrganizations } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
+import { isMobileRequest } from "@/lib/request-device";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
@@ -12,7 +12,13 @@ export default async function DashboardPage() {
     redirect("/");
   }
   if (!user.isSuperAdmin) {
-    redirect(await getFirstAssignedPath(user.email));
+    const isMobile = await isMobileRequest();
+    redirect(
+      await getPostLoginPath(user.email, {
+        isMobile,
+        isSuperAdmin: false,
+      }),
+    );
   }
 
   const data = await listOrganizations().catch(() => ({
@@ -22,22 +28,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-6">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Command className="size-4" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold leading-none">ControlX</p>
-            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              Administración
-            </p>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <AuthHeader />
-          </div>
-        </div>
-      </header>
+      <AppHeader homeHref="/dashboard" title="Administración" />
 
       <main className="mx-auto max-w-7xl px-6 py-10">
         <section className="mb-10">

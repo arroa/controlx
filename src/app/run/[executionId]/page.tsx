@@ -1,9 +1,7 @@
-import { ChevronRight, Command } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import type { ReactNode } from "react";
 
-import { AuthHeader } from "@/components/auth-header";
+import { AppHeader } from "@/components/app-header";
 import { DevActorSwitcher } from "@/components/dev-actor-switcher";
 import { ExecutionTimesPanel } from "@/components/execution-times-panel";
 import { Badge } from "@/components/ui/badge";
@@ -15,72 +13,6 @@ import {
 } from "@/lib/dev-impersonation";
 import { canViewExecution } from "@/lib/execution-auth";
 import { getExecutionDetail } from "@/lib/execution-runtime";
-
-function RunBreadcrumb({
-  eventId,
-  executionName,
-}: {
-  eventId: string;
-  executionName: string;
-}) {
-  return (
-    <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden sm:gap-2">
-      <Link
-        href={`/events/${eventId}`}
-        className="hidden shrink-0 text-sm text-muted-foreground hover:text-foreground sm:inline"
-      >
-        Evento
-      </Link>
-      <ChevronRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
-      <Link
-        href="/ejecuciones"
-        className="hidden shrink-0 text-sm text-muted-foreground hover:text-foreground sm:inline"
-      >
-        Ejecuciones
-      </Link>
-      <ChevronRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
-
-      <Link
-        href="/ejecuciones"
-        className="shrink-0 text-sm text-muted-foreground hover:text-foreground sm:hidden"
-      >
-        Ejecuciones
-      </Link>
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground sm:hidden" />
-
-      <span className="truncate text-sm font-medium">{executionName}</span>
-    </nav>
-  );
-}
-
-function RunHeaderShell({
-  homeHref,
-  eventId,
-  executionName,
-  actions,
-}: {
-  homeHref: string;
-  eventId: string;
-  executionName: string;
-  actions: ReactNode;
-}) {
-  return (
-    <header className="shrink-0 border-b bg-background/95 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 overflow-hidden px-3 sm:gap-3 sm:px-6">
-        <Link
-          href={homeHref}
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-        >
-          <Command className="size-4" />
-        </Link>
-        <RunBreadcrumb eventId={eventId} executionName={executionName} />
-        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
-          {actions}
-        </div>
-      </div>
-    </header>
-  );
-}
 
 export default async function ExecutorRunPage({
   params,
@@ -108,25 +40,25 @@ export default async function ExecutorRunPage({
     user,
   );
   const homeHref = "/ejecuciones";
+  const crumbs = [
+    { label: "Ejecuciones", href: "/ejecuciones" },
+    { label: detail.name },
+  ];
 
   if (!actor) {
     return (
       <div className="flex h-dvh flex-col overflow-x-hidden">
-        <RunHeaderShell
+        <AppHeader
           homeHref={homeHref}
-          eventId={detail.eventId}
-          executionName={detail.name}
+          crumbs={crumbs}
           actions={
-            <>
-              {showImpersonation ? (
-                <DevActorSwitcher
-                  eventId={detail.eventId}
-                  actors={actors}
-                  selectedActorId={null}
-                />
-              ) : null}
-              <AuthHeader />
-            </>
+            showImpersonation ? (
+              <DevActorSwitcher
+                eventId={detail.eventId}
+                actors={actors}
+                selectedActorId={null}
+              />
+            ) : null
           }
         />
         <main className="mx-auto flex w-full max-w-7xl flex-1 items-center justify-center px-3 text-center sm:px-6">
@@ -168,10 +100,9 @@ export default async function ExecutorRunPage({
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      <RunHeaderShell
+      <AppHeader
         homeHref={homeHref}
-        eventId={detail.eventId}
-        executionName={detail.name}
+        crumbs={crumbs}
         actions={
           <>
             <Badge variant="outline" className="hidden sm:inline-flex">
@@ -184,7 +115,6 @@ export default async function ExecutorRunPage({
                 selectedActorId={impersonating ? actor.id : null}
               />
             ) : null}
-            <AuthHeader />
           </>
         }
       />

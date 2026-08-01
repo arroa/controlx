@@ -3,8 +3,10 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/api-auth";
 import {
   canAccessFeedback,
+  canMutateFeedback,
   deleteFeedback,
   feedbackUpdateSchema,
+  getFeedbackById,
   updateFeedback,
 } from "@/lib/feedback";
 
@@ -28,6 +30,17 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if ("error" in authResult) return authResult.error;
 
   const { feedbackId } = await params;
+  const existing = await getFeedbackById(feedbackId);
+  if (!existing) {
+    return NextResponse.json(
+      { error: "El comentario no existe." },
+      { status: 404 },
+    );
+  }
+  if (!(await canMutateFeedback(authResult.user, existing))) {
+    return NextResponse.json({ error: "Sin permiso." }, { status: 403 });
+  }
+
   const parsed = feedbackUpdateSchema.safeParse(
     await request.json().catch(() => null),
   );
@@ -57,6 +70,17 @@ export async function DELETE(_: Request, { params }: RouteParams) {
   if ("error" in authResult) return authResult.error;
 
   const { feedbackId } = await params;
+  const existing = await getFeedbackById(feedbackId);
+  if (!existing) {
+    return NextResponse.json(
+      { error: "El comentario no existe." },
+      { status: 404 },
+    );
+  }
+  if (!(await canMutateFeedback(authResult.user, existing))) {
+    return NextResponse.json({ error: "Sin permiso." }, { status: 403 });
+  }
+
   try {
     await deleteFeedback(feedbackId);
     return NextResponse.json({ ok: true });
