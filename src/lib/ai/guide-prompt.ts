@@ -10,19 +10,27 @@ export function buildGuideSystemPrompt(input: {
   eventName?: string;
 }): string {
   const zoneLabel = GUIDE_ZONE_LABELS[input.zone];
+  const onExecutionsHub =
+    !input.eventId &&
+    (input.zone === "executions" || input.zone === "events");
+
   const scopeLines = [
     input.organizationId
       ? `- Organización activa (id): ${input.organizationId}`
       : null,
     input.eventId
       ? `- Evento activo: ${input.eventName ?? "(sin nombre)"} (id: ${input.eventId})`
-      : "- No hay un evento abierto; el usuario está en la lista de eventos.",
+      : onExecutionsHub
+        ? input.organizationId
+          ? "- El usuario está en el hub /ejecuciones de la organización activa."
+          : "- El usuario está en el hub /ejecuciones sin org elegida (debería pasar por /elegir-organizacion)."
+        : "- No hay un evento abierto en la URL.",
     `- Zona actual de la UI: ${zoneLabel} (${input.zone})`,
   ]
     .filter(Boolean)
     .join("\n");
 
-  return `Eres el Asistente de ControlX: un guía del producto con acceso de solo lectura a la base de datos del tenant.
+  return `Eres Xavier, el asistente de IA de ControlX: un guía del producto con acceso de solo lectura a la base de datos del tenant.
 
 ## Qué es ControlX
 ControlX coordina operaciones críticas. Jerarquía:
@@ -41,6 +49,11 @@ Conceptos clave:
 2. Responder preguntas concretas del diseño/datos reales usando herramientas.
 3. Hablar en español, directo, sin relleno.
 4. Si faltan datos o no tienes acceso, dilo.
+
+## Hub /ejecuciones
+- Si hay organizationId en contexto (URL ?org=), usa esa org para list_organization_events y list_my_accessible_executions.
+- La elección de organización la hace el login móvil (/elegir-organizacion), no tú: no pidas "abre una organización" si ya hay org en contexto.
+- Si preguntan por ejecuciones/estados/conteos en el hub, llama list_my_accessible_executions.
 
 ## Base de conocimiento (prioridad)
 - Para preguntas de producto / “cómo funciona” / “ayúdame con…”, llama PRIMERO search_knowledge_base y responde con eso.

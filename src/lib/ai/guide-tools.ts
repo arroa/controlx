@@ -16,6 +16,7 @@ import {
   searchGuideKnowledge,
 } from "@/lib/ai/guide-knowledge";
 import { getEventReadinessSnapshot } from "@/lib/event-readiness";
+import { listAccessibleExecutionsForUser } from "@/lib/my-executions";
 import { isMongoConfigured } from "@/lib/mongodb";
 
 export type GuideToolContext = {
@@ -180,16 +181,95 @@ export function createGuideTools(ctx: GuideToolContext) {
       }),
     }),
 
-    list_organization_events: tool({
+    list_my_accessible_executions: tool({
       description:
-        "Lista los eventos de la organización activa (nombre, estado, Día D, conteo de ejecuciones). Sin personas.",
+        "Lista las ejecuciones (simulacros/reales) a las que el usuario tiene acceso. Si hay organización activa en contexto, solo esa org. Úsala en el hub /ejecuciones o cuando pregunten conteos/estados.",
       inputSchema: z.object({}),
       execute: async () => {
-        const organizationId = ctx.organizationId;
+        if (!isMongoConfigured()) {
+          return { error: "MongoDB no está configurado." };
+        }
+        const items = (
+          await listAccessibleExecutionsForUser(ctx.userEmail, {
+            isSuperAdmin: ctx.isSuperAdmin,
+          })
+        ).filter((item) =>
+          ctx.organizationId
+            ? item.organizationId === ctx.organizationId
+            : true,
+        );
+
+        const orgMap = new Map<
+          string,
+          { id: string; name: string; executionCount: number }
+        >();
+        for (const item of items) {
+          const current = orgMap.get(item.organizationId);
+          if (current) {
+            current.executionCount += 1;
+          } else {
+            orgMap.set(item.organizationId, {
+              id: item.organizationId,
+              name: item.organizationName,
+              executionCount: 1,
+            });
+          }
+        }
+        const organizations = [...orgMap.values()].sort((a, b) =>
+          a.name.localeCompare(b.name, "es"),
+        );
+
+        const byStatus: Record<string, number> = {};
+        for (const item of items) {
+          byStatus[item.status] = (byStatus[item.status] ?? 0) + 1;
+        }
+
+        return {
+          total: items.length,
+          byStatus,
+          organizationCount: organizations.length,
+          organizations,
+          activeOrganizationId: ctx.organizationId ?? null,
+          executions: items.map((item) => ({
+            id: item.id,
+            name: item.name,
+            type: item.type,
+            status: item.status,
+            iteration: item.iteration,
+            organizationId: item.organizationId,
+            organizationName: item.organizationName,
+            eventId: item.eventId,
+            eventName: item.eventName,
+            anchorStartAt: item.anchorStartAt,
+          })),
+          hint: ctx.organizationId
+            ? "Responde con estas ejecuciones de la organización activa. No pidas elegir org."
+            : organizations.length > 1
+              ? "Sin org en URL: resume y orienta a /elegir-organizacion; no inventes datos."
+              : organizations.length === 1
+                ? "Una sola organización en los datos: responde directamente."
+                : "No hay ejecuciones accesibles para este usuario.",
+        };
+      },
+    }),
+
+    list_organization_events: tool({
+      description:
+        "Lista los eventos de la organización activa (nombre, estado, Día D, conteo de ejecuciones). Sin personas. Si no hay org en contexto, usa antes list_my_accessible_executions.",
+      inputSchema: z.object({
+        organizationId: z
+          .string()
+          .optional()
+          .describe(
+            "Id de organización. Si se omite, usa la organización de la sesión.",
+          ),
+      }),
+      execute: async ({ organizationId: requestedOrgId }) => {
+        const organizationId = requestedOrgId?.trim() || ctx.organizationId;
         if (!organizationId) {
           return {
             error:
-              "No hay organización en contexto. Abre la lista de eventos de una organización.",
+              "No hay organización en contexto. El login móvil debe dejar ?org= en /ejecuciones.",
           };
         }
         const access = await assertOrgAccess(ctx, organizationId);

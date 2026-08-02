@@ -1621,12 +1621,15 @@ export async function getFirstAssignedPath(email: string): Promise<string> {
 
 /**
  * Destino post-login.
- * - Móvil / responsive: siempre /ejecuciones (hub operativo).
+ * - Móvil / responsive:
+ *   - 0 orgs → /
+ *   - 1 org → /ejecuciones?org=…
+ *   - 2+ orgs → /elegir-organizacion
  * - PC (portal):
  *   - SuperAdmin → /dashboard
  *   - OrgAdmin → /organizations/{id} (eventos de la org)
  *   - EventAdmin → /events/{id}/setup
- *   - Ejecutor / aprobador / steerco → /ejecuciones
+ *   - Ejecutor / aprobador / steerco → hub con org si hay una sola
  */
 export async function getPostLoginPath(
   email: string,
@@ -1635,10 +1638,20 @@ export async function getPostLoginPath(
   const normalized = email.toLowerCase();
 
   if (options.isMobile) {
-    if (options.isSuperAdmin || (await hasAssignedAccess(normalized))) {
-      return "/ejecuciones";
+    if (!options.isSuperAdmin && !(await hasAssignedAccess(normalized))) {
+      return "/";
     }
-    return "/";
+    const { listAccessibleOrganizationsForUser } = await import(
+      "@/lib/my-executions"
+    );
+    const orgs = await listAccessibleOrganizationsForUser(normalized, {
+      isSuperAdmin: options.isSuperAdmin,
+    });
+    if (!orgs.length) return "/";
+    if (orgs.length === 1) {
+      return `/ejecuciones?org=${orgs[0]!.id}`;
+    }
+    return "/elegir-organizacion";
   }
 
   // Desktop / portal
@@ -1671,9 +1684,13 @@ export async function getPostLoginPath(
     return `/events/${eventAdmin.eventId.toHexString()}/setup`;
   }
 
-  if (
-    eventMemberships.some((row) => membershipRoles(row).length > 0)
-  ) {
+  if (eventMemberships.some((row) => membershipRoles(row).length > 0)) {
+    const { listAccessibleOrganizationsForUser } = await import(
+      "@/lib/my-executions"
+    );
+    const orgs = await listAccessibleOrganizationsForUser(normalized);
+    if (orgs.length === 1) return `/ejecuciones?org=${orgs[0]!.id}`;
+    if (orgs.length > 1) return "/elegir-organizacion";
     return "/ejecuciones";
   }
 

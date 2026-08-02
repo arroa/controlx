@@ -1,4 +1,5 @@
 import { Activity, Eye, Play } from "lucide-react";
+import { ObjectId } from "mongodb";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -10,6 +11,7 @@ import { hasAssignedAccess } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import {
   listAccessibleExecutionsForUser,
+  listAccessibleOrganizationsForUser,
   type AccessibleExecutionCard,
 } from "@/lib/my-executions";
 import { cn } from "@/lib/utils";
@@ -142,31 +144,65 @@ function ExecutionRow({ item }: { item: AccessibleExecutionCard }) {
   );
 }
 
-export default async function EjecucionesPage() {
+export default async function EjecucionesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ org?: string }>;
+}) {
   const user = await getCurrentUser();
   if (!user) redirect("/");
 
-  if (
-    !user.isSuperAdmin &&
-    !(await hasAssignedAccess(user.email))
-  ) {
+  if (!user.isSuperAdmin && !(await hasAssignedAccess(user.email))) {
     redirect("/");
   }
 
-  const executions = await listAccessibleExecutionsForUser(user.email, {
+  const { org: orgParam } = await searchParams;
+  const orgs = await listAccessibleOrganizationsForUser(user.email, {
     isSuperAdmin: user.isSuperAdmin,
   });
+
+  if (!orgs.length) redirect("/");
+
+  const orgId =
+    orgParam && ObjectId.isValid(orgParam) && orgs.some((o) => o.id === orgParam)
+      ? orgParam
+      : null;
+
+  if (!orgId) {
+    if (orgs.length === 1) {
+      redirect(`/ejecuciones?org=${orgs[0]!.id}`);
+    }
+    redirect("/elegir-organizacion");
+  }
+
+  const selectedOrg = orgs.find((o) => o.id === orgId)!;
+  const hubHref = `/ejecuciones?org=${orgId}`;
+
+  const allExecutions = await listAccessibleExecutionsForUser(user.email, {
+    isSuperAdmin: user.isSuperAdmin,
+  });
+  const executions = allExecutions.filter(
+    (item) => item.organizationId === orgId,
+  );
 
   const open = executions.filter((item) => OPEN_STATUSES.has(item.status));
   const closed = executions.filter((item) => !OPEN_STATUSES.has(item.status));
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      <AppHeader homeHref="/ejecuciones" title="Ejecuciones" />
+      <AppHeader
+        homeHref={hubHref}
+        crumbs={[
+          ...(orgs.length > 1
+            ? [{ label: "Orgs", href: "/elegir-organizacion" }]
+            : []),
+          { label: selectedOrg.name },
+        ]}
+      />
 
       <main className="mx-auto min-h-0 w-full max-w-7xl flex-1 overflow-y-auto px-3 py-4 sm:px-6">
         <p className="mb-3 text-sm text-muted-foreground">
-          Simulacros y corridas de tus organizaciones. Entra a Mis Pasos o al
+          Simulacros y corridas de {selectedOrg.name}. Entra a Mis Pasos o al
           Panel según tu rol.
         </p>
         <PwaInstallHint className="mb-4" />

@@ -1,6 +1,6 @@
 import { Command } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import { AppNavSheet } from "@/components/app-nav-sheet";
 import { Button } from "@/components/ui/button";
@@ -120,12 +120,25 @@ export async function AppHeader({
         <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           {actions}
           {user ? (
-            <AppNavSheet
-              email={user.email}
-              roleLabel={user.isSuperAdmin ? "SuperAdmin" : "Usuario"}
-              isSuperAdmin={user.isSuperAdmin}
-              bypassEnabled={bypassEnabled}
-            />
+            <Suspense
+              fallback={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-9 shrink-0"
+                  disabled
+                  aria-label="Menú"
+                />
+              }
+            >
+              <AppNavSheet
+                email={user.email}
+                roleLabel={user.isSuperAdmin ? "SuperAdmin" : "Usuario"}
+                isSuperAdmin={user.isSuperAdmin}
+                bypassEnabled={bypassEnabled}
+              />
+            </Suspense>
           ) : (
             <Button variant="ghost" size="sm" asChild>
               <Link href={bypassEnabled ? "/" : "/sign-in"}>Ingresar</Link>

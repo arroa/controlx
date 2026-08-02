@@ -135,7 +135,7 @@ export function ControlXGuideChat({
                 <div className="rounded-xl border bg-muted/40 px-3 py-3 text-sm text-muted-foreground">
                   {hasScopedData
                     ? "Preguntas de producto salen de la base de conocimiento. Preguntas del evento leen la base de datos (solo lectura)."
-                    : "Puedes preguntar cómo funciona ControlX. Para consultar un diseño concreto, abre una organización o un evento."}
+                    : "Pregunta por tus ejecuciones de esta organización, o cómo funciona ControlX."}
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {suggestions.map((suggestion) => (

@@ -295,3 +295,81 @@ export async function listAccessibleExecutionsForUser(
 
   return cards;
 }
+
+export type AccessibleOrganization = {
+  id: string;
+  name: string;
+};
+
+/**
+ * Organizaciones a las que el usuario puede entrar (OrgAdmin, actor de evento,
+ * o todas si SuperAdmin).
+ */
+export async function listAccessibleOrganizationsForUser(
+  email: string,
+  options?: { isSuperAdmin?: boolean },
+): Promise<AccessibleOrganization[]> {
+  if (!isMongoConfigured()) return [];
+  const database = await getDatabase();
+  const normalized = email.trim().toLowerCase();
+
+  if (options?.isSuperAdmin) {
+    const orgs = await database
+      .collection<OrgDoc>("organizations")
+      .find({})
+      .sort({ name: 1 })
+      .limit(200)
+      .toArray();
+    return orgs.map((org) => ({
+      id: org._id.toHexString(),
+      name: org.name,
+    }));
+  }
+
+  const [orgMemberships, eventMemberships] = await Promise.all([
+    database
+      .collection<OrgMembershipDoc>("organizationMemberships")
+      .find({ email: normalized, status: "ACTIVE" })
+      .toArray(),
+    database
+      .collection<MembershipDoc>("eventMemberships")
+      .find({ email: normalized, status: "ACTIVE" })
+      .toArray(),
+  ]);
+
+  const orgIdSet = new Set<string>(
+    orgMemberships.map((doc) => doc.organizationId.toHexString()),
+  );
+
+  const actorEventIds = eventMemberships
+    .filter((doc) => membershipRoles(doc).length > 0)
+    .map((doc) => doc.eventId);
+
+  if (actorEventIds.length) {
+    const events = await database
+      .collection<EventDoc>("events")
+      .find(
+        { _id: { $in: actorEventIds } },
+        { projection: { organizationId: 1 } },
+      )
+      .toArray();
+    for (const event of events) {
+      orgIdSet.add(event.organizationId.toHexString());
+    }
+  }
+
+  if (!orgIdSet.size) return [];
+
+  const orgs = await database
+    .collection<OrgDoc>("organizations")
+    .find({
+      _id: { $in: [...orgIdSet].map((id) => new ObjectId(id)) },
+    })
+    .sort({ name: 1 })
+    .toArray();
+
+  return orgs.map((org) => ({
+    id: org._id.toHexString(),
+    name: org.name,
+  }));
+}

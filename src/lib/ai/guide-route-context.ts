@@ -8,8 +8,14 @@ export type GuideRouteContext = {
 
 /**
  * Infere zona y ids del asistente a partir de la URL actual.
+ * La org del hub móvil viene en ?org= (elegida en login / elegir-organizacion).
  */
-export function resolveGuideContext(pathname: string): GuideRouteContext {
+export function resolveGuideContext(
+  pathname: string,
+  searchParams?: URLSearchParams | { get(name: string): string | null },
+): GuideRouteContext {
+  const orgFromQuery = searchParams?.get("org")?.trim() || undefined;
+
   const orgMatch = pathname.match(/^\/organizations\/([^/]+)/);
   if (orgMatch?.[1]) {
     return { zone: "events", organizationId: orgMatch[1] };
@@ -29,12 +35,21 @@ export function resolveGuideContext(pathname: string): GuideRouteContext {
     return {
       zone: section && bySection[section] ? bySection[section] : "overview",
       eventId,
+      organizationId: orgFromQuery,
     };
   }
 
-  if (pathname.startsWith("/run/") || pathname.startsWith("/ejecuciones")) {
-    return { zone: "executions" };
+  if (pathname.startsWith("/ejecuciones")) {
+    return { zone: "executions", organizationId: orgFromQuery };
   }
 
-  return { zone: "events" };
+  if (pathname.startsWith("/run/")) {
+    return { zone: "executions", organizationId: orgFromQuery };
+  }
+
+  if (pathname.startsWith("/elegir-organizacion")) {
+    return { zone: "events" };
+  }
+
+  return { zone: "events", organizationId: orgFromQuery };
 }

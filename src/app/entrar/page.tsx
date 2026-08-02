@@ -6,8 +6,8 @@ import { isMobileRequest } from "@/lib/request-device";
 
 /**
  * Resolver post-login:
- * - Móvil → /ejecuciones (hub operativo / PWA)
- * - PC → portal según rol (org → eventos, event admin → setup, resto → ejecuciones)
+ * - Móvil → 1 org: /ejecuciones?org=… | varias: /elegir-organizacion
+ * - PC → portal según rol
  *
  * Si aún no hay cookie (race en PWA), manda a /sign-in — no a la landing.
  */

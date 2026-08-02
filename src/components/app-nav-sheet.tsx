@@ -12,7 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import {
@@ -107,13 +107,21 @@ function AppNavSheetShell({
   onConfirmSignOut: () => void;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
-  const guide = useMemo(() => resolveGuideContext(pathname), [pathname]);
+  const guide = useMemo(
+    () => resolveGuideContext(pathname, searchParams),
+    [pathname, searchParams],
+  );
+  const orgId = searchParams.get("org");
+  const ejecucionesHref = orgId
+    ? `/ejecuciones?org=${orgId}`
+    : "/ejecuciones";
 
   const links = [
     {
-      href: "/ejecuciones",
+      href: ejecucionesHref,
       label: "Ejecuciones",
       icon: ListChecks,
       show: true,
@@ -196,19 +204,21 @@ function AppNavSheetShell({
               </span>
             </button>
 
-            {links.map((item) => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                active={
-                  pathname === item.href ||
-                  pathname.startsWith(`${item.href}/`)
-                }
-                onNavigate={() => setOpen(false)}
-              />
-            ))}
+            {links.map((item) => {
+              const itemPath = item.href.split("?")[0] ?? item.href;
+              const active =
+                pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+              return (
+                <NavLink
+                  key={itemPath}
+                  href={item.href}
+                  label={item.label}
+                  icon={item.icon}
+                  active={active}
+                  onNavigate={() => setOpen(false)}
+                />
+              );
+            })}
           </nav>
 
           <SheetFooter className="border-t">
