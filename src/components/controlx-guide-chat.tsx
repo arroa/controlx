@@ -19,52 +19,11 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { XavierAvatar } from "@/components/xavier-avatar";
-import {
-  GUIDE_ZONE_LABELS,
-  type GuideZone,
-} from "@/lib/ai/guide-zones";
+import type { GuideZone } from "@/lib/ai/guide-zones";
 import { cn } from "@/lib/utils";
 
 export const GUIDE_ASSISTANT_NAME = "Xavier";
 export const GUIDE_ASSISTANT_TAGLINE = "Tu asistente de IA en ControlX";
-
-const SUGGESTIONS_BY_ZONE: Record<GuideZone, string[]> = {
-  events: [
-    "¿Cómo funciona ControlX de punta a punta?",
-    "¿Qué eventos tengo y en qué estado están?",
-    "¿Qué debo preparar antes de una ejecución?",
-  ],
-  overview: [
-    "¿Qué falta para que este evento pueda arrancar?",
-    "Explícame el readiness de este evento",
-    "¿Cómo se relaciona setup, diseño, roles y plan?",
-  ],
-  setup: [
-    "¿Qué es el Día D y para qué sirve?",
-    "¿Qué actores y roles tiene este evento?",
-    "¿Cómo se usan workstreams y bloques?",
-  ],
-  design: [
-    "Resume el diseño de este evento",
-    "¿Cuántos pasos hay y cómo están organizados?",
-    "¿Qué gates existen y qué abren?",
-  ],
-  roles: [
-    "¿Qué pasos no tienen ejecutor?",
-    "¿Cuántos pasos faltan de aprobador?",
-    "¿Cómo se asignan roles a los pasos?",
-  ],
-  plan: [
-    "¿Qué pasos no tienen condición de arranque?",
-    "Explícame las dependencias del plan",
-    "¿Cómo se conectan gates y horarios?",
-  ],
-  executions: [
-    "¿Qué es una ejecución vs el diseño?",
-    "¿Cuántas ejecuciones hay y en qué estado?",
-    "¿Cuándo conviene un simulacro?",
-  ],
-};
 
 export function ControlXGuideChat({
   zone,
@@ -100,8 +59,6 @@ export function ControlXGuideChat({
   });
 
   const busy = status === "submitted" || status === "streaming";
-  const suggestions = SUGGESTIONS_BY_ZONE[zone];
-  const hasScopedData = Boolean(eventId || organizationId);
 
   async function submit(text: string) {
     const trimmed = text.trim();
@@ -118,41 +75,18 @@ export function ControlXGuideChat({
           "ring-1 ring-foreground/10",
         )}
       >
-          <DialogHeader className="shrink-0 space-y-1 border-b px-5 py-4 pr-12 text-left">
-            <DialogTitle className="flex items-center gap-2.5 text-lg">
-              <XavierAvatar sizeClassName="size-8" />
+          <DialogHeader className="shrink-0 flex-row items-center gap-2.5 space-y-0 border-b px-5 py-4 pr-12 text-left">
+            <XavierAvatar sizeClassName="size-8" />
+            <DialogTitle className="text-lg">
               {GUIDE_ASSISTANT_NAME}
             </DialogTitle>
-            <DialogDescription>
-              {GUIDE_ASSISTANT_TAGLINE}. Contexto: {GUIDE_ZONE_LABELS[zone]}.
+            <DialogDescription className="truncate text-sm">
+              {GUIDE_ASSISTANT_TAGLINE}
             </DialogDescription>
           </DialogHeader>
 
         <ScrollArea className="min-h-0 flex-1 px-5">
           <div className="flex flex-col gap-3 py-4">
-            {messages.length === 0 ? (
-              <div className="space-y-3">
-                <div className="rounded-xl border bg-muted/40 px-3 py-3 text-sm text-muted-foreground">
-                  {hasScopedData
-                    ? "Preguntas de producto salen de la base de conocimiento. Preguntas del evento leen la base de datos (solo lectura)."
-                    : "Pregunta por tus ejecuciones de esta organización, o cómo funciona ControlX."}
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {suggestions.map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      className="rounded-xl border px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-                      onClick={() => void submit(suggestion)}
-                      disabled={busy}
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
             {messages.map((message) => {
               const text = message.parts
                 .filter((part) => part.type === "text")

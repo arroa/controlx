@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ChartNoAxesCombined,
   LoaderCircle,
   Play,
   RefreshCw,
@@ -302,7 +303,7 @@ export function EventExecutions({
                 key={execution.id}
                 className="transition hover:border-primary/40"
               >
-                <CardHeader>
+                <CardHeader className="gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge
                       variant={
@@ -318,7 +319,7 @@ export function EventExecutions({
                       <Badge variant="outline">#{execution.iteration}</Badge>
                     ) : null}
                   </div>
-                  <CardTitle className="pt-3 text-base leading-snug">
+                  <CardTitle className="text-base leading-snug">
                     {execution.name}
                   </CardTitle>
                   <CardDescription>
@@ -327,6 +328,17 @@ export function EventExecutions({
                       ? ` · T0 ${formatDayTimeLabel(execution.anchorStartAt, execution.timezone)}`
                       : ""}
                   </CardDescription>
+                  <Button
+                    className="mt-1 h-10 w-full gap-2 text-sm font-semibold shadow-sm"
+                    asChild
+                  >
+                    <Link
+                      href={`/events/${event.id}/executions/${execution.id}/umbral`}
+                    >
+                      <ChartNoAxesCombined className="size-4" aria-hidden />
+                      Monitor de Umbral
+                    </Link>
+                  </Button>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <Button variant="outline" className="w-full" asChild>
@@ -334,13 +346,6 @@ export function EventExecutions({
                       href={`/events/${event.id}/executions/${execution.id}`}
                     >
                       Abrir panel
-                    </Link>
-                  </Button>
-                  <Button variant="ghost" className="w-full" asChild>
-                    <Link
-                      href={`/events/${event.id}/executions/${execution.id}/umbral`}
-                    >
-                      Monitor de Umbral
                     </Link>
                   </Button>
                   <MiTurnoButton
