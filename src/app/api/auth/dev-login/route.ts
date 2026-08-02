@@ -6,6 +6,7 @@ import {
   createDevSessionToken,
   devSessionCookieOptions,
 } from "@/lib/dev-session";
+import { DEV_ACTOR_COOKIE } from "@/lib/dev-impersonation";
 import { getPostLoginPath, hasAssignedAccess } from "@/lib/admin-data";
 import { getSuperAdminEmail } from "@/lib/current-user";
 import { isMobileUserAgent } from "@/lib/request-device";
@@ -49,6 +50,13 @@ export async function POST(request: Request) {
   const response = NextResponse.json({ ok: true, userId, destination });
   const cookie = devSessionCookieOptions(token);
   response.cookies.set(cookie.name, cookie.value, cookie);
+  // Evita que un mock "entrar como…" de otra sesión tape al usuario real.
+  response.cookies.set(DEV_ACTOR_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
 
   return response;
 }

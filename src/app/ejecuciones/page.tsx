@@ -1,4 +1,4 @@
-import { Eye, Play } from "lucide-react";
+import { Activity, Eye, Play } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -49,7 +49,9 @@ function statusTone(status: AccessibleExecutionCard["status"]) {
 
 function ExecutionRow({ item }: { item: AccessibleExecutionCard }) {
   const canRun =
-    item.assignedStepCount > 0 || item.roles.includes("EXECUTOR");
+    item.assignedStepCount > 0 ||
+    item.roles.includes("EXECUTOR") ||
+    item.roles.includes("APPROVER");
   const canPanel =
     item.isAdmin ||
     item.roles.includes("APPROVER") ||
@@ -114,6 +116,16 @@ function ExecutionRow({ item }: { item: AccessibleExecutionCard }) {
             <Link href={`/events/${item.eventId}/executions/${item.id}`}>
               <Eye className="size-3.5" />
               Panel
+            </Link>
+          </Button>
+        ) : null}
+        {canPanel ? (
+          <Button size="sm" variant="ghost" asChild>
+            <Link
+              href={`/events/${item.eventId}/executions/${item.id}/umbral`}
+            >
+              <Activity className="size-3.5" />
+              Monitor
             </Link>
           </Button>
         ) : null}

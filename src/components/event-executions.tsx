@@ -336,6 +336,13 @@ export function EventExecutions({
                       Abrir panel
                     </Link>
                   </Button>
+                  <Button variant="ghost" className="w-full" asChild>
+                    <Link
+                      href={`/events/${event.id}/executions/${execution.id}/umbral`}
+                    >
+                      Monitor de Umbral
+                    </Link>
+                  </Button>
                   <MiTurnoButton
                     eventId={event.id}
                     executionId={execution.id}

@@ -10,6 +10,7 @@ import {
   Clock,
   RotateCcw,
   ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -24,6 +25,7 @@ import {
 import {
   filterStepsByFocus,
   isMineStep,
+  isMyExecutorStep,
   runtimeBarTone,
   type ExecutionFocusMode,
 } from "@/lib/execution-focus";
@@ -285,8 +287,10 @@ function flowerActionsFor(input: {
   busy: boolean;
   canAct: boolean;
   canForceSuccess: boolean;
+  canApprove: boolean;
   allowStepOperations?: boolean;
   onOutcome: (action: OutcomeAction) => void;
+  onApproval: (action: "approve" | "reject") => void;
   onInfo: () => void;
 }): FlowerAction[] {
   const {
@@ -295,8 +299,10 @@ function flowerActionsFor(input: {
     busy,
     canAct,
     canForceSuccess,
+    canApprove,
     allowStepOperations = true,
     onOutcome,
+    onApproval,
     onInfo,
   } = input;
   const actions: FlowerAction[] = [
@@ -308,6 +314,27 @@ function flowerActionsFor(input: {
       onClick: onInfo,
     },
   ];
+
+  if (step.status === "PENDIENTE_APROBACION" && canApprove) {
+    actions.push(
+      {
+        key: "approve",
+        label: "Aprobar",
+        icon: ShieldCheck,
+        tone: "success",
+        disabled: busy,
+        onClick: () => onApproval("approve"),
+      },
+      {
+        key: "reject",
+        label: "Rechazar",
+        icon: CircleX,
+        tone: "danger",
+        disabled: busy,
+        onClick: () => onApproval("reject"),
+      },
+    );
+  }
 
   if (!allowStepOperations) {
     if (step.status === "FALLIDO" && canForceSuccess) {
@@ -640,11 +667,13 @@ export function ExecutorTimesMap({
   focusMode = "all",
   canOperateAny = false,
   canForceSuccess = false,
+  canApproveAny = false,
   allowStepOperations = true,
   selectedId,
   busy,
   onSelect,
   onOutcome,
+  onApproval,
   onOpenInfo,
 }: {
   steps: RuntimeStepSummary[];
@@ -657,11 +686,13 @@ export function ExecutorTimesMap({
   focusMode?: ExecutionFocusMode;
   canOperateAny?: boolean;
   canForceSuccess?: boolean;
+  canApproveAny?: boolean;
   allowStepOperations?: boolean;
   selectedId: string | null;
   busy: boolean;
   onSelect: (stepId: string | null) => void;
   onOutcome: (stepId: string, action: OutcomeAction) => void;
+  onApproval?: (stepId: string, action: "approve" | "reject") => void;
   onOpenInfo: (stepId: string) => void;
 }) {
   const t0Ms = anchorStartAt ? new Date(anchorStartAt).getTime() : Date.now();
@@ -1239,13 +1270,28 @@ export function ExecutorTimesMap({
                                 step: item.step,
                                 allSteps: steps,
                                 busy,
-                                canAct: item.mine || canOperateAny,
+                                canAct:
+                                  isMyExecutorStep(item.step, actorId) ||
+                                  canOperateAny,
                                 canForceSuccess,
+                                canApprove:
+                                  canApproveAny ||
+                                  Boolean(
+                                    actorId &&
+                                      item.step.approverActorIds.includes(
+                                        actorId,
+                                      ),
+                                  ),
                                 allowStepOperations,
                                 onOutcome: (action) => {
                                   setFlowerOpenId(null);
                                   onSelect(null);
                                   onOutcome(item.step.id, action);
+                                },
+                                onApproval: (action) => {
+                                  setFlowerOpenId(null);
+                                  onSelect(null);
+                                  onApproval?.(item.step.id, action);
                                 },
                                 onInfo: () => {
                                   setFlowerOpenId(null);

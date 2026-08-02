@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { Play } from "lucide-react";
+import { Activity, Play } from "lucide-react";
 
 import { AppHeader } from "@/components/app-header";
 import { ExecutionTimesPanel } from "@/components/execution-times-panel";
@@ -34,15 +34,22 @@ export default async function ExecutionPage({
     user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
   const realActor = await getEventActorByEmail(eventId, user.email);
 
-  // Ejecutor puro (sin ser admin) → cockpit.
-  if (!isAdmin && realActor?.roles.includes("EXECUTOR")) {
+  // Ejecutor / aprobador puro (sin ser admin) → Mi turno.
+  if (
+    !isAdmin &&
+    realActor &&
+    (realActor.roles.includes("EXECUTOR") ||
+      realActor.roles.includes("APPROVER"))
+  ) {
     redirect(`/run/${executionId}`);
   }
 
   // Panel = solo observación. Impersonar / operar vive en Mi turno (/run).
   const canOpenCockpit =
-    Boolean(realActor?.roles.includes("EXECUTOR")) ||
-    canUseDevActorImpersonation(user);
+    Boolean(
+      realActor?.roles.includes("EXECUTOR") ||
+        realActor?.roles.includes("APPROVER"),
+    ) || canUseDevActorImpersonation(user);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -58,6 +65,14 @@ export default async function ExecutionPage({
             <Badge variant="outline" className="hidden sm:inline-flex">
               {detail.type}
             </Badge>
+            <Button size="sm" variant="outline" asChild>
+              <Link
+                href={`/events/${eventId}/executions/${executionId}/umbral`}
+              >
+                <Activity className="size-3.5" />
+                Monitor
+              </Link>
+            </Button>
             {canOpenCockpit ? (
               <Button size="sm" variant="secondary" asChild>
                 <Link href={`/run/${executionId}`}>
@@ -79,6 +94,13 @@ export default async function ExecutionPage({
           canForceSuccess={
             user.isSuperAdmin ||
             Boolean(realActor?.roles.includes("EVENT_ADMIN"))
+          }
+          canApproveAny={
+            user.isSuperAdmin ||
+            Boolean(
+              realActor?.roles.includes("EVENT_ADMIN") ||
+                realActor?.roles.includes("STEERCO"),
+            )
           }
           title="Panel"
         />

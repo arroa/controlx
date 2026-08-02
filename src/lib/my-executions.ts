@@ -210,14 +210,41 @@ export async function listAccessibleExecutionsForUser(
         {
           $match: {
             eventInstanceId: { $in: executionDocs.map((doc) => doc._id) },
-            executorActorId: { $in: actorObjectIds },
+            $or: [
+              { executorActorId: { $in: actorObjectIds } },
+              { approverActorIds: { $in: actorObjectIds } },
+            ],
           },
         },
+        {
+          $project: {
+            eventInstanceId: 1,
+            actors: {
+              $setUnion: [
+                {
+                  $cond: [
+                    { $in: ["$executorActorId", actorObjectIds] },
+                    ["$executorActorId"],
+                    [],
+                  ],
+                },
+                {
+                  $filter: {
+                    input: { $ifNull: ["$approverActorIds", []] },
+                    as: "approverId",
+                    cond: { $in: ["$$approverId", actorObjectIds] },
+                  },
+                },
+              ],
+            },
+          },
+        },
+        { $unwind: "$actors" },
         {
           $group: {
             _id: {
               executionId: "$eventInstanceId",
-              actorId: "$executorActorId",
+              actorId: "$actors",
             },
             count: { $sum: 1 },
           },

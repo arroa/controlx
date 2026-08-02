@@ -6,6 +6,7 @@ import {
   CircleX,
   RotateCcw,
   ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
@@ -23,6 +24,7 @@ import {
   EXECUTION_FOCUS_OPTIONS,
   filterStepsByFocus,
   isMineStep,
+  isMyExecutorStep,
   runtimeBarTone,
   type ExecutionFocusMode,
 } from "@/lib/execution-focus";
@@ -142,7 +144,8 @@ export function ExecutionTimesPanel({
   actorId,
   canOperateAny = false,
   canForceSuccess = false,
-  /** Si false (Panel), la flor no ofrece Iniciar/cerrar/rearrancar: solo info (+ Forzar OK admin). */
+  canApproveAny = false,
+  /** Si false (Panel), la flor no ofrece Iniciar/cerrar/rearrancar: solo info (+ Forzar OK / aprobar admin). */
   allowStepOperations = true,
 }: {
   initial: ExecutionDetail;
@@ -152,6 +155,8 @@ export function ExecutionTimesPanel({
   canOperateAny?: boolean;
   /** Event Admin (o SuperAdmin): puede Forzar un paso Fallido. */
   canForceSuccess?: boolean;
+  /** Event Admin / SteerCo / Super: aprueban cualquier paso en espera. */
+  canApproveAny?: boolean;
   allowStepOperations?: boolean;
   title?: string;
 }) {
@@ -285,46 +290,114 @@ export function ExecutionTimesPanel({
     );
   }
 
+  function canApproveStep(step: RuntimeStepSummary): boolean {
+    if (canApproveAny) return true;
+    if (!actorId) return false;
+    return step.approverActorIds.includes(actorId);
+  }
+
+  async function runApproval(
+    stepId: string,
+    action: "approve" | "reject",
+  ) {
+    setBusy(true);
+    setError("");
+    const response = await fetch(
+      `/api/executions/${detail.id}/steps/${stepId}/transition`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      },
+    ).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as {
+          step?: RuntimeStepSummary;
+          steps?: RuntimeStepSummary[];
+          error?: string;
+        })
+      : null;
+    setBusy(false);
+    if (!response?.ok || !payload?.step) {
+      setError(payload?.error ?? "No fue posible actualizar la aprobación.");
+      return;
+    }
+    setDetail((current) =>
+      payload.steps?.length
+        ? patchSteps(current, payload.steps)
+        : patchStep(current, payload.step!),
+    );
+    setSelectedId(null);
+    flash(action === "approve" ? "Aprobado" : "Rechazado");
+  }
+
   function getFlowerActions(row: TimesViewRow): FlowerAction[] {
     const step = stepsById.get(row.id);
     if (!step) return [];
 
+    const approvalActions = (): FlowerAction[] => {
+      if (step.status !== "PENDIENTE_APROBACION") return [];
+      if (!canApproveStep(step)) return [];
+      return [
+        {
+          key: "approve",
+          label: "Aprobar",
+          icon: ShieldCheck,
+          tone: "success",
+          disabled: busy,
+          title: "Contingencia Event Admin / SteerCo o aprobador asignado.",
+          onClick: () => {
+            void runApproval(step.id, "approve");
+          },
+        },
+        {
+          key: "reject",
+          label: "Rechazar",
+          icon: CircleX,
+          tone: "danger",
+          disabled: busy,
+          onClick: () => {
+            void runApproval(step.id, "reject");
+          },
+        },
+      ];
+    };
+
     // Panel = observación: sin acciones de ejecución en la flor.
     if (!allowStepOperations) {
+      const actions: FlowerAction[] = [...approvalActions()];
       if (step.status === "FALLIDO" && canForceSuccess) {
-        return [
-          {
-            key: "force",
-            label: "Forzar OK",
-            icon: ShieldAlert,
-            tone: "neutral",
-            disabled: busy,
-            title: "Requiere comentario. Desbloquea dependientes.",
-            onClick: () => {
-              setSelectedId(null);
-              setError("");
-              setComment("");
-              setFiles([]);
-              setOccurredAt(
-                defaultActOccurredAt(
-                  actTimeFloor({
-                    action: "force_success",
-                    anchorStartAt: detail.anchorStartAt,
-                    actualStartedAt: step.actualStartedAt,
-                    actualEndedAt: step.actualEndedAt,
-                  }),
-                ),
-              );
-              setOutcome({ stepId: step.id, action: "force_success" });
-            },
+        actions.push({
+          key: "force",
+          label: "Forzar OK",
+          icon: ShieldAlert,
+          tone: "neutral",
+          disabled: busy,
+          title: "Requiere comentario. Desbloquea dependientes.",
+          onClick: () => {
+            setSelectedId(null);
+            setError("");
+            setComment("");
+            setFiles([]);
+            setOccurredAt(
+              defaultActOccurredAt(
+                actTimeFloor({
+                  action: "force_success",
+                  anchorStartAt: detail.anchorStartAt,
+                  actualStartedAt: step.actualStartedAt,
+                  actualEndedAt: step.actualEndedAt,
+                }),
+              ),
+            );
+            setOutcome({ stepId: step.id, action: "force_success" });
           },
-        ];
+        });
       }
-      return [];
+      return actions;
     }
 
-    const canAct = Boolean(row.mine) || canOperateAny;
-    const actions: FlowerAction[] = [];
+    const canAct = isMyExecutorStep(step, actorId) || canOperateAny;
+    const actions: FlowerAction[] = [...approvalActions()];
     if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
       const blocked = startBlockedLabel(step, detail.steps);
       actions.push({
@@ -494,7 +567,7 @@ export function ExecutionTimesPanel({
         return;
       }
     } else {
-      const canAct = isMineStep(outcomeStep, actorId) || canOperateAny;
+      const canAct = isMyExecutorStep(outcomeStep, actorId) || canOperateAny;
       if (!canAct) return;
     }
     if (!occurredAt) {
@@ -635,6 +708,7 @@ export function ExecutionTimesPanel({
             focusMode={effectiveFocus}
             canOperateAny={canOperateAny}
             canForceSuccess={canForceSuccess}
+            canApproveAny={canApproveAny}
             allowStepOperations={allowStepOperations}
             selectedId={selectedId}
             busy={busy}
@@ -652,6 +726,9 @@ export function ExecutionTimesPanel({
               setFiles([]);
               setOccurredAt(defaultActOccurredAt(floor));
               setOutcome({ stepId, action });
+            }}
+            onApproval={(stepId, action) => {
+              void runApproval(stepId, action);
             }}
             onOpenInfo={setInfoId}
           />

@@ -127,6 +127,13 @@ export default async function ExecutorRunPage({
             (!impersonating && user.isSuperAdmin) ||
             Boolean(actor.roles.includes("EVENT_ADMIN"))
           }
+          canApproveAny={
+            (!impersonating && user.isSuperAdmin) ||
+            Boolean(
+              actor.roles.includes("EVENT_ADMIN") ||
+                actor.roles.includes("STEERCO"),
+            )
+          }
           title="Mi turno"
         />
       </main>

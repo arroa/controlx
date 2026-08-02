@@ -5,7 +5,6 @@ import { cookies } from "next/headers";
 import { getEventActorByEmail, listEventActors } from "@/lib/admin-data";
 import type { EventActorSummary } from "@/lib/event-actors";
 import type { CurrentUser } from "@/lib/current-user";
-import { isDevBypassEnabled } from "@/lib/dev-flags";
 
 export const DEV_ACTOR_COOKIE = "controlx_act_as";
 
@@ -19,7 +18,9 @@ export function isDevActorImpersonationEnabled(): boolean {
 
 export function canUseDevActorImpersonation(user: CurrentUser): boolean {
   if (!isDevActorImpersonationEnabled()) return false;
-  return user.isSuperAdmin || isDevBypassEnabled();
+  // Solo SuperAdmin: si cualquier usuario bypass hereda la cookie, el API
+  // opera como otro actor mientras el Panel muestra el membership real.
+  return user.isSuperAdmin;
 }
 
 export function encodeActAsCookie(eventId: string, actorId: string) {

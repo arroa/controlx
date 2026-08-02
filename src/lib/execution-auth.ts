@@ -81,7 +81,13 @@ function actorCanDoAction(
   if (action === "force_success") return actor.roles.includes("EVENT_ADMIN");
 
   if (action === "approve" || action === "reject") {
-    if (actor.roles.includes("STEERCO")) return true;
+    // Contingencia: Event Admin puede destrabar. SteerCo también.
+    if (
+      actor.roles.includes("EVENT_ADMIN") ||
+      actor.roles.includes("STEERCO")
+    ) {
+      return true;
+    }
     return step.approverActorIds.includes(actor.id);
   }
 

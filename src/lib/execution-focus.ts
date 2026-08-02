@@ -15,10 +15,28 @@ export const EXECUTION_FOCUS_OPTIONS: Array<{
 ];
 
 export function isMineStep(
-  step: RuntimeStepSummary,
+  step: Pick<RuntimeStepSummary, "executorActorId" | "approverActorIds">,
+  actorId: string | null,
+): boolean {
+  if (!actorId) return false;
+  if (step.executorActorId === actorId) return true;
+  return step.approverActorIds.includes(actorId);
+}
+
+/** Solo ejecutor asignado (iniciar / cerrar / rearrancar). */
+export function isMyExecutorStep(
+  step: Pick<RuntimeStepSummary, "executorActorId">,
   actorId: string | null,
 ): boolean {
   return Boolean(actorId && step.executorActorId === actorId);
+}
+
+/** Aprobador asignado a este paso. */
+export function isMyApproverStep(
+  step: Pick<RuntimeStepSummary, "approverActorIds">,
+  actorId: string | null,
+): boolean {
+  return Boolean(actorId && step.approverActorIds.includes(actorId));
 }
 
 export function filterStepsByFocus(
@@ -30,7 +48,7 @@ export function filterStepsByFocus(
   return steps.filter((step) => isMineStep(step, actorId));
 }
 
-/** Leyenda compacta del mapa (color = estado; ★ = tuyo). */
+/** Leyenda compacta del mapa (color = estado; ★ = tuyo como ejecutor o aprobador). */
 export const RUNTIME_BAR_LEGEND: Array<{
   key: string;
   label: string;
@@ -46,7 +64,7 @@ export const RUNTIME_BAR_LEGEND: Array<{
 
 /**
  * Colores del mapa de ejecución = estado del paso.
- * - ★ en la tarjeta = es tuyo
+ * - ★ en la tarjeta = te toca (ejecutor o aprobador)
  * - dimOthers ("Destacar mías"): ajenos van gris neutro
  */
 export function runtimeBarTone(input: {
