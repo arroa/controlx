@@ -229,7 +229,9 @@ function StairBurndownChart({ model }: { model: ThresholdMonitorModel }) {
     const node = svgRef.current;
     if (!node) return;
     function sync() {
-      const width = node.getBoundingClientRect().width;
+      const el = svgRef.current;
+      if (!el) return;
+      const width = el.getBoundingClientRect().width;
       if (width <= 0) return;
       // CSS px en SVG se escalan con el viewBox → compensar.
       const scale = w / width;
