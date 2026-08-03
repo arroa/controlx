@@ -43,3 +43,9 @@ next-env.d.ts
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# local dump/clone helpers (prod ↔ local)
+/scripts/clone-event-to-local.mjs
+/scripts/export-event-from-prod.mjs
+/scripts/import-event-to-local.mjs
+/scripts/tmp-list-events.mjs

@@ -150,7 +150,7 @@ El asistente guía explica el sistema; el copiloto de ejecución (futuro) es qui
     zones: ["all", "setup", "roles"],
     summary: "Roles posibles en el mapa de actores del evento.",
     body: `Roles del mapa (se definen en Setup → actores):
-- EVENT_ADMIN: configura el evento; en ejecución puede Forzar OK y aprobar/rechazar por contingencia.
+- EVENT_ADMIN: configura el evento; en ejecución puede operar cualquier paso por contingencia (Mi turno), Forzar OK y aprobar/rechazar.
 - EXECUTOR: puede ejecutar pasos asignados.
 - APPROVER: aprueba pasos puntuales.
 - STEERCO: aprobación de nivel más global / gobierno.

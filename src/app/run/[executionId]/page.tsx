@@ -45,7 +45,20 @@ export default async function ExecutorRunPage({
     { label: detail.name },
   ];
 
-  if (!actor) {
+  // Contingencia: EventAdmin / OrgAdmin / Super pueden operar cualquier paso
+  // en Mi turno (el Panel queda solo observación).
+  const canOperateAny = isAdmin && !impersonating;
+  const canForceSuccess =
+    (!impersonating && user.isSuperAdmin) ||
+    Boolean(actor?.roles.includes("EVENT_ADMIN"));
+  const canApproveAny =
+    (!impersonating && user.isSuperAdmin) ||
+    Boolean(
+      actor?.roles.includes("EVENT_ADMIN") ||
+        actor?.roles.includes("STEERCO"),
+    );
+
+  if (!actor && !canOperateAny) {
     return (
       <div className="flex h-dvh flex-col overflow-x-hidden">
         <AppHeader
@@ -112,7 +125,7 @@ export default async function ExecutorRunPage({
               <DevActorSwitcher
                 eventId={detail.eventId}
                 actors={actors}
-                selectedActorId={impersonating ? actor.id : null}
+                selectedActorId={impersonating ? actor?.id ?? null : null}
               />
             ) : null}
           </>
@@ -121,19 +134,11 @@ export default async function ExecutorRunPage({
       <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-3 pb-4 sm:px-6">
         <ExecutionTimesPanel
           initial={detail}
-          actorId={actor.id}
-          actorName={actor.name}
-          canForceSuccess={
-            (!impersonating && user.isSuperAdmin) ||
-            Boolean(actor.roles.includes("EVENT_ADMIN"))
-          }
-          canApproveAny={
-            (!impersonating && user.isSuperAdmin) ||
-            Boolean(
-              actor.roles.includes("EVENT_ADMIN") ||
-                actor.roles.includes("STEERCO"),
-            )
-          }
+          actorId={actor?.id ?? null}
+          actorName={actor?.name ?? null}
+          canOperateAny={canOperateAny}
+          canForceSuccess={canForceSuccess}
+          canApproveAny={canApproveAny}
           title="Mi turno"
         />
       </main>

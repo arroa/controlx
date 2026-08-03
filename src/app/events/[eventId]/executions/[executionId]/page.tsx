@@ -44,12 +44,14 @@ export default async function ExecutionPage({
     redirect(`/run/${executionId}`);
   }
 
-  // Panel = solo observación. Impersonar / operar vive en Mi turno (/run).
+  // Panel = solo observación. Operar (incl. contingencia EventAdmin) vive en /run.
   const canOpenCockpit =
+    isAdmin ||
     Boolean(
       realActor?.roles.includes("EXECUTOR") ||
         realActor?.roles.includes("APPROVER"),
-    ) || canUseDevActorImpersonation(user);
+    ) ||
+    canUseDevActorImpersonation(user);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">

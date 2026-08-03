@@ -51,6 +51,7 @@ function statusTone(status: AccessibleExecutionCard["status"]) {
 
 function ExecutionRow({ item }: { item: AccessibleExecutionCard }) {
   const canRun =
+    item.isAdmin ||
     item.assignedStepCount > 0 ||
     item.roles.includes("EXECUTOR") ||
     item.roles.includes("APPROVER");

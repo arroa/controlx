@@ -370,15 +370,19 @@ export function buildThresholdMonitorModel(
       const updated = new Date(step.updatedAt).getTime();
       if (Number.isFinite(updated)) t = updated;
     }
-    if (t == null || t > nowMs) continue;
+    // Cierre ya contado en estado pero fechado a futuro (reloj de ensayo /
+    // piso del plan): anclar a ahora para que Terminadas baje al instante.
+    if (t == null) t = nowMs;
+    else if (t > nowMs) t = nowMs;
     realEvents.push({ t, stepId: step.id, label: step.name });
   }
   realEvents.sort((a, b) => a.t - b.t || a.stepId.localeCompare(b.stepId));
 
   const failMarkers: StairEvent[] = [];
   for (const step of steps) {
-    const t = failEndedAtMs(step);
-    if (t == null || t > nowMs) continue;
+    let t = failEndedAtMs(step);
+    if (t == null) continue;
+    if (t > nowMs) t = nowMs;
     failMarkers.push({ t, stepId: step.id, label: step.name });
   }
   failMarkers.sort((a, b) => a.t - b.t || a.stepId.localeCompare(b.stepId));
