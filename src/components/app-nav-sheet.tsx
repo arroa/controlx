@@ -45,6 +45,8 @@ type AppNavSheetProps = {
   email: string;
   roleLabel: string;
   isSuperAdmin: boolean;
+  /** Destino de Administración; si es null/undefined no se muestra. */
+  administracionHref?: string | null;
   bypassEnabled?: boolean;
 };
 
@@ -91,6 +93,7 @@ function AppNavSheetShell({
   email,
   roleLabel,
   isSuperAdmin,
+  administracionHref,
   leaving,
   farewellOpen,
   onFarewellOpenChange,
@@ -100,6 +103,7 @@ function AppNavSheetShell({
   email: string;
   roleLabel: string;
   isSuperAdmin: boolean;
+  administracionHref?: string | null;
   leaving: boolean;
   farewellOpen: boolean;
   onFarewellOpenChange: (open: boolean) => void;
@@ -127,10 +131,10 @@ function AppNavSheetShell({
       show: true,
     },
     {
-      href: "/dashboard",
+      href: administracionHref ?? "/dashboard",
       label: "Administración",
       icon: LayoutDashboard,
-      show: isSuperAdmin,
+      show: Boolean(administracionHref),
     },
     {
       href: "/novedades",
@@ -280,6 +284,7 @@ function BypassAppNavSheet({
   email,
   roleLabel,
   isSuperAdmin,
+  administracionHref,
 }: Omit<AppNavSheetProps, "bypassEnabled">) {
   const router = useRouter();
   const [leaving, setLeaving] = useState(false);
@@ -302,6 +307,7 @@ function BypassAppNavSheet({
       email={email}
       roleLabel={roleLabel}
       isSuperAdmin={isSuperAdmin}
+      administracionHref={administracionHref}
       leaving={leaving}
       farewellOpen={farewellOpen}
       onFarewellOpenChange={setFarewellOpen}
@@ -317,6 +323,7 @@ function ClerkAppNavSheet({
   email,
   roleLabel,
   isSuperAdmin,
+  administracionHref,
 }: Omit<AppNavSheetProps, "bypassEnabled">) {
   const router = useRouter();
   const { isSignedIn } = useAuth();
@@ -345,6 +352,7 @@ function ClerkAppNavSheet({
       email={email}
       roleLabel={roleLabel}
       isSuperAdmin={isSuperAdmin}
+      administracionHref={administracionHref}
       leaving={leaving}
       farewellOpen={farewellOpen}
       onFarewellOpenChange={setFarewellOpen}
@@ -360,6 +368,7 @@ export function AppNavSheet({
   email,
   roleLabel,
   isSuperAdmin,
+  administracionHref,
   bypassEnabled = false,
 }: AppNavSheetProps) {
   if (bypassEnabled) {
@@ -368,6 +377,7 @@ export function AppNavSheet({
         email={email}
         roleLabel={roleLabel}
         isSuperAdmin={isSuperAdmin}
+        administracionHref={administracionHref}
       />
     );
   }
@@ -376,6 +386,7 @@ export function AppNavSheet({
       email={email}
       roleLabel={roleLabel}
       isSuperAdmin={isSuperAdmin}
+      administracionHref={administracionHref}
     />
   );
 }

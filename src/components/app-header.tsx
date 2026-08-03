@@ -4,6 +4,7 @@ import { Suspense, type ReactNode } from "react";
 
 import { AppNavSheet } from "@/components/app-nav-sheet";
 import { Button } from "@/components/ui/button";
+import { getAdministracionHref } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
 import { cn } from "@/lib/utils";
@@ -85,6 +86,11 @@ export async function AppHeader({
 }: AppHeaderProps) {
   const bypassEnabled = isDevBypassEnabled();
   const user = await getCurrentUser();
+  const administracionHref = user
+    ? await getAdministracionHref(user.email, {
+        isSuperAdmin: user.isSuperAdmin,
+      })
+    : null;
 
   const trail: AppHeaderCrumb[] =
     crumbs && crumbs.length > 0
@@ -136,6 +142,7 @@ export async function AppHeader({
                 email={user.email}
                 roleLabel={user.isSuperAdmin ? "SuperAdmin" : "Usuario"}
                 isSuperAdmin={user.isSuperAdmin}
+                administracionHref={administracionHref}
                 bypassEnabled={bypassEnabled}
               />
             </Suspense>

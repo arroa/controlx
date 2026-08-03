@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { AppNavSheet } from "@/components/app-nav-sheet";
 import { Button } from "@/components/ui/button";
+import { getAdministracionHref } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
 
@@ -21,11 +22,16 @@ export async function AuthHeader() {
     );
   }
 
+  const administracionHref = await getAdministracionHref(user.email, {
+    isSuperAdmin: user.isSuperAdmin,
+  });
+
   return (
     <AppNavSheet
       email={user.email}
       roleLabel={user.isSuperAdmin ? "SuperAdmin" : "Usuario"}
       isSuperAdmin={user.isSuperAdmin}
+      administracionHref={administracionHref}
       bypassEnabled={bypassEnabled}
     />
   );

@@ -1620,6 +1620,47 @@ export async function getFirstAssignedPath(email: string): Promise<string> {
 }
 
 /**
+ * Destino de “Administración” en el menú.
+ * - SuperAdmin → /dashboard
+ * - OrgAdmin → /organizations/{id}
+ * - EventAdmin → /events/{id}/setup
+ * - Resto → null (no mostrar la opción)
+ */
+export async function getAdministracionHref(
+  email: string,
+  options?: { isSuperAdmin?: boolean },
+): Promise<string | null> {
+  if (options?.isSuperAdmin) return "/dashboard";
+  if (!isMongoConfigured()) return null;
+
+  const normalized = email.trim().toLowerCase();
+  const database = await getDatabase();
+
+  const orgAdmin = await database
+    .collection<OrganizationMembershipDocument>("organizationMemberships")
+    .findOne(
+      { email: normalized, status: "ACTIVE", role: "ORG_ADMIN" },
+      { sort: { createdAt: 1 }, projection: { organizationId: 1 } },
+    );
+  if (orgAdmin) {
+    return `/organizations/${orgAdmin.organizationId.toHexString()}`;
+  }
+
+  const eventMemberships = await database
+    .collection<EventMembershipDocument>("eventMemberships")
+    .find({ email: normalized, status: "ACTIVE" })
+    .sort({ createdAt: 1 })
+    .toArray();
+
+  const eventAdmin = eventMemberships.find((row) => hasEventAdminRole(row));
+  if (eventAdmin) {
+    return `/events/${eventAdmin.eventId.toHexString()}/setup`;
+  }
+
+  return null;
+}
+
+/**
  * Destino post-login.
  * - Móvil / responsive:
  *   - 0 orgs → /
@@ -1655,34 +1696,19 @@ export async function getPostLoginPath(
   }
 
   // Desktop / portal
-  if (options.isSuperAdmin) {
-    return "/dashboard";
-  }
+  const administracionHref = await getAdministracionHref(normalized, {
+    isSuperAdmin: options.isSuperAdmin,
+  });
+  if (administracionHref) return administracionHref;
 
   if (!isMongoConfigured()) return "/";
 
   const database = await getDatabase();
-
-  const orgAdmin = await database
-    .collection<OrganizationMembershipDocument>("organizationMemberships")
-    .findOne(
-      { email: normalized, status: "ACTIVE", role: "ORG_ADMIN" },
-      { sort: { createdAt: 1 }, projection: { organizationId: 1 } },
-    );
-  if (orgAdmin) {
-    return `/organizations/${orgAdmin.organizationId.toHexString()}`;
-  }
-
   const eventMemberships = await database
     .collection<EventMembershipDocument>("eventMemberships")
     .find({ email: normalized, status: "ACTIVE" })
     .sort({ createdAt: 1 })
     .toArray();
-
-  const eventAdmin = eventMemberships.find((row) => hasEventAdminRole(row));
-  if (eventAdmin) {
-    return `/events/${eventAdmin.eventId.toHexString()}/setup`;
-  }
 
   if (eventMemberships.some((row) => membershipRoles(row).length > 0)) {
     const { listAccessibleOrganizationsForUser } = await import(
