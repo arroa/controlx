@@ -405,26 +405,15 @@ function StairBurndownChart({ model }: { model: ThresholdMonitorModel }) {
       ) : null}
 
       {anchorInView && model.anchor ? (
-        <>
-          <line
-            x1={x(model.anchor.atMs)}
-            x2={x(model.anchor.atMs)}
-            y1={pad.t}
-            y2={h - pad.b}
-            stroke="#fcd34d"
-            strokeWidth={1}
-            strokeDasharray="3 3"
-          />
-          <text
-            x={x(model.anchor.atMs) - 4}
-            y={pad.t + 14}
-            textAnchor="end"
-            fill="#fde68a"
-            fontSize={labelFontSize}
-          >
-            ancla
-          </text>
-        </>
+        <line
+          x1={x(model.anchor.atMs)}
+          x2={x(model.anchor.atMs)}
+          y1={pad.t}
+          y2={h - pad.b}
+          stroke="#fcd34d"
+          strokeWidth={1}
+          strokeDasharray="3 3"
+        />
       ) : null}
 
       <path
