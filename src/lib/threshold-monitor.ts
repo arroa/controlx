@@ -76,9 +76,9 @@ export type ThresholdMonitorModel = {
   failMarkers: StairEvent[];
   runningNow: number;
   remainingNow: number;
-  /** Ancla de holgura (gate o fin de plan). */
+  /** Referencia de holgura = fin planificado (no gates). */
   anchor: {
-    kind: "gate" | "plan_end";
+    kind: "plan_end";
     label: string;
     atMs: number;
   } | null;
@@ -125,23 +125,33 @@ function countsAsRealProgress(
   return isTerminalStepStatus(step.status, executionType);
 }
 
-function failEndedAtMs(step: RuntimeStepSummary): number | null {
-  if (step.status !== "FALLIDO" && step.status !== "RECHAZADO") return null;
-  if (step.actualEndedAt) {
-    const ended = new Date(step.actualEndedAt).getTime();
-    if (Number.isFinite(ended)) return ended;
-  }
-  for (let i = step.iterations.length - 1; i >= 0; i -= 1) {
-    const endAt = step.iterations[i]?.end?.at;
+/**
+ * Instantes de cierre fallido, incluyendo iteraciones históricas.
+ * Tras rearrancar el paso queda INICIADO, pero el fallo previo debe seguir
+ * pintándose en el umbral.
+ */
+function failEndedAts(step: RuntimeStepSummary): number[] {
+  const times: number[] = [];
+  for (const iter of step.iterations) {
+    if (iter.status !== "FALLIDA" && iter.end?.outcome !== "fail") continue;
+    const endAt = iter.end?.at;
     if (!endAt) continue;
     const ended = new Date(endAt).getTime();
-    if (Number.isFinite(ended)) return ended;
+    if (Number.isFinite(ended)) times.push(ended);
   }
-  if (step.updatedAt) {
-    const updated = new Date(step.updatedAt).getTime();
-    if (Number.isFinite(updated)) return updated;
+  if (
+    times.length === 0 &&
+    (step.status === "FALLIDO" || step.status === "RECHAZADO")
+  ) {
+    if (step.actualEndedAt) {
+      const ended = new Date(step.actualEndedAt).getTime();
+      if (Number.isFinite(ended)) times.push(ended);
+    } else if (step.updatedAt) {
+      const updated = new Date(step.updatedAt).getTime();
+      if (Number.isFinite(updated)) times.push(updated);
+    }
   }
-  return null;
+  return times;
 }
 
 function isRunning(step: RuntimeStepSummary): boolean {
@@ -246,6 +256,11 @@ function projectedEndMs(
   return nowMs + dur;
 }
 
+function hasUnresolvedFail(step: RuntimeStepSummary): boolean {
+  if (step.status === "FALLIDO" || step.status === "RECHAZADO") return true;
+  return failEndedAts(step).length > 0;
+}
+
 function classifyFinal(
   step: RuntimeStepSummary,
 ): "ok" | "restart" | "failed" | null {
@@ -263,17 +278,10 @@ function classifyFinal(
   return null;
 }
 
-function pickAnchor(detail: ExecutionDetail): ThresholdMonitorModel["anchor"] {
-  const gates = [...detail.gates]
-    .filter((g) => g.plannedOpenAt)
-    .sort((a, b) => a.order - b.order);
-  if (gates[0]?.plannedOpenAt) {
-    const atMs = new Date(gates[0].plannedOpenAt).getTime();
-    if (Number.isFinite(atMs)) {
-      return { kind: "gate", label: gates[0].name, atMs };
-    }
-  }
-
+/** Referencia de holgura: solo fin planificado (sin gates). */
+function pickPlanEndAnchor(
+  detail: ExecutionDetail,
+): ThresholdMonitorModel["anchor"] {
   let maxEnd: number | null = null;
   for (const step of detail.steps) {
     const end = plannedEndMs(step);
@@ -281,7 +289,7 @@ function pickAnchor(detail: ExecutionDetail): ThresholdMonitorModel["anchor"] {
     if (maxEnd == null || end > maxEnd) maxEnd = end;
   }
   if (maxEnd == null) return null;
-  return { kind: "plan_end", label: "Fin de plan", atMs: maxEnd };
+  return { kind: "plan_end", label: "Fin planificado", atMs: maxEnd };
 }
 
 function buildWorkstreamRows(
@@ -308,12 +316,14 @@ function buildWorkstreamRows(
       const planEnd = plannedEndMs(step);
       if (planEnd != null && planEnd <= nowMs) plannedDone += 1;
 
-      if (countsAsRealProgress(step, detail.type)) done += 1;
-      else if (step.status === "FALLIDO" || step.status === "RECHAZADO") {
-        failed += 1;
-      } else if (isActivelyRunning(step)) {
-        running += 1;
+      if (countsAsRealProgress(step, detail.type)) {
+        done += 1;
+        continue;
       }
+
+      // Fallo histórico (p. ej. rearrancado) sigue contando para pintar la fila.
+      if (hasUnresolvedFail(step)) failed += 1;
+      if (isActivelyRunning(step)) running += 1;
     }
 
     rows.push({
@@ -380,10 +390,10 @@ export function buildThresholdMonitorModel(
 
   const failMarkers: StairEvent[] = [];
   for (const step of steps) {
-    let t = failEndedAtMs(step);
-    if (t == null) continue;
-    if (t > nowMs) t = nowMs;
-    failMarkers.push({ t, stepId: step.id, label: step.name });
+    for (const endedAt of failEndedAts(step)) {
+      const t = endedAt > nowMs ? nowMs : endedAt;
+      failMarkers.push({ t, stepId: step.id, label: step.name });
+    }
   }
   failMarkers.sort((a, b) => a.t - b.t || a.stepId.localeCompare(b.stepId));
 
@@ -395,7 +405,7 @@ export function buildThresholdMonitorModel(
     (step) => !countsAsRealProgress(step, detail.type),
   ).length;
 
-  const anchor = pickAnchor(detail);
+  const anchor = pickPlanEndAnchor(detail);
 
   let etaMs: number | null = null;
   for (const step of steps) {

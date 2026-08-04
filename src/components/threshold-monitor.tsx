@@ -10,6 +10,7 @@ import {
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -22,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { WorkstreamDeepDive } from "@/components/workstream-deep-dive";
+import { formatDayTimeLabel } from "@/lib/execution-schedule";
 import type { ExecutionDetail } from "@/lib/execution-types";
 import {
   AXIS_MAJOR_PCTS,
@@ -42,6 +44,20 @@ const SERIES = {
   running: { color: "#35E2E5", label: "En curso" },
   fail: { color: "#e11d48", label: "Fallo" },
 } as const;
+
+function holguraLabel(min: number | null) {
+  if (min == null) return "—";
+  if (min === 0) return "en hora";
+  if (min > 0) return `+${min} min`;
+  return `${min} min`;
+}
+
+function holguraClass(min: number | null) {
+  if (min == null) return "text-muted-foreground";
+  if (min < 0) return "text-rose-300";
+  if (min < 10) return "text-amber-200";
+  return "text-emerald-300";
+}
 
 function executionSyncKey(detail: ExecutionDetail): string {
   return [
@@ -594,6 +610,32 @@ export function ThresholdMonitor({
                   }).format(new Date(model.nowMs))}
                 </span>
               </CardTitle>
+              <CardDescription>
+                Holgura ≈ Fin planificado vs ETA (máx. fin proyectado de pasos
+                abiertos)
+                {model.holguraMin != null || model.etaMs ? (
+                  <>
+                    {" · "}
+                    <span
+                      className={cn(
+                        "font-medium",
+                        holguraClass(model.holguraMin),
+                      )}
+                    >
+                      {holguraLabel(model.holguraMin)}
+                    </span>
+                    {model.etaMs ? (
+                      <>
+                        {" · ETA "}
+                        {formatDayTimeLabel(
+                          new Date(model.etaMs),
+                          model.timezone,
+                        )}
+                      </>
+                    ) : null}
+                  </>
+                ) : null}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {model.nowBeyondDomain ? (
@@ -638,9 +680,17 @@ export function ThresholdMonitor({
                     {model.workstreams.map((row) => (
                       <TableRow
                         key={row.workstreamId}
-                        className={cn(row.failed > 0 && "bg-rose-500/10")}
+                        className={cn(
+                          row.failed > 0 &&
+                            "bg-rose-500/20 hover:bg-rose-500/25",
+                        )}
                       >
-                        <TableCell className="min-w-0 truncate font-medium">
+                        <TableCell
+                          className={cn(
+                            "min-w-0 truncate font-medium",
+                            row.failed > 0 && "text-rose-200",
+                          )}
+                        >
                           {row.workstreamName}
                         </TableCell>
                         <TableCell className="px-1 text-right tabular-nums">
@@ -652,7 +702,12 @@ export function ThresholdMonitor({
                         <TableCell className="px-1 text-right tabular-nums">
                           {row.running}
                         </TableCell>
-                        <TableCell className="px-1 text-right tabular-nums">
+                        <TableCell
+                          className={cn(
+                            "px-1 text-right tabular-nums",
+                            row.failed > 0 && "font-semibold text-rose-400",
+                          )}
+                        >
                           {row.failed}
                         </TableCell>
                       </TableRow>
