@@ -1,9 +1,21 @@
 /**
- * Activa login sin OTP (cookie cx_dev_session).
- * En prod solo si CONTROLX_DEV_BYPASS=true en Vercel — apagar al terminar pruebas.
+ * Login sin OTP (cookie cx_dev_session).
+ *
+ * true  = pruebas temporales en Vercel (solo CONTROLX_DEV_BYPASS)
+ * false = como antes: bypass solo en local
  */
+const ALLOW_DEV_BYPASS_IN_PROD = true;
+
 export function isDevBypassEnabled(): boolean {
-  return process.env.CONTROLX_DEV_BYPASS === "true";
+  if (ALLOW_DEV_BYPASS_IN_PROD) {
+    return process.env.CONTROLX_DEV_BYPASS === "true";
+  } else {
+    // como antes (solo local)
+    return (
+      process.env.CONTROLX_DEV_BYPASS === "true" &&
+      process.env.NODE_ENV !== "production"
+    );
+  }
 }
 
 export function isDevClerkUserId(clerkUserId: string): boolean {
