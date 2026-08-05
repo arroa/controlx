@@ -14,6 +14,7 @@ import {
   listAccessibleOrganizationsForUser,
   type AccessibleExecutionCard,
 } from "@/lib/my-executions";
+import { getWorkspaceContext } from "@/lib/workspace-context";
 import { cn } from "@/lib/utils";
 
 const STATUS_LABELS: Record<AccessibleExecutionCard["status"], string> = {
@@ -177,9 +178,18 @@ export default async function EjecucionesPage({
 
   if (!orgId) {
     if (orgs.length === 1) {
-      redirect(`/ejecuciones?org=${orgs[0]!.id}`);
+      redirect(
+        `/workspace/enter?org=${orgs[0]!.id}&next=${encodeURIComponent(`/ejecuciones?org=${orgs[0]!.id}`)}`,
+      );
     }
     redirect("/elegir-organizacion");
+  }
+
+  const workspace = await getWorkspaceContext();
+  if (workspace.organizationId !== orgId) {
+    redirect(
+      `/workspace/enter?org=${orgId}&next=${encodeURIComponent(`/ejecuciones?org=${orgId}`)}`,
+    );
   }
 
   const selectedOrg = orgs.find((o) => o.id === orgId)!;

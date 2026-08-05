@@ -21,12 +21,15 @@ export default async function ElegirOrganizacionPage() {
 
   if (!orgs.length) redirect("/");
   if (orgs.length === 1) {
-    redirect(`/ejecuciones?org=${orgs[0]!.id}`);
+    const org = orgs[0]!;
+    redirect(
+      `/workspace/enter?org=${org.id}&next=${encodeURIComponent(`/ejecuciones?org=${org.id}`)}`,
+    );
   }
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      <AppHeader homeHref="/elegir-organizacion" title="Organización" />
+      <AppHeader homeHref="/elegir-organizacion" title="Organizaciones" />
 
       <main className="mx-auto flex min-h-0 w-full max-w-lg flex-1 flex-col overflow-y-auto px-3 py-6 sm:px-6">
         <p className="text-sm text-muted-foreground">
@@ -42,7 +45,11 @@ export default async function ElegirOrganizacionPage() {
                 className="h-auto w-full justify-start px-4 py-3 text-left text-base font-medium"
                 asChild
               >
-                <Link href={`/ejecuciones?org=${org.id}`}>{org.name}</Link>
+                <Link
+                  href={`/workspace/enter?org=${org.id}&next=${encodeURIComponent(`/ejecuciones?org=${org.id}`)}`}
+                >
+                  {org.name}
+                </Link>
               </Button>
             </li>
           ))}

@@ -23,16 +23,25 @@ function isPublicPath(pathname: string): boolean {
   });
 }
 
+function withPathnameHeader(request: NextRequest) {
+  const requestHeaders = new Headers(request.headers);
+  const path = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+  requestHeaders.set("x-pathname", path);
+  return NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+}
+
 async function handleDevBypass(request: NextRequest) {
   if (await getDevSessionUserIdFromRequest(request)) {
-    return NextResponse.next();
+    return withPathnameHeader(request);
   }
 
   if (!isPublicPath(request.nextUrl.pathname)) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
-  return NextResponse.next();
+  return withPathnameHeader(request);
 }
 
 export default async function proxy(
@@ -68,7 +77,10 @@ export default async function proxy(
     }
   });
 
-  return clerkHandler(request, event as never);
+  // Clerk middleware no reescribe x-pathname; lo añadimos en un wrap.
+  const result = await clerkHandler(request, event as never);
+  if (result) return result;
+  return withPathnameHeader(request);
 }
 
 export const config = {

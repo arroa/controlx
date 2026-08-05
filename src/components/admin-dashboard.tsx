@@ -232,7 +232,7 @@ function OrganizationCard({
               className="h-12 w-[50%] bg-emerald-600 text-white shadow-sm hover:bg-emerald-500"
             >
               <Link
-                href={`/organizations/${organization.id}`}
+                href={`/workspace/enter?org=${organization.id}&next=${encodeURIComponent(`/organizations/${organization.id}`)}`}
                 aria-label="Entrar a la organización"
               >
                 <LogIn className="size-5" />

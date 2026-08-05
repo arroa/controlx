@@ -2,9 +2,10 @@ import Link from "next/link";
 
 import { AppNavSheet } from "@/components/app-nav-sheet";
 import { Button } from "@/components/ui/button";
-import { getAdministracionHref } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
+import { getNavWorkspaceModel } from "@/lib/nav-workspace";
+import { isMobileRequest } from "@/lib/request-device";
 
 /**
  * @deprecated Prefer `AppHeader`. Se mantiene para páginas que aún solo
@@ -22,16 +23,18 @@ export async function AuthHeader() {
     );
   }
 
-  const administracionHref = await getAdministracionHref(user.email, {
+  const isMobile = await isMobileRequest();
+  const nav = await getNavWorkspaceModel({
+    email: user.email,
     isSuperAdmin: user.isSuperAdmin,
+    isMobile,
   });
 
   return (
     <AppNavSheet
       email={user.email}
-      roleLabel={user.isSuperAdmin ? "SuperAdmin" : "Usuario"}
       isSuperAdmin={user.isSuperAdmin}
-      administracionHref={administracionHref}
+      nav={nav}
       bypassEnabled={bypassEnabled}
     />
   );

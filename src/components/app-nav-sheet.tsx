@@ -2,19 +2,20 @@
 
 import { useAuth, useClerk } from "@clerk/nextjs";
 import {
-  LayoutDashboard,
+  Building2,
+  CalendarDays,
   ListChecks,
   LogOut,
   Menu,
   MessageSquareText,
   Newspaper,
   ScrollText,
+  Settings2,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-
 import {
   ControlXGuideChat,
   GUIDE_ASSISTANT_NAME,
@@ -39,14 +40,13 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { resolveGuideContext } from "@/lib/ai/guide-route-context";
+import type { NavWorkspaceModel } from "@/lib/nav-workspace";
 import { cn } from "@/lib/utils";
 
 type AppNavSheetProps = {
   email: string;
-  roleLabel: string;
   isSuperAdmin: boolean;
-  /** Destino de Administración; si es null/undefined no se muestra. */
-  administracionHref?: string | null;
+  nav: NavWorkspaceModel;
   bypassEnabled?: boolean;
 };
 
@@ -91,9 +91,8 @@ function NavLink({
 
 function AppNavSheetShell({
   email,
-  roleLabel,
   isSuperAdmin,
-  administracionHref,
+  nav,
   leaving,
   farewellOpen,
   onFarewellOpenChange,
@@ -101,9 +100,8 @@ function AppNavSheetShell({
   onConfirmSignOut,
 }: {
   email: string;
-  roleLabel: string;
   isSuperAdmin: boolean;
-  administracionHref?: string | null;
+  nav: NavWorkspaceModel;
   leaving: boolean;
   farewellOpen: boolean;
   onFarewellOpenChange: (open: boolean) => void;
@@ -118,23 +116,31 @@ function AppNavSheetShell({
     () => resolveGuideContext(pathname, searchParams),
     [pathname, searchParams],
   );
-  const orgId = searchParams.get("org");
-  const ejecucionesHref = orgId
-    ? `/ejecuciones?org=${orgId}`
-    : "/ejecuciones";
 
   const links = [
     {
-      href: ejecucionesHref,
+      href: nav.ejecucionesHref,
       label: "Ejecuciones",
       icon: ListChecks,
       show: true,
     },
     {
-      href: administracionHref ?? "/dashboard",
-      label: "Administración",
-      icon: LayoutDashboard,
-      show: Boolean(administracionHref),
+      href: nav.eventosHref ?? "",
+      label: "Eventos",
+      icon: CalendarDays,
+      show: Boolean(nav.eventosHref),
+    },
+    {
+      href: nav.organizacionesHref ?? "",
+      label: "Organizaciones",
+      icon: Building2,
+      show: Boolean(nav.organizacionesHref),
+    },
+    {
+      href: nav.eventAdminHref ?? "",
+      label: "Admin del evento",
+      icon: Settings2,
+      show: Boolean(nav.eventAdminHref),
     },
     {
       href: "/novedades",
@@ -154,7 +160,7 @@ function AppNavSheetShell({
       icon: ScrollText,
       show: isSuperAdmin,
     },
-  ].filter((item) => item.show);
+  ].filter((item) => item.show && item.href);
 
   return (
     <>
@@ -182,10 +188,34 @@ function AppNavSheetShell({
               <div className="min-w-0">
                 <SheetTitle className="truncate text-sm">{email}</SheetTitle>
                 <SheetDescription className="text-xs text-primary">
-                  {roleLabel}
+                  {nav.roleLabel}
                 </SheetDescription>
               </div>
             </div>
+            {nav.organizationName || nav.eventName ? (
+              <div className="mt-3 space-y-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-left">
+                {nav.organizationName ? (
+                  <p className="truncate text-xs text-muted-foreground">
+                    Org ·{" "}
+                    <span className="font-medium text-foreground">
+                      {nav.organizationName}
+                    </span>
+                  </p>
+                ) : null}
+                {nav.eventName ? (
+                  <p className="truncate text-xs text-muted-foreground">
+                    Evento ·{" "}
+                    <span className="font-medium text-foreground">
+                      {nav.eventName}
+                    </span>
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-left text-xs text-muted-foreground">
+                Sin organización/evento activo
+              </p>
+            )}
           </SheetHeader>
 
           <nav className="flex flex-1 flex-col gap-1 p-3">
@@ -214,7 +244,7 @@ function AppNavSheetShell({
                 pathname === itemPath || pathname.startsWith(`${itemPath}/`);
               return (
                 <NavLink
-                  key={itemPath}
+                  key={`${item.label}:${item.href}`}
                   href={item.href}
                   label={item.label}
                   icon={item.icon}
@@ -245,8 +275,8 @@ function AppNavSheetShell({
 
       <ControlXGuideChat
         zone={guide.zone}
-        organizationId={guide.organizationId}
-        eventId={guide.eventId}
+        organizationId={guide.organizationId ?? nav.organizationId ?? undefined}
+        eventId={guide.eventId ?? nav.eventId ?? undefined}
         open={guideOpen}
         onOpenChange={setGuideOpen}
       />
@@ -282,9 +312,8 @@ function AppNavSheetShell({
 
 function BypassAppNavSheet({
   email,
-  roleLabel,
   isSuperAdmin,
-  administracionHref,
+  nav,
 }: Omit<AppNavSheetProps, "bypassEnabled">) {
   const router = useRouter();
   const [leaving, setLeaving] = useState(false);
@@ -305,9 +334,8 @@ function BypassAppNavSheet({
   return (
     <AppNavSheetShell
       email={email}
-      roleLabel={roleLabel}
       isSuperAdmin={isSuperAdmin}
-      administracionHref={administracionHref}
+      nav={nav}
       leaving={leaving}
       farewellOpen={farewellOpen}
       onFarewellOpenChange={setFarewellOpen}
@@ -321,9 +349,8 @@ function BypassAppNavSheet({
 
 function ClerkAppNavSheet({
   email,
-  roleLabel,
   isSuperAdmin,
-  administracionHref,
+  nav,
 }: Omit<AppNavSheetProps, "bypassEnabled">) {
   const router = useRouter();
   const { isSignedIn } = useAuth();
@@ -350,9 +377,8 @@ function ClerkAppNavSheet({
   return (
     <AppNavSheetShell
       email={email}
-      roleLabel={roleLabel}
       isSuperAdmin={isSuperAdmin}
-      administracionHref={administracionHref}
+      nav={nav}
       leaving={leaving}
       farewellOpen={farewellOpen}
       onFarewellOpenChange={setFarewellOpen}
@@ -366,27 +392,24 @@ function ClerkAppNavSheet({
 
 export function AppNavSheet({
   email,
-  roleLabel,
   isSuperAdmin,
-  administracionHref,
+  nav,
   bypassEnabled = false,
 }: AppNavSheetProps) {
   if (bypassEnabled) {
     return (
       <BypassAppNavSheet
         email={email}
-        roleLabel={roleLabel}
         isSuperAdmin={isSuperAdmin}
-        administracionHref={administracionHref}
+        nav={nav}
       />
     );
   }
   return (
     <ClerkAppNavSheet
       email={email}
-      roleLabel={roleLabel}
       isSuperAdmin={isSuperAdmin}
-      administracionHref={administracionHref}
+      nav={nav}
     />
   );
 }

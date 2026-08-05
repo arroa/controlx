@@ -373,3 +373,125 @@ export async function listAccessibleOrganizationsForUser(
     name: org.name,
   }));
 }
+
+export type AccessibleEventCard = {
+  id: string;
+  name: string;
+  organizationId: string;
+  organizationName: string;
+  roles: EventActorRole[];
+  isOrgAdmin: boolean;
+};
+
+/**
+ * Eventos a los que el usuario puede entrar (actor, OrgAdmin de la org, o todos si Super).
+ * Opcional: filtrar por organizationId.
+ */
+export async function listAccessibleEventsForUser(
+  email: string,
+  options?: { isSuperAdmin?: boolean; organizationId?: string },
+): Promise<AccessibleEventCard[]> {
+  if (!isMongoConfigured()) return [];
+  const database = await getDatabase();
+  const normalized = email.trim().toLowerCase();
+
+  const orgFilter =
+    options?.organizationId && ObjectId.isValid(options.organizationId)
+      ? new ObjectId(options.organizationId)
+      : null;
+
+  if (options?.isSuperAdmin) {
+    const query = orgFilter ? { organizationId: orgFilter } : {};
+    const events = await database
+      .collection<EventDoc>("events")
+      .find(query)
+      .sort({ name: 1 })
+      .limit(300)
+      .toArray();
+    const orgIds = [...new Set(events.map((e) => e.organizationId.toHexString()))];
+    const orgs = await database
+      .collection<OrgDoc>("organizations")
+      .find({ _id: { $in: orgIds.map((id) => new ObjectId(id)) } })
+      .toArray();
+    const orgName = new Map(orgs.map((o) => [o._id.toHexString(), o.name]));
+    return events.map((event) => ({
+      id: event._id.toHexString(),
+      name: event.name,
+      organizationId: event.organizationId.toHexString(),
+      organizationName:
+        orgName.get(event.organizationId.toHexString()) ?? "Organización",
+      roles: ["EVENT_ADMIN"] as EventActorRole[],
+      isOrgAdmin: true,
+    }));
+  }
+
+  const [orgMemberships, eventMemberships] = await Promise.all([
+    database
+      .collection<OrgMembershipDoc>("organizationMemberships")
+      .find({ email: normalized, status: "ACTIVE" })
+      .toArray(),
+    database
+      .collection<MembershipDoc>("eventMemberships")
+      .find({ email: normalized, status: "ACTIVE" })
+      .toArray(),
+  ]);
+
+  const orgAdminIds = new Set(
+    orgMemberships.map((doc) => doc.organizationId.toHexString()),
+  );
+
+  const actorByEvent = new Map<string, EventActorRole[]>();
+  for (const doc of eventMemberships) {
+    const roles = membershipRoles(doc);
+    if (!roles.length) continue;
+    actorByEvent.set(doc.eventId.toHexString(), roles);
+  }
+
+  const eventIdSet = new Set<string>(actorByEvent.keys());
+  if (orgAdminIds.size) {
+    const orgObjectIds = [...orgAdminIds].map((id) => new ObjectId(id));
+    const orgEvents = await database
+      .collection<EventDoc>("events")
+      .find(
+        orgFilter
+          ? { organizationId: orgFilter }
+          : { organizationId: { $in: orgObjectIds } },
+        { projection: { _id: 1 } },
+      )
+      .toArray();
+    for (const event of orgEvents) {
+      eventIdSet.add(event._id.toHexString());
+    }
+  }
+
+  if (!eventIdSet.size) return [];
+
+  const events = await database
+    .collection<EventDoc>("events")
+    .find({
+      _id: { $in: [...eventIdSet].map((id) => new ObjectId(id)) },
+      ...(orgFilter ? { organizationId: orgFilter } : {}),
+    })
+    .sort({ name: 1 })
+    .toArray();
+
+  const orgIds = [...new Set(events.map((e) => e.organizationId.toHexString()))];
+  const orgs = await database
+    .collection<OrgDoc>("organizations")
+    .find({ _id: { $in: orgIds.map((id) => new ObjectId(id)) } })
+    .toArray();
+  const orgName = new Map(orgs.map((o) => [o._id.toHexString(), o.name]));
+
+  return events.map((event) => {
+    const organizationId = event.organizationId.toHexString();
+    const isOrgAdmin = orgAdminIds.has(organizationId);
+    return {
+      id: event._id.toHexString(),
+      name: event.name,
+      organizationId,
+      organizationName: orgName.get(organizationId) ?? "Organización",
+      roles: actorByEvent.get(event._id.toHexString()) ?? [],
+      isOrgAdmin,
+    };
+  });
+}

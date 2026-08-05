@@ -25,8 +25,14 @@ export default async function OrganizationPage({
   return (
     <div className="min-h-screen">
       <AppHeader
-        homeHref={user.isSuperAdmin ? "/dashboard" : "/ejecuciones"}
-        crumbs={[{ label: workspace.organization.name }]}
+        crumbs={
+          user.isSuperAdmin
+            ? [
+                { label: "Organizaciones", href: "/dashboard" },
+                { label: workspace.organization.name },
+              ]
+            : [{ label: workspace.organization.name }]
+        }
       />
 
       <main className="mx-auto max-w-7xl px-6 py-10">

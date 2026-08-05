@@ -28,13 +28,13 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader homeHref="/dashboard" title="Administración" />
+      <AppHeader homeHref="/dashboard" title="Organizaciones" />
 
       <main className="mx-auto max-w-7xl px-6 py-10">
         <section className="mb-10">
-          <p className="text-sm text-muted-foreground">Bienvenida</p>
+          <p className="text-sm text-muted-foreground">Panel de organizaciones</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">
-            Administración de ControlX
+            Organizaciones
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">{user.email}</p>
         </section>

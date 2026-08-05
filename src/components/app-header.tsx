@@ -4,13 +4,11 @@ import { Suspense, type ReactNode } from "react";
 
 import { AppNavSheet } from "@/components/app-nav-sheet";
 import { Button } from "@/components/ui/button";
-import {
-  getAdministracionHref,
-  getPostLoginPath,
-} from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
+import { getNavWorkspaceModel } from "@/lib/nav-workspace";
 import { isMobileRequest } from "@/lib/request-device";
+import { getWorkspaceHomePath } from "@/lib/workspace-context";
 import { cn } from "@/lib/utils";
 
 export type AppHeaderCrumb = {
@@ -21,14 +19,11 @@ export type AppHeaderCrumb = {
 type AppHeaderProps = {
   /**
    * Fallback del logo si no hay sesión.
-   * Con sesión, el logo usa getPostLoginPath (PC: portal por rol; móvil: hub).
+   * Con sesión, el logo usa el home del workspace activo (org sticky).
    */
   homeHref?: string;
-  /** Ruta completa; en UI solo se muestra … + paso actual. */
   crumbs?: AppHeaderCrumb[];
-  /** Título cuando no hay crumbs (o como único crumb). */
   title?: string;
-  /** Acciones de página (p. ej. “Mi turno”), a la izquierda del menú. */
   actions?: ReactNode;
   className?: string;
   innerClassName?: string;
@@ -94,13 +89,16 @@ export async function AppHeader({
   const bypassEnabled = isDevBypassEnabled();
   const user = await getCurrentUser();
   const isMobile = await isMobileRequest();
-  const administracionHref = user
-    ? await getAdministracionHref(user.email, {
+  const nav = user
+    ? await getNavWorkspaceModel({
+        email: user.email,
         isSuperAdmin: user.isSuperAdmin,
+        isMobile,
       })
     : null;
   const logoHref = user
-    ? await getPostLoginPath(user.email, {
+    ? await getWorkspaceHomePath({
+        email: user.email,
         isMobile,
         isSuperAdmin: user.isSuperAdmin,
       })
@@ -139,7 +137,7 @@ export async function AppHeader({
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           {actions}
-          {user ? (
+          {user && nav ? (
             <Suspense
               fallback={
                 <Button
@@ -154,9 +152,8 @@ export async function AppHeader({
             >
               <AppNavSheet
                 email={user.email}
-                roleLabel={user.isSuperAdmin ? "SuperAdmin" : "Usuario"}
                 isSuperAdmin={user.isSuperAdmin}
-                administracionHref={administracionHref}
+                nav={nav}
                 bypassEnabled={bypassEnabled}
               />
             </Suspense>
