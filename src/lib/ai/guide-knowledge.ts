@@ -114,8 +114,18 @@ Vista panorámica: cronograma.`,
   {
     id: "readiness",
     title: "Readiness: ¿puede arrancar el evento?",
-    tags: ["readiness", "checklist", "blockers", "preparacion", "arrancar"],
-    zones: ["all", "overview"],
+    tags: [
+      "readiness",
+      "checklist",
+      "blockers",
+      "preparacion",
+      "arrancar",
+      "ejecutar",
+      "simulacro",
+      "desactualizado",
+      "no puedo",
+    ],
+    zones: ["all", "overview", "executions"],
     summary:
       "Readiness es el checklist de preparación (setup/diseño/roles/plan) y dice si se puede empezar.",
     body: `Readiness resume el estado de preparación del evento.
@@ -126,7 +136,10 @@ Revisa checks de:
 - Roles (ejecutores/aprobadores)
 - Plan (condiciones de arranque)
 
-Si hay blockers, canStart=false. Es la brújula antes de crear/arrancar ejecuciones.`,
+Si hay blockers, canStart=false.
+Si stale=true: hubo cambios de preparación; hay que pulsar Recalcular en el hub del evento antes de crear/arrancar.
+
+“¿Por qué no puedo ejecutar?” → mirar readiness (canStart / stale / blockers), no es un tema de que el asistente “no pueda operar”.`,
   },
   {
     id: "executions",

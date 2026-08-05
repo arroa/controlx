@@ -1742,6 +1742,41 @@ export async function canAccessOrganization(
   return Boolean(membership);
 }
 
+/**
+ * Acceso al hub de una org (p. ej. /ejecuciones?org=): OrgAdmin o actor ACTIVE
+ * de algún evento de esa organización. No exige ser admin de la org.
+ */
+export async function canAccessOrganizationHub(
+  email: string,
+  organizationId: string,
+): Promise<boolean> {
+  if (!ObjectId.isValid(organizationId)) return false;
+  const normalized = email.trim().toLowerCase();
+  if (await canAccessOrganization(normalized, organizationId)) return true;
+
+  const database = await getDatabase();
+  const orgObjectId = new ObjectId(organizationId);
+  const eventIds = await database
+    .collection<EventDocument>("events")
+    .find({ organizationId: orgObjectId }, { projection: { _id: 1 } })
+    .map((doc) => doc._id)
+    .toArray();
+  if (!eventIds.length) return false;
+
+  const actor = await database
+    .collection<EventMembershipDocument>("eventMemberships")
+    .findOne(
+      {
+        eventId: { $in: eventIds },
+        email: normalized,
+        status: "ACTIVE",
+      },
+      { projection: { _id: 1, roles: 1, role: 1 } },
+    );
+  if (!actor) return false;
+  return membershipRoles(actor).length > 0;
+}
+
 export async function canAccessEvent(
   email: string,
   eventId: string,
@@ -3418,6 +3453,7 @@ export async function updateStepPlanning(
       { returnDocument: "after" },
     );
   if (!result) throw new Error("El paso no existe.");
+  await touchPrepReadiness(eventId);
   return toDesignStepSummary(eventId, result);
 }
 

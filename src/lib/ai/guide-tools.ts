@@ -4,8 +4,8 @@ import { tool } from "ai";
 import { z } from "zod";
 
 import {
-  canAccessEvent,
-  canAccessOrganization,
+  canAccessEventAsMember,
+  canAccessOrganizationHub,
   getEventDesign,
   getEventWorkspace,
   getOrganizationWorkspace,
@@ -32,7 +32,7 @@ async function assertEventAccess(ctx: GuideToolContext, eventId: string) {
     return { error: "MongoDB no está configurado." } as const;
   }
   const allowed =
-    ctx.isSuperAdmin || (await canAccessEvent(ctx.userEmail, eventId));
+    ctx.isSuperAdmin || (await canAccessEventAsMember(ctx.userEmail, eventId));
   if (!allowed) {
     return { error: "No tienes acceso a este evento." } as const;
   }
@@ -45,7 +45,7 @@ async function assertOrgAccess(ctx: GuideToolContext, organizationId: string) {
   }
   const allowed =
     ctx.isSuperAdmin ||
-    (await canAccessOrganization(ctx.userEmail, organizationId));
+    (await canAccessOrganizationHub(ctx.userEmail, organizationId));
   if (!allowed) {
     return { error: "No tienes acceso a esta organización." } as const;
   }
@@ -426,7 +426,7 @@ export function createGuideTools(ctx: GuideToolContext) {
 
     get_event_readiness: tool({
       description:
-        "Obtiene el readiness del evento: checks de setup/diseño/roles/plan, blockers y si puede arrancar. Sin listados de personas.",
+        "Diagnóstico de preparación del evento: canStart, stale, blockers y checks de setup/diseño/roles/plan. Úsala SIEMPRE si preguntan por qué no pueden ejecutar, arrancar, crear simulacro/real, o si el readiness está desactualizado. Sin listados de personas.",
       inputSchema: z.object({
         eventId: z.string().optional(),
       }),

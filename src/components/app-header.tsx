@@ -4,9 +4,13 @@ import { Suspense, type ReactNode } from "react";
 
 import { AppNavSheet } from "@/components/app-nav-sheet";
 import { Button } from "@/components/ui/button";
-import { getAdministracionHref } from "@/lib/admin-data";
+import {
+  getAdministracionHref,
+  getPostLoginPath,
+} from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
+import { isMobileRequest } from "@/lib/request-device";
 import { cn } from "@/lib/utils";
 
 export type AppHeaderCrumb = {
@@ -15,7 +19,10 @@ export type AppHeaderCrumb = {
 };
 
 type AppHeaderProps = {
-  /** Destino del logo ControlX. Por defecto /ejecuciones. */
+  /**
+   * Fallback del logo si no hay sesión.
+   * Con sesión, el logo usa getPostLoginPath (PC: portal por rol; móvil: hub).
+   */
   homeHref?: string;
   /** Ruta completa; en UI solo se muestra … + paso actual. */
   crumbs?: AppHeaderCrumb[];
@@ -77,7 +84,7 @@ function TruncatedTrail({ crumbs }: { crumbs: AppHeaderCrumb[] }) {
 }
 
 export async function AppHeader({
-  homeHref = "/ejecuciones",
+  homeHref = "/",
   crumbs,
   title,
   actions,
@@ -86,11 +93,18 @@ export async function AppHeader({
 }: AppHeaderProps) {
   const bypassEnabled = isDevBypassEnabled();
   const user = await getCurrentUser();
+  const isMobile = await isMobileRequest();
   const administracionHref = user
     ? await getAdministracionHref(user.email, {
         isSuperAdmin: user.isSuperAdmin,
       })
     : null;
+  const logoHref = user
+    ? await getPostLoginPath(user.email, {
+        isMobile,
+        isSuperAdmin: user.isSuperAdmin,
+      })
+    : homeHref;
 
   const trail: AppHeaderCrumb[] =
     crumbs && crumbs.length > 0
@@ -113,7 +127,7 @@ export async function AppHeader({
         )}
       >
         <Link
-          href={homeHref}
+          href={logoHref}
           className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
           title="Inicio ControlX"
           aria-label="Inicio ControlX"

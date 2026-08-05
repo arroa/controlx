@@ -10,8 +10,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  canAccessEvent,
-  canAccessOrganization,
+  canAccessEventAsMember,
+  canAccessOrganizationHub,
   getEventWorkspace,
 } from "@/lib/admin-data";
 import { assertGuideRateLimit, recordGuideAudit } from "@/lib/ai/guide-audit";
@@ -113,7 +113,7 @@ export async function POST(req: Request) {
 
   if (eventId) {
     const allowed =
-      user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
+      user.isSuperAdmin || (await canAccessEventAsMember(user.email, eventId));
     if (!allowed) {
       const blockedReason = "Sin acceso al evento";
       await recordGuideAudit({
@@ -127,26 +127,12 @@ export async function POST(req: Request) {
         blockedReason,
         model: GUIDE_MODEL,
       });
-      return NextResponse.json(
-        {
-          error: "No autorizado.",
-          // TEMP debug Xavier — quitar cuando cerremos el caso
-          debug: {
-            blockedReason,
-            zone,
-            organizationId: organizationId ?? null,
-            eventId,
-            userEmail: user.email,
-            hint: "canAccessEvent: OrgAdmin o EventAdmin del mapa. Ejecutor solo no alcanza aquí.",
-          },
-        },
-        { status: 403 },
-      );
+      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
     }
   } else if (organizationId) {
     const allowed =
       user.isSuperAdmin ||
-      (await canAccessOrganization(user.email, organizationId));
+      (await canAccessOrganizationHub(user.email, organizationId));
     if (!allowed) {
       const blockedReason = "Sin acceso a la organización";
       await recordGuideAudit({
@@ -160,21 +146,7 @@ export async function POST(req: Request) {
         blockedReason,
         model: GUIDE_MODEL,
       });
-      return NextResponse.json(
-        {
-          error: "No autorizado.",
-          // TEMP debug Xavier — quitar cuando cerremos el caso
-          debug: {
-            blockedReason,
-            zone,
-            organizationId,
-            eventId: eventId ?? null,
-            userEmail: user.email,
-            hint: "Pantalla con organizationId: exige membership de ORG. Ser actor del evento (Ejecutor/EventAdmin) no basta en /ejecuciones.",
-          },
-        },
-        { status: 403 },
-      );
+      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
     }
   }
   // Sin org/evento: modo conocimiento de producto (Xavier global).
