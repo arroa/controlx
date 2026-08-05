@@ -49,3 +49,5 @@ next-env.d.ts
 /scripts/export-event-from-prod.mjs
 /scripts/import-event-to-local.mjs
 /scripts/tmp-list-events.mjs
+
+.vercel

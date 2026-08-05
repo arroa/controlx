@@ -115,6 +115,7 @@ export async function POST(req: Request) {
     const allowed =
       user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
     if (!allowed) {
+      const blockedReason = "Sin acceso al evento";
       await recordGuideAudit({
         status: "rejected",
         userId: user.id,
@@ -123,16 +124,31 @@ export async function POST(req: Request) {
         eventId,
         zone,
         userMessage: validated.lastUserText,
-        blockedReason: "Sin acceso al evento",
+        blockedReason,
         model: GUIDE_MODEL,
       });
-      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
+      return NextResponse.json(
+        {
+          error: "No autorizado.",
+          // TEMP debug Xavier — quitar cuando cerremos el caso
+          debug: {
+            blockedReason,
+            zone,
+            organizationId: organizationId ?? null,
+            eventId,
+            userEmail: user.email,
+            hint: "canAccessEvent: OrgAdmin o EventAdmin del mapa. Ejecutor solo no alcanza aquí.",
+          },
+        },
+        { status: 403 },
+      );
     }
   } else if (organizationId) {
     const allowed =
       user.isSuperAdmin ||
       (await canAccessOrganization(user.email, organizationId));
     if (!allowed) {
+      const blockedReason = "Sin acceso a la organización";
       await recordGuideAudit({
         status: "rejected",
         userId: user.id,
@@ -141,10 +157,24 @@ export async function POST(req: Request) {
         eventId,
         zone,
         userMessage: validated.lastUserText,
-        blockedReason: "Sin acceso a la organización",
+        blockedReason,
         model: GUIDE_MODEL,
       });
-      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
+      return NextResponse.json(
+        {
+          error: "No autorizado.",
+          // TEMP debug Xavier — quitar cuando cerremos el caso
+          debug: {
+            blockedReason,
+            zone,
+            organizationId,
+            eventId: eventId ?? null,
+            userEmail: user.email,
+            hint: "Pantalla con organizationId: exige membership de ORG. Ser actor del evento (Ejecutor/EventAdmin) no basta en /ejecuciones.",
+          },
+        },
+        { status: 403 },
+      );
     }
   }
   // Sin org/evento: modo conocimiento de producto (Xavier global).

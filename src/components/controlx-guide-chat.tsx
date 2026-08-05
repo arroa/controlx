@@ -25,6 +25,19 @@ import { cn } from "@/lib/utils";
 export const GUIDE_ASSISTANT_NAME = "Xavier";
 export const GUIDE_ASSISTANT_TAGLINE = "Tu asistente de IA en ControlX";
 
+/** TEMP: capturar cuerpo de error del API para depurar en UI. Quitar luego. */
+type GuideDebugDump = {
+  at: string;
+  httpStatus: number | null;
+  clientContext: {
+    zone: GuideZone;
+    organizationId?: string;
+    eventId?: string;
+  };
+  serverBody: unknown;
+  errorMessage: string;
+};
+
 export function ControlXGuideChat({
   zone,
   organizationId,
@@ -39,6 +52,7 @@ export function ControlXGuideChat({
   onOpenChange: (open: boolean) => void;
 }) {
   const [input, setInput] = useState("");
+  const [debugDump, setDebugDump] = useState<GuideDebugDump | null>(null);
 
   const transport = useMemo(
     () =>
@@ -48,6 +62,37 @@ export function ControlXGuideChat({
           organizationId,
           eventId,
           zone,
+        },
+        fetch: async (input, init) => {
+          const response = await fetch(input, init);
+          if (!response.ok) {
+            let serverBody: unknown = null;
+            try {
+              serverBody = await response.clone().json();
+            } catch {
+              try {
+                serverBody = await response.clone().text();
+              } catch {
+                serverBody = null;
+              }
+            }
+            setDebugDump({
+              at: new Date().toISOString(),
+              httpStatus: response.status,
+              clientContext: { zone, organizationId, eventId },
+              serverBody,
+              errorMessage:
+                typeof serverBody === "object" &&
+                serverBody &&
+                "error" in serverBody &&
+                typeof (serverBody as { error: unknown }).error === "string"
+                  ? (serverBody as { error: string }).error
+                  : `HTTP ${response.status}`,
+            });
+          } else {
+            setDebugDump(null);
+          }
+          return response;
         },
       }),
     [organizationId, eventId, zone],
@@ -64,6 +109,7 @@ export function ControlXGuideChat({
     const trimmed = text.trim();
     if (!trimmed || busy) return;
     setInput("");
+    setDebugDump(null);
     await sendMessage({ text: trimmed });
   }
 
@@ -127,9 +173,37 @@ export function ControlXGuideChat({
               </div>
             ) : null}
 
-            {error ? (
-              <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                No pude responder. Revisa la API key o inténtalo de nuevo.
+            {error || debugDump ? (
+              <div className="space-y-2">
+                <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  No pude responder. Revisa la API key o inténtalo de nuevo.
+                </div>
+                {/* TEMP debug Xavier — quitar cuando cerremos el caso */}
+                <div className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  <p className="mb-1 font-semibold text-amber-50">
+                    DEBUG Xavier (temporal) — copia y pégame esto
+                  </p>
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-amber-50/95">
+                    {JSON.stringify(
+                      {
+                        clientError: error?.message ?? null,
+                        ...(debugDump ?? {
+                          at: new Date().toISOString(),
+                          httpStatus: null,
+                          clientContext: {
+                            zone,
+                            organizationId,
+                            eventId,
+                          },
+                          serverBody: null,
+                          errorMessage: error?.message ?? "sin detalle",
+                        }),
+                      },
+                      null,
+                      2,
+                    )}
+                  </pre>
+                </div>
               </div>
             ) : null}
           </div>
