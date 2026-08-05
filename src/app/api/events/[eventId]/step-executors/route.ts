@@ -8,6 +8,7 @@ import {
   unassignStepsExecutor,
 } from "@/lib/admin-data";
 import { requireUser } from "@/lib/api-auth";
+import { refreshOpenExecutionsFromDesign } from "@/lib/execution-runtime";
 
 type RouteParams = {
   params: Promise<{ eventId: string }>;
@@ -43,6 +44,7 @@ export async function POST(request: Request, { params }: RouteParams) {
 
   try {
     const steps = await assignStepsExecutor(eventId, parsed.data);
+    await refreshOpenExecutionsFromDesign(eventId);
     return NextResponse.json({ steps });
   } catch (error) {
     return NextResponse.json(
@@ -69,6 +71,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
 
   try {
     const steps = await unassignStepsExecutor(eventId, parsed.data);
+    await refreshOpenExecutionsFromDesign(eventId);
     return NextResponse.json({ steps });
   } catch (error) {
     return NextResponse.json(

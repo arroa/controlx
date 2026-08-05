@@ -554,8 +554,8 @@ async function resolveExecutorNames(
 /**
  * Sincroniza una ejecución abierta con el diseño actual:
  * - añade pasos nuevos del plan;
- * - si refreshPlan, actualiza duración/deps/texto/horario de los ya materializados
- *   (simulacro abierto o REAL aún PREPARADO).
+ * - si refreshPlan, actualiza duración/deps/texto/horario/ejecutor/aprobadores
+ *   de los ya materializados (siempre en caliente mientras la ejecución esté abierta).
  * No toca status, comentarios ni evidencias.
  */
 export async function syncExecutionPlanFromDesign(input: {
@@ -792,6 +792,41 @@ export async function syncMissingExecutionSteps(input: {
   return result.added;
 }
 
+/**
+ * Tras cambiar Roles (ejecutor/aprobador) en el diseño, propaga en caliente
+ * a todas las ejecuciones abiertas del evento.
+ */
+export async function refreshOpenExecutionsFromDesign(
+  eventId: string,
+): Promise<number> {
+  if (!ObjectId.isValid(eventId)) return 0;
+  const database = await getDatabase();
+  const design = await getEventDesign(eventId);
+  const designDayDStartAt = design?.event.dayDStartAt ?? null;
+  const open = await database
+    .collection<ExecutionDoc>("eventInstances")
+    .find({
+      eventId: new ObjectId(eventId),
+      status: { $in: ["PREPARADO", "EN_EJECUCION", "PAUSADO"] },
+      anchorStartAt: { $ne: null },
+    })
+    .toArray();
+
+  let touched = 0;
+  for (const execution of open) {
+    if (!execution._id || !execution.anchorStartAt) continue;
+    const result = await syncExecutionPlanFromDesign({
+      executionId: execution._id,
+      eventId,
+      anchorStartAt: execution.anchorStartAt,
+      designDayDStartAt,
+      refreshPlan: true,
+    });
+    if (result.added || result.refreshed) touched += 1;
+  }
+  return touched;
+}
+
 export async function getExecutionDetail(
   executionId: string,
   options?: { syncPlan?: boolean },
@@ -814,16 +849,13 @@ export async function getExecutionDetail(
     openStatuses.has(execution.status) &&
     execution.anchorStartAt
   ) {
-    // Simulacro abierto: relee el plan (duraciones/deps/horas). REAL en marcha:
-    // solo pasos nuevos (el snapshot del día real no se reescribe).
-    const refreshPlan =
-      execution.type === "SIMULACRO" || execution.status === "PREPARADO";
+    // Siempre en caliente: simulacro o real, mientras esté abierta.
     await syncExecutionPlanFromDesign({
       executionId: id,
       eventId: execution.eventId.toHexString(),
       anchorStartAt: execution.anchorStartAt,
       designDayDStartAt,
-      refreshPlan,
+      refreshPlan: true,
     });
   }
 
@@ -919,6 +951,8 @@ export async function transitionRuntimeStep(input: {
   evidencePathnames?: string[];
   actorId: string;
   actorLabel: string;
+  /** Si actúa por contingencia sin reemplazar al asignado. */
+  onBehalfOfLabel?: string | null;
 }): Promise<{ step: RuntimeStepSummary; steps: RuntimeStepSummary[] }> {
   requireComment(input.action, input.comment);
   if (!ObjectId.isValid(input.executionId) || !ObjectId.isValid(input.stepId)) {
@@ -1195,7 +1229,9 @@ export async function transitionRuntimeStep(input: {
       forced: Boolean($set.forced ?? forced),
       actualEndedAt: updated.actualEndedAt?.toISOString() ?? null,
     },
-    description: `${step.name}: ${step.status} → ${status}`,
+    description: input.onBehalfOfLabel
+      ? `${step.name}: ${step.status} → ${status} (contingencia en nombre de ${input.onBehalfOfLabel})`
+      : `${step.name}: ${step.status} → ${status}`,
   });
 
   // Sin sync: ya replanificamos con tiempos reales en esta transición.

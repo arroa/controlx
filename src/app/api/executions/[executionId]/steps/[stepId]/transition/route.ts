@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { canAccessEvent } from "@/lib/admin-data";
 import { requireUser } from "@/lib/api-auth";
+import { getEffectiveEventActor } from "@/lib/dev-impersonation";
 import { canOperateExecutionStep, canViewExecution } from "@/lib/execution-auth";
 import {
   getExecutionDetail,
@@ -55,6 +57,37 @@ export async function POST(request: Request, { params }: RouteParams) {
     );
   }
 
+  const { actor, impersonating } = await getEffectiveEventActor(
+    existing.eventId,
+    authResult.user,
+  );
+  const isAdmin =
+    authResult.user.isSuperAdmin ||
+    (await canAccessEvent(authResult.user.email, existing.eventId));
+  const contingencyAdmin = isAdmin && !impersonating;
+
+  let onBehalfOfLabel: string | undefined;
+  if (contingencyAdmin && parsed.data.action !== "force_success") {
+    if (
+      parsed.data.action === "approve" ||
+      parsed.data.action === "reject"
+    ) {
+      const isAssignedApprover = Boolean(
+        actor && step.approverActorIds.includes(actor.id),
+      );
+      if (!isAssignedApprover) {
+        onBehalfOfLabel = step.executorName ?? "aprobador asignado";
+      }
+    } else {
+      const isAssignedExecutor = Boolean(
+        actor && step.executorActorId === actor.id,
+      );
+      if (!isAssignedExecutor) {
+        onBehalfOfLabel = step.executorName ?? "ejecutor asignado";
+      }
+    }
+  }
+
   try {
     const next = await transitionRuntimeStep({
       executionId,
@@ -65,6 +98,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       evidencePathnames: parsed.data.evidencePathnames,
       actorId: authResult.user.id,
       actorLabel: authResult.user.email,
+      onBehalfOfLabel,
     });
     return NextResponse.json({ step: next.step, steps: next.steps });
   } catch (error) {

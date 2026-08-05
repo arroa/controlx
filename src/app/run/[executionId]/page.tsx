@@ -45,18 +45,15 @@ export default async function ExecutorRunPage({
     { label: detail.name },
   ];
 
-  // Contingencia: EventAdmin / OrgAdmin / Super pueden operar cualquier paso
-  // en Mi turno (el Panel queda solo observación).
+  // Contingencia: EventAdmin / OrgAdmin / Super operan cualquier paso o
+  // aprobación “en nombre de” el asignado (no lo reemplazan). Vive en /run.
   const canOperateAny = isAdmin && !impersonating;
   const canForceSuccess =
     (!impersonating && user.isSuperAdmin) ||
     Boolean(actor?.roles.includes("EVENT_ADMIN"));
+  // Org/Event admin (contingencia) + SteerCo del mapa.
   const canApproveAny =
-    (!impersonating && user.isSuperAdmin) ||
-    Boolean(
-      actor?.roles.includes("EVENT_ADMIN") ||
-        actor?.roles.includes("STEERCO"),
-    );
+    canOperateAny || Boolean(actor?.roles.includes("STEERCO"));
 
   if (!actor && !canOperateAny) {
     return (

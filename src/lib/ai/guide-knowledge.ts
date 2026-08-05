@@ -154,21 +154,24 @@ Si stale=true: hubo cambios de preparación; hay que pulsar Recalcular en el hub
 - REAL: operación con el Día D real.
 
 Durante la ejecución se operan pasos, evidencias y aprobaciones.
+El plan (incl. ejecutor/aprobador) se refresca en caliente mientras la ejecución esté abierta (simulacro o real).
+EventAdmin y OrgAdmin pueden operar o aprobar cualquier paso por contingencia “en nombre de” el asignado, sin reemplazarlo.
 El asistente guía explica el sistema; el copiloto de ejecución (futuro) es quien ayudaría en vivo.`,
   },
   {
     id: "actors-roles-map",
     title: "Mapa de roles de actor",
-    tags: ["actor", "eventadmin", "executor", "approver", "steerco"],
+    tags: ["actor", "eventadmin", "executor", "approver", "steerco", "orgadmin", "contingencia"],
     zones: ["all", "setup", "roles"],
     summary: "Roles posibles en el mapa de actores del evento.",
     body: `Roles del mapa (se definen en Setup → actores):
-- EVENT_ADMIN: configura el evento; en ejecución puede operar cualquier paso por contingencia (Mi turno), Forzar OK y aprobar/rechazar.
+- EVENT_ADMIN: configura el evento; en Mi turno puede operar o aprobar cualquier paso por contingencia “en nombre de” (no reemplaza al asignado), y Forzar OK.
+- OrgAdmin (de la org, no es rol de mapa): misma contingencia de operar/aprobar cualquier paso en nombre del asignado.
 - EXECUTOR: puede ejecutar pasos asignados.
 - APPROVER: aprueba pasos puntuales.
 - STEERCO: aprobación de nivel más global / gobierno.
 
-Una persona puede tener varios roles. La asignación a pasos se hace en la pantalla Roles.
+Una persona puede tener varios roles. La asignación a pasos se hace en la pantalla Roles; un cambio de ejecutor aplica en caliente a ejecuciones abiertas.
 
 Importante: explicar estos roles ≠ enumerar quiénes los tienen. El asistente no tiene acceso al directorio de personas.`,
   },

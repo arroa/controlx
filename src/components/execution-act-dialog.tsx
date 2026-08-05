@@ -224,6 +224,8 @@ type ExecutionActDialogProps = {
   action: ExecutionActAction | null;
   stepName: string;
   stepMeta?: string;
+  /** Contingencia admin: actúa sin reemplazar al ejecutor asignado. */
+  onBehalfOf?: string | null;
   timezone: string;
   anchorStartAt: string | null;
   plannedStartAt: string | null;
@@ -248,6 +250,7 @@ export function ExecutionActDialog({
   action,
   stepName,
   stepMeta,
+  onBehalfOf = null,
   timezone,
   anchorStartAt,
   plannedStartAt,
@@ -412,6 +415,12 @@ export function ExecutionActDialog({
         </DialogHeader>
 
         <div className="space-y-4 px-5 py-4">
+          {onBehalfOf ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+              Contingencia: actuás en nombre de {onBehalfOf}. El ejecutor
+              asignado no se reemplaza.
+            </div>
+          ) : null}
           <div className="space-y-2">
             <div className="flex items-end justify-between gap-2">
               <Label className="text-base">

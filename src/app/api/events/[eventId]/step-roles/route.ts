@@ -6,6 +6,7 @@ import {
   setStepRolesSchema,
 } from "@/lib/admin-data";
 import { requireUser } from "@/lib/api-auth";
+import { refreshOpenExecutionsFromDesign } from "@/lib/execution-runtime";
 
 type RouteParams = {
   params: Promise<{ eventId: string }>;
@@ -35,6 +36,7 @@ export async function POST(request: Request, { params }: RouteParams) {
 
   try {
     const steps = await setStepRolesAssignments(eventId, parsed.data);
+    await refreshOpenExecutionsFromDesign(eventId);
     return NextResponse.json({ steps });
   } catch (error) {
     return NextResponse.json(

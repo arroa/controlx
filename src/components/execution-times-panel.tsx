@@ -338,6 +338,10 @@ export function ExecutionTimesPanel({
     const approvalActions = (): FlowerAction[] => {
       if (step.status !== "PENDIENTE_APROBACION") return [];
       if (!canApproveStep(step)) return [];
+      const onBehalf =
+        canApproveAny &&
+        actorId &&
+        !step.approverActorIds.includes(actorId);
       return [
         {
           key: "approve",
@@ -345,7 +349,9 @@ export function ExecutionTimesPanel({
           icon: ShieldCheck,
           tone: "success",
           disabled: busy,
-          title: "Contingencia Event Admin / SteerCo o aprobador asignado.",
+          title: onBehalf
+            ? `Contingencia: aprobar en nombre de ${step.executorName ?? "el asignado"} (no lo reemplaza).`
+            : "Contingencia Event/Org Admin / SteerCo o aprobador asignado.",
           onClick: () => {
             void runApproval(step.id, "approve");
           },
@@ -356,6 +362,9 @@ export function ExecutionTimesPanel({
           icon: CircleX,
           tone: "danger",
           disabled: busy,
+          title: onBehalf
+            ? "Contingencia: rechazar en nombre del aprobador (no lo reemplaza)."
+            : undefined,
           onClick: () => {
             void runApproval(step.id, "reject");
           },
@@ -397,6 +406,10 @@ export function ExecutionTimesPanel({
     }
 
     const canAct = isMyExecutorStep(step, actorId) || canOperateAny;
+    const onBehalf =
+      canOperateAny && !isMyExecutorStep(step, actorId)
+        ? (step.executorName ?? "el ejecutor asignado")
+        : null;
     const actions: FlowerAction[] = [...approvalActions()];
     if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
       const blocked = startBlockedLabel(step, detail.steps);
@@ -407,12 +420,18 @@ export function ExecutionTimesPanel({
             ? "Iniciar (deps)"
             : "Iniciar (solo lectura)"
           : canAct
-            ? "Iniciar"
+            ? onBehalf
+              ? "Iniciar (contingencia)"
+              : "Iniciar"
             : "Iniciar (solo lectura)",
         icon: CirclePlay,
         tone: "go",
         disabled: busy || !canAct || Boolean(blocked),
-        title: blocked ?? undefined,
+        title:
+          blocked ??
+          (onBehalf
+            ? `Contingencia: iniciar en nombre de ${onBehalf}.`
+            : undefined),
         onClick: () => {
           if (!canAct || blocked) return;
           setSelectedId(null);
@@ -435,10 +454,17 @@ export function ExecutionTimesPanel({
       actions.push(
         {
           key: "success",
-          label: canAct ? "Exitoso" : "Exitoso (solo lectura)",
+          label: canAct
+            ? onBehalf
+              ? "Exitoso (contingencia)"
+              : "Exitoso"
+            : "Exitoso (solo lectura)",
           icon: CircleCheck,
           tone: "success",
           disabled: busy || !canAct,
+          title: onBehalf
+            ? `Contingencia: cerrar en nombre de ${onBehalf}.`
+            : undefined,
           onClick: () => {
             if (!canAct) return;
             setSelectedId(null);
@@ -460,10 +486,17 @@ export function ExecutionTimesPanel({
         },
         {
           key: "fail",
-          label: canAct ? "Fallido" : "Fallido (solo lectura)",
+          label: canAct
+            ? onBehalf
+              ? "Fallido (contingencia)"
+              : "Fallido"
+            : "Fallido (solo lectura)",
           icon: CircleX,
           tone: "danger",
           disabled: busy || !canAct,
+          title: onBehalf
+            ? `Contingencia: cerrar en nombre de ${onBehalf}.`
+            : undefined,
           onClick: () => {
             if (!canAct) return;
             setSelectedId(null);
@@ -489,11 +522,13 @@ export function ExecutionTimesPanel({
       if (canAct) {
         actions.push({
           key: "restart",
-          label: "Rearrancar",
+          label: onBehalf ? "Rearrancar (contingencia)" : "Rearrancar",
           icon: RotateCcw,
           tone: "go",
           disabled: busy,
-          title: "Vuelve a Iniciado para intentarlo de nuevo.",
+          title: onBehalf
+            ? `Contingencia: rearrancar en nombre de ${onBehalf}.`
+            : "Vuelve a Iniciado para intentarlo de nuevo.",
           onClick: () => {
             setSelectedId(null);
             setError("");
@@ -768,6 +803,14 @@ export function ExecutionTimesPanel({
           outcomeStep
             ? `${outcomeStep.workstreamName} · ${outcomeStep.activityName}`
             : undefined
+        }
+        onBehalfOf={
+          outcomeStep &&
+          canOperateAny &&
+          !isMyExecutorStep(outcomeStep, actorId) &&
+          outcome?.action !== "force_success"
+            ? (outcomeStep.executorName ?? "el ejecutor asignado")
+            : null
         }
         timezone={detail.timezone}
         anchorStartAt={detail.anchorStartAt}
