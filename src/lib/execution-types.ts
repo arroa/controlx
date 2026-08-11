@@ -221,6 +221,32 @@ export type ExecutionGateSummary = {
   approvalRoles: Array<
     "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
   >;
+  /** Aprobaciones registradas en esta ejecución para este gate. */
+  approvals: GateApprovalSummary[];
+  /** Evaluado al cargar el detalle (reloj de pared). */
+  open: boolean;
+  blockers: GateConditionBlocker[];
+};
+
+export type GateApprovalSummary = {
+  gateId: string;
+  role: "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO";
+  actorId: string;
+  actorLabel: string;
+  approvedAt: string;
+};
+
+export type GateConditionBlocker = {
+  reason:
+    | "missing_gate"
+    | "producer_pending"
+    | "producer_failed"
+    | "time"
+    | "closer_pending"
+    | "closer_failed"
+    | "approval";
+  detail: string;
+  role?: "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO";
 };
 
 export type ExecutionDetail = {
@@ -237,6 +263,8 @@ export type ExecutionDetail = {
   steps: RuntimeStepSummary[];
   /** Gates del diseño, con horas alineadas al ancla de esta ejecución. */
   gates: ExecutionGateSummary[];
+  /** Todas las aprobaciones de gates de la instancia. */
+  gateApprovals: GateApprovalSummary[];
   blobConfigured: boolean;
 };
 

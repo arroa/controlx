@@ -60,12 +60,7 @@ import type {
   WorkstreamSummary,
 } from "@/lib/admin-data";
 
-type EditorMode =
-  | "create"
-  | "edit-activity"
-  | "edit-step"
-  | "edit-workstream"
-  | "edit-block";
+type EditorMode = "create" | "edit-activity" | "edit-step";
 
 type EditorState = {
   mode: EditorMode;
@@ -110,8 +105,8 @@ export function EventDesign({
   initialPairs: DesignPair[];
 }) {
   const [pairs, setPairs] = useState(initialPairs);
-  const [workstreams, setWorkstreams] = useState(initialWorkstreams);
-  const [blocks, setBlocks] = useState(initialBlocks);
+  const [workstreams] = useState(initialWorkstreams);
+  const [blocks] = useState(initialBlocks);
   const [query, setQuery] = useState("");
   const [bar, setBar] = useState<EditorState>(() =>
     emptyEditor(initialWorkstreams[0]?.id ?? "", initialBlocks[0]?.id ?? ""),
@@ -276,60 +271,6 @@ export function EventDesign({
     );
   }
 
-  function removeWorkstream(workstreamId: string) {
-    setWorkstreams((current) => {
-      const next = current.filter((item) => item.id !== workstreamId);
-      setBar((bar) =>
-        bar.workstreamId === workstreamId
-          ? emptyEditor(next[0]?.id ?? "", bar.blockId)
-          : bar,
-      );
-      return next;
-    });
-    setPairs((current) =>
-      current.filter((pair) => pair.workstream.id !== workstreamId),
-    );
-  }
-
-  function removeBlock(blockId: string) {
-    setBlocks((current) => {
-      const next = current.filter((item) => item.id !== blockId);
-      setBar((bar) =>
-        bar.blockId === blockId
-          ? emptyEditor(bar.workstreamId, next[0]?.id ?? "")
-          : bar,
-      );
-      return next;
-    });
-    setPairs((current) =>
-      current.filter((pair) => pair.block.id !== blockId),
-    );
-  }
-
-  function upsertWorkstream(workstream: WorkstreamSummary) {
-    setWorkstreams((current) =>
-      current.map((item) => (item.id === workstream.id ? workstream : item)),
-    );
-    setPairs((current) =>
-      current.map((pair) =>
-        pair.workstream.id === workstream.id
-          ? { ...pair, workstream }
-          : pair,
-      ),
-    );
-  }
-
-  function upsertBlock(block: BlockSummary) {
-    setBlocks((current) =>
-      current.map((item) => (item.id === block.id ? block : item)),
-    );
-    setPairs((current) =>
-      current.map((pair) =>
-        pair.block.id === block.id ? { ...pair, block } : pair,
-      ),
-    );
-  }
-
   function removeStep(stepId: string) {
     setPairs((current) =>
       current.map((pair) => ({
@@ -399,36 +340,6 @@ export function EventDesign({
     });
   }
 
-  function loadEditWorkstream(workstream: WorkstreamSummary) {
-    openModal({
-      mode: "edit-workstream",
-      workstreamId: workstream.id,
-      blockId: "",
-      activityId: "",
-      stepId: "",
-      activityName: workstream.name,
-      activityDescription: workstream.description,
-      stepName: "",
-      stepDescription: "",
-      stepLongDescription: "",
-    });
-  }
-
-  function loadEditBlock(block: BlockSummary) {
-    openModal({
-      mode: "edit-block",
-      workstreamId: "",
-      blockId: block.id,
-      activityId: "",
-      stepId: "",
-      activityName: block.name,
-      activityDescription: block.description,
-      stepName: "",
-      stepDescription: "",
-      stepLongDescription: "",
-    });
-  }
-
   function loadEditStep(step: DesignStepSummary, activity: ActivityTreeNode) {
     openModal({
       mode: "edit-step",
@@ -462,54 +373,6 @@ export function EventDesign({
     };
 
     try {
-      if (editor.mode === "edit-workstream") {
-        const response = await fetch(
-          `/api/events/${eventId}/workstreams/${editor.workstreamId}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: editor.activityName,
-              description: editor.activityDescription,
-            }),
-          },
-        );
-        const payload = (await response.json()) as {
-          workstream?: WorkstreamSummary;
-          error?: string;
-        };
-        if (!response.ok || !payload.workstream) {
-          throw new Error(payload.error ?? "No fue posible guardar.");
-        }
-        upsertWorkstream(payload.workstream);
-        closeModal();
-        return;
-      }
-
-      if (editor.mode === "edit-block") {
-        const response = await fetch(
-          `/api/events/${eventId}/blocks/${editor.blockId}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: editor.activityName,
-              description: editor.activityDescription,
-            }),
-          },
-        );
-        const payload = (await response.json()) as {
-          block?: BlockSummary;
-          error?: string;
-        };
-        if (!response.ok || !payload.block) {
-          throw new Error(payload.error ?? "No fue posible guardar.");
-        }
-        upsertBlock(payload.block);
-        closeModal();
-        return;
-      }
-
       if (editor.mode === "edit-activity") {
         const response = await fetch(
           `/api/events/${eventId}/activities/${editor.activityId}`,
@@ -863,13 +726,9 @@ export function EventDesign({
                     onNewBlock={loadNewBlock}
                     onNewActivity={loadNewActivity}
                     onNewStep={loadNewStep}
-                    onEditWorkstream={loadEditWorkstream}
-                    onEditBlock={loadEditBlock}
                     onEditActivity={loadEditActivity}
                     onEditStep={loadEditStep}
                     onMoveStep={moveStepRow}
-                    onRemovedWorkstream={removeWorkstream}
-                    onRemovedBlock={removeBlock}
                     onRemovedActivity={removeActivity}
                     onRemovedStep={removeStep}
                   />
@@ -941,13 +800,9 @@ function WorkstreamGroupRows({
   onNewBlock,
   onNewActivity,
   onNewStep,
-  onEditWorkstream,
-  onEditBlock,
   onEditActivity,
   onEditStep,
   onMoveStep,
-  onRemovedWorkstream,
-  onRemovedBlock,
   onRemovedActivity,
   onRemovedStep,
 }: {
@@ -960,30 +815,15 @@ function WorkstreamGroupRows({
   onNewBlock: (workstreamId: string) => void;
   onNewActivity: (workstreamId: string, blockId: string) => void;
   onNewStep: (activity: ActivityTreeNode) => void;
-  onEditWorkstream: (workstream: WorkstreamSummary) => void;
-  onEditBlock: (block: BlockSummary) => void;
   onEditActivity: (activity: ActivityTreeNode) => void;
   onEditStep: (step: DesignStepSummary, activity: ActivityTreeNode) => void;
   onMoveStep: (
     step: DesignStepSummary,
     direction: "up" | "down",
   ) => Promise<void>;
-  onRemovedWorkstream: (workstreamId: string) => void;
-  onRemovedBlock: (blockId: string) => void;
   onRemovedActivity: (activityId: string) => void;
   onRemovedStep: (stepId: string) => void;
 }) {
-  const activityCount = group.blocks.reduce(
-    (total, item) => total + item.activities.length,
-    0,
-  );
-  const stepCount = group.blocks.reduce(
-    (total, item) =>
-      total +
-      item.activities.reduce((sum, activity) => sum + activity.steps.length, 0),
-    0,
-  );
-
   return (
     <>
       <TableRow className="bg-muted/30 hover:bg-muted/30">
@@ -1006,23 +846,7 @@ function WorkstreamGroupRows({
                 type="button"
                 size="icon"
                 variant="ghost"
-                aria-label="Editar workstream"
-                title="Editar"
-                onClick={() => onEditWorkstream(group.workstream)}
-              >
-                <Pencil className="size-4" />
-              </Button>
-              <DeleteRow
-                title={`¿Eliminar workstream “${group.workstream.name}”?`}
-                description={`Acción irreversible. Se eliminará del catálogo y se borrarán ${activityCount} actividad${activityCount === 1 ? "" : "es"} y ${stepCount} paso${stepCount === 1 ? "" : "s"} de este diseño.`}
-                endpoint={`/api/events/${eventId}/workstreams/${group.workstream.id}`}
-                onDeleted={() => onRemovedWorkstream(group.workstream.id)}
-              />
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label="Nuevo bloque"
+                aria-label="Nueva actividad en este workstream"
                 title="Nuevo"
                 onClick={() => onNewBlock(group.workstream.id)}
               >
@@ -1050,11 +874,9 @@ function WorkstreamGroupRows({
                 onToggle={onToggle}
                 onNewActivity={onNewActivity}
                 onNewStep={onNewStep}
-                onEditBlock={onEditBlock}
                 onEditActivity={onEditActivity}
                 onEditStep={onEditStep}
                 onMoveStep={onMoveStep}
-                onRemovedBlock={onRemovedBlock}
                 onRemovedActivity={onRemovedActivity}
                 onRemovedStep={onRemovedStep}
               />
@@ -1076,11 +898,9 @@ function BlockGroupRows({
   onToggle,
   onNewActivity,
   onNewStep,
-  onEditBlock,
   onEditActivity,
   onEditStep,
   onMoveStep,
-  onRemovedBlock,
   onRemovedActivity,
   onRemovedStep,
 }: {
@@ -1094,22 +914,15 @@ function BlockGroupRows({
   onToggle: (key: string) => void;
   onNewActivity: (workstreamId: string, blockId: string) => void;
   onNewStep: (activity: ActivityTreeNode) => void;
-  onEditBlock: (block: BlockSummary) => void;
   onEditActivity: (activity: ActivityTreeNode) => void;
   onEditStep: (step: DesignStepSummary, activity: ActivityTreeNode) => void;
   onMoveStep: (
     step: DesignStepSummary,
     direction: "up" | "down",
   ) => Promise<void>;
-  onRemovedBlock: (blockId: string) => void;
   onRemovedActivity: (activityId: string) => void;
   onRemovedStep: (stepId: string) => void;
 }) {
-  const stepCount = activities.reduce(
-    (sum, activity) => sum + activity.steps.length,
-    0,
-  );
-
   return (
     <>
       <TableRow className="bg-muted/15 hover:bg-muted/15">
@@ -1128,22 +941,6 @@ function BlockGroupRows({
               Bloque · {block.name}
             </button>
             <div className="flex shrink-0 items-center gap-1">
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label="Editar bloque"
-                title="Editar"
-                onClick={() => onEditBlock(block)}
-              >
-                <Pencil className="size-4" />
-              </Button>
-              <DeleteRow
-                title={`¿Eliminar bloque “${block.name}”?`}
-                description={`Acción irreversible. Se eliminará del catálogo del evento y se borrarán todas las actividades y pasos que lo usan en cualquier workstream (aquí: ${activities.length} actividad${activities.length === 1 ? "" : "es"}, ${stepCount} paso${stepCount === 1 ? "" : "s"} bajo “${workstream.name}”).`}
-                endpoint={`/api/events/${eventId}/blocks/${block.id}`}
-                onDeleted={() => onRemovedBlock(block.id)}
-              />
               <Button
                 type="button"
                 size="icon"
@@ -1417,17 +1214,13 @@ function DesignEditorDialog({
   const isNewStep = editor.mode === "create" && Boolean(editor.activityId);
   const isNewUnit = editor.mode === "create" && !editor.activityId;
   const title =
-    editor.mode === "edit-workstream"
-      ? "Editar workstream"
-      : editor.mode === "edit-block"
-        ? "Editar bloque"
-        : editor.mode === "edit-activity"
-          ? "Editar actividad"
-          : editor.mode === "edit-step"
-            ? "Editar paso"
-            : isNewStep
-              ? "Nuevo paso"
-              : "Nueva actividad";
+    editor.mode === "edit-activity"
+      ? "Editar actividad"
+      : editor.mode === "edit-step"
+        ? "Editar paso"
+        : isNewStep
+          ? "Nuevo paso"
+          : "Nueva actividad";
 
   function patch(partial: Partial<EditorState>) {
     onChange({ ...editor, ...partial } as EditorState);
@@ -1439,24 +1232,18 @@ function DesignEditorDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            {editor.mode === "edit-workstream"
-              ? "Actualiza el nombre o la descripción del workstream en el catálogo."
-              : editor.mode === "edit-block"
-                ? "Actualiza el nombre o la descripción del bloque en el catálogo."
-                : editor.mode === "edit-activity"
-                  ? "Actualiza el nombre o la descripción de la actividad."
-                  : editor.mode === "edit-step"
-                    ? "Actualiza el nombre o la descripción del paso."
-                    : isNewStep
-                      ? `Agrega un paso a “${editor.activityName}”.`
-                      : "Crea la unidad de diseño (actividad + paso obligatorio)."}
+            {editor.mode === "edit-activity"
+              ? "Actualiza el nombre o la descripción de la actividad."
+              : editor.mode === "edit-step"
+                ? "Actualiza el nombre o la descripción del paso."
+                : isNewStep
+                  ? `Agrega un paso a “${editor.activityName}”.`
+                  : "Crea la unidad de diseño (actividad + paso obligatorio)."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3">
-          {editor.mode === "edit-workstream" ||
-          editor.mode === "edit-block" ||
-          editor.mode === "edit-activity" ? (
+          {editor.mode === "edit-activity" ? (
             <>
               <div className="grid gap-1.5">
                 <Label>Nombre</Label>

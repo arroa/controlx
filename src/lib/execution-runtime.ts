@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { getEventDesign } from "@/lib/admin-data";
+import { approvalRoleSchema, type ApprovalRole } from "@/domain/controlx";
 import {
   deleteExecutionEvidenceBlobs,
   EVIDENCE_MAX_PER_STEP,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/evidence-blob";
 import { assertCanCreateExecution } from "@/lib/event-readiness";
 import { computeRuntimePlannedStarts } from "@/lib/execution-schedule";
+import { unmetRequiredGates } from "@/lib/gate-runtime";
 import {
   actionNeedsOccurredAt,
   runtimeStepActionSchema,
@@ -19,6 +21,7 @@ import {
   unmetStepDependencies,
   type EvidenceMeta,
   type ExecutionDetail,
+  type GateApprovalSummary,
   type RuntimeStepAction,
   type RuntimeStepStatus,
   type RuntimeStepSummary,
@@ -42,6 +45,13 @@ type ExecutionDoc = {
   anchorDayKey?: string | null;
   iteration?: number;
   status: ExecutionDetail["status"];
+  gateApprovals?: Array<{
+    gateId: ObjectId;
+    role: ApprovalRole;
+    actorId: string;
+    actorLabel: string;
+    approvedAt: Date;
+  }>;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -86,6 +96,10 @@ export const stepTransitionSchema = z.object({
   occurredAt: z.string().datetime().optional(),
   /** Evidencias subidas en este acto (pathnames ya en el paso). */
   evidencePathnames: z.array(z.string().min(1)).max(8).optional(),
+});
+
+export const approveExecutionGateSchema = z.object({
+  role: approvalRoleSchema,
 });
 
 const SCHEDULE_MUTABLE_STATUSES = new Set<RuntimeStepStatus>([
@@ -145,9 +159,7 @@ function shiftGatesToAnchor(input: {
     plannedOpenAt: string | null;
     opensTargets: Array<{ workstreamId: string; blockId: string | null }>;
     closesAfterTargets: Array<{ workstreamId: string; blockId: string | null }>;
-    approvalRoles: Array<
-      "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
-    >;
+    approvalRoles: Array<ApprovalRole>;
   }>;
   designDayDStartAt: string | null;
   instanceAnchorStartAt: Date | null;
@@ -177,6 +189,22 @@ function shiftGatesToAnchor(input: {
     closesAfterTargets: gate.closesAfterTargets,
     approvalRoles: gate.approvalRoles,
   }));
+}
+
+function toGateApprovalSummary(doc: {
+  gateId: ObjectId;
+  role: ApprovalRole;
+  actorId: string;
+  actorLabel: string;
+  approvedAt: Date;
+}): GateApprovalSummary {
+  return {
+    gateId: doc.gateId.toHexString(),
+    role: doc.role,
+    actorId: doc.actorId,
+    actorLabel: doc.actorLabel,
+    approvedAt: doc.approvedAt.toISOString(),
+  };
 }
 
 function requireComment(
@@ -882,10 +910,38 @@ export async function getExecutionDetail(
     }
   }
 
-  const gates = shiftGatesToAnchor({
+  const gateApprovals = (execution.gateApprovals ?? []).map(toGateApprovalSummary);
+
+  const shiftedGates = shiftGatesToAnchor({
     gates: design?.gates ?? [],
     designDayDStartAt,
     instanceAnchorStartAt: execution.anchorStartAt ?? null,
+  });
+
+  const stepSummaries = steps.map((doc) =>
+    toStepSummary(
+      doc,
+      gateMetaByDesignStep.get(doc.designStepId.toHexString()),
+    ),
+  );
+
+  const now = new Date();
+  const gates = shiftedGates.map((gate) => {
+    const approvals = gateApprovals.filter((item) => item.gateId === gate.id);
+    const unmet = unmetRequiredGates({
+      requiresGateIds: [gate.id],
+      gates: shiftedGates,
+      steps: stepSummaries,
+      approvals: gateApprovals,
+      now,
+    });
+    const blockers = unmet[0]?.blockers ?? [];
+    return {
+      ...gate,
+      approvals,
+      open: blockers.length === 0,
+      blockers,
+    };
   });
 
   return {
@@ -899,13 +955,9 @@ export async function getExecutionDetail(
     iteration: execution.iteration ?? 1,
     status: execution.status,
     createdAt: execution.createdAt.toISOString(),
-    steps: steps.map((doc) =>
-      toStepSummary(
-        doc,
-        gateMetaByDesignStep.get(doc.designStepId.toHexString()),
-      ),
-    ),
+    steps: stepSummaries,
     gates,
+    gateApprovals,
     blobConfigured: isBlobConfigured(),
   };
 }
@@ -990,39 +1042,6 @@ export async function transitionRuntimeStep(input: {
     throw new Error("Omitido y Simulado solo aplican en simulacro.");
   }
 
-  if (input.action === "start") {
-    const siblings = await steps
-      .find({ eventInstanceId: executionId })
-      .toArray();
-    const summaries = siblings.map((doc) => toStepSummary(doc));
-    const blockers = unmetStepDependencies(
-      {
-        dependencyStepIds: step.dependencyStepIds.map((id) =>
-          id.toHexString(),
-        ),
-      },
-      summaries,
-    );
-    if (blockers.length) {
-      const failed = blockers.filter((item) => item.reason === "failed");
-      const pending = blockers.filter((item) => item.reason === "pending");
-      const parts: string[] = [];
-      if (pending.length) {
-        parts.push(
-          `pendiente(s): ${pending.map((item) => item.name).join(", ")}`,
-        );
-      }
-      if (failed.length) {
-        parts.push(
-          `fallido(s) — Event Admin puede Forzar, o rearrancar el fallido: ${failed.map((item) => item.name).join(", ")}`,
-        );
-      }
-      throw new Error(
-        `No se puede iniciar: dependencias sin cierre OK (${parts.join("; ")}).`,
-      );
-    }
-  }
-
   if (input.action === "force_success" && step.status !== "FALLIDO") {
     throw new Error("Solo se puede forzar un paso Fallido.");
   }
@@ -1066,6 +1085,94 @@ export async function transitionRuntimeStep(input: {
       if (prevEnd && occurredAt < prevEnd) {
         throw new Error(
           "La hora de rearranque no puede ser anterior al fin de la iteración anterior.",
+        );
+      }
+    }
+  }
+
+  if (input.action === "start") {
+    const siblings = await steps
+      .find({ eventInstanceId: executionId })
+      .toArray();
+
+    const design = await getEventDesign(execution.eventId.toHexString());
+    const gateMetaByDesignStep = new Map<
+      string,
+      { producesGateId: string | null; requiresGateIds: string[] }
+    >();
+    if (design) {
+      for (const pair of design.pairs) {
+        for (const activity of pair.activities) {
+          for (const designStep of activity.steps) {
+            gateMetaByDesignStep.set(designStep.id, {
+              producesGateId: designStep.producesGateId ?? null,
+              requiresGateIds: designStep.requiresGateIds ?? [],
+            });
+          }
+        }
+      }
+    }
+
+    const summaries = siblings.map((doc) =>
+      toStepSummary(
+        doc,
+        gateMetaByDesignStep.get(doc.designStepId.toHexString()),
+      ),
+    );
+    const blockers = unmetStepDependencies(
+      {
+        dependencyStepIds: step.dependencyStepIds.map((id) =>
+          id.toHexString(),
+        ),
+      },
+      summaries,
+    );
+    if (blockers.length) {
+      const failed = blockers.filter((item) => item.reason === "failed");
+      const pending = blockers.filter((item) => item.reason === "pending");
+      const parts: string[] = [];
+      if (pending.length) {
+        parts.push(
+          `pendiente(s): ${pending.map((item) => item.name).join(", ")}`,
+        );
+      }
+      if (failed.length) {
+        parts.push(
+          `fallido(s) — Event Admin puede Forzar, o rearrancar el fallido: ${failed.map((item) => item.name).join(", ")}`,
+        );
+      }
+      throw new Error(
+        `No se puede iniciar: dependencias sin cierre OK (${parts.join("; ")}).`,
+      );
+    }
+
+    const stepGateMeta = gateMetaByDesignStep.get(
+      step.designStepId.toHexString(),
+    );
+    const requiresGateIds = stepGateMeta?.requiresGateIds ?? [];
+    if (requiresGateIds.length) {
+      const shiftedGates = shiftGatesToAnchor({
+        gates: design?.gates ?? [],
+        designDayDStartAt: design?.event.dayDStartAt ?? null,
+        instanceAnchorStartAt: execution.anchorStartAt ?? null,
+      });
+      const gateApprovals = (execution.gateApprovals ?? []).map(
+        toGateApprovalSummary,
+      );
+      const unmetGates = unmetRequiredGates({
+        requiresGateIds,
+        gates: shiftedGates,
+        steps: summaries,
+        approvals: gateApprovals,
+        now: occurredAt,
+      });
+      if (unmetGates.length) {
+        const parts = unmetGates.map((item) => {
+          const details = item.blockers.map((b) => b.detail).join(", ");
+          return `${item.gateName} (${details})`;
+        });
+        throw new Error(
+          `No se puede iniciar: gates pendientes — ${parts.join("; ")}.`,
         );
       }
     }
@@ -1442,3 +1549,83 @@ export async function purgeEventSimulacros(eventId: string): Promise<{
 
   return { deletedCount: deleted.length, deleted };
 }
+
+/** Registra la aprobación de un rol requerido por un gate en esta ejecución. */
+export async function approveExecutionGate(input: {
+  executionId: string;
+  gateId: string;
+  role: ApprovalRole;
+  actorId: string;
+  actorLabel: string;
+}): Promise<ExecutionDetail> {
+  if (
+    !ObjectId.isValid(input.executionId) ||
+    !ObjectId.isValid(input.gateId)
+  ) {
+    throw new Error("Identificadores inválidos.");
+  }
+
+  const database = await getDatabase();
+  const executionId = new ObjectId(input.executionId);
+  const gateId = new ObjectId(input.gateId);
+  const execution = await database
+    .collection<ExecutionDoc>("eventInstances")
+    .findOne({ _id: executionId });
+  if (!execution) throw new Error("Ejecución no encontrada.");
+  if (execution.status === "FINALIZADO" || execution.status === "CANCELADO") {
+    throw new Error("La ejecución ya está cerrada.");
+  }
+
+  const design = await getEventDesign(execution.eventId.toHexString());
+  const gate = design?.gates.find((item) => item.id === input.gateId);
+  if (!gate) throw new Error("Gate no encontrado en el diseño.");
+  if (!(gate.approvalRoles ?? []).includes(input.role)) {
+    throw new Error("Este gate no requiere esa aprobación.");
+  }
+
+  const already = (execution.gateApprovals ?? []).some(
+    (item) =>
+      item.gateId.equals(gateId) && item.role === input.role,
+  );
+  if (already) {
+    const detail = await getExecutionDetail(input.executionId, {
+      syncPlan: false,
+    });
+    if (!detail) throw new Error("Ejecución no encontrada.");
+    return detail;
+  }
+
+  const approvedAt = new Date();
+  await database.collection<ExecutionDoc>("eventInstances").updateOne(
+    { _id: executionId },
+    {
+      $push: {
+        gateApprovals: {
+          gateId,
+          role: input.role,
+          actorId: input.actorId,
+          actorLabel: input.actorLabel,
+          approvedAt,
+        },
+      },
+      $set: { updatedAt: approvedAt },
+    },
+  );
+
+  await database.collection("timelineEntries").insertOne({
+    eventInstanceId: executionId,
+    occurredAt: approvedAt,
+    actorClerkUserId: input.actorId,
+    action: "GATE_APPROVED",
+    entityType: "gate",
+    entityId: input.gateId,
+    description: `Gate “${gate.name}” aprobado como ${input.role} por ${input.actorLabel}.`,
+  });
+
+  const detail = await getExecutionDetail(input.executionId, {
+    syncPlan: false,
+  });
+  if (!detail) throw new Error("Ejecución no encontrada.");
+  return detail;
+}
+

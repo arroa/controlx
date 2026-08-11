@@ -32,6 +32,7 @@ import {
 import type { GateSummary } from "@/lib/admin-data";
 import {
   unmetStepDependencies,
+  type ExecutionGateSummary,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
 import { cn } from "@/lib/utils";
@@ -270,20 +271,41 @@ function barTone(
 
 function startBlockedLabel(
   step: RuntimeStepSummary,
-  all: RuntimeStepSummary[],
+  allSteps: RuntimeStepSummary[],
+  executionGates: ExecutionGateSummary[] = [],
 ) {
-  const blockers = unmetStepDependencies(step, all);
-  if (!blockers.length) return null;
-  const failed = blockers.filter((item) => item.reason === "failed");
-  if (failed.length) {
-    return `Deps fallidas — rearrancar el fallido o Event Admin puede Forzar: ${failed.map((item) => item.name).join(", ")}`;
+  const parts: string[] = [];
+  const blockers = unmetStepDependencies(step, allSteps);
+  if (blockers.length) {
+    const failed = blockers.filter((item) => item.reason === "failed");
+    if (failed.length) {
+      parts.push(
+        `Deps fallidas — rearrancar el fallido o Event Admin puede Forzar: ${failed.map((item) => item.name).join(", ")}`,
+      );
+    } else {
+      parts.push(
+        `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`,
+      );
+    }
   }
-  return `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`;
+  for (const gateId of step.requiresGateIds ?? []) {
+    const gate = executionGates.find((item) => item.id === gateId);
+    if (!gate) {
+      parts.push("Gate requerido faltante");
+      continue;
+    }
+    if (!gate.open) {
+      const details = gate.blockers.map((item) => item.detail).join(", ");
+      parts.push(`Esperando gate ${gate.name}${details ? `: ${details}` : ""}`);
+    }
+  }
+  return parts.length ? parts.join(" · ") : null;
 }
 
 function flowerActionsFor(input: {
   step: RuntimeStepSummary;
   allSteps: RuntimeStepSummary[];
+  executionGates?: ExecutionGateSummary[];
   busy: boolean;
   canAct: boolean;
   canForceSuccess: boolean;
@@ -296,6 +318,7 @@ function flowerActionsFor(input: {
   const {
     step,
     allSteps,
+    executionGates = [],
     busy,
     canAct,
     canForceSuccess,
@@ -352,12 +375,12 @@ function flowerActionsFor(input: {
   }
 
   if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
-    const blocked = startBlockedLabel(step, allSteps);
+    const blocked = startBlockedLabel(step, allSteps, executionGates);
     actions.push({
       key: "start",
       label: blocked
         ? canAct
-          ? "Iniciar (deps)"
+          ? "Iniciar (bloqueado)"
           : "Iniciar (solo lectura)"
         : canAct
           ? "Iniciar"
@@ -663,6 +686,7 @@ export function ExecutorTimesMap({
   timezone,
   anchorStartAt,
   gates = [],
+  executionGates = [],
   workstreamIds,
   focusMode = "all",
   canOperateAny = false,
@@ -682,6 +706,8 @@ export function ExecutorTimesMap({
   anchorStartAt: string | null;
   /** Mismos gates que Times: calendariza deps/aperturas. */
   gates?: GateSummary[];
+  /** Estado runtime de gates (candado de arranque). */
+  executionGates?: ExecutionGateSummary[];
   workstreamIds: string[] | null;
   focusMode?: ExecutionFocusMode;
   canOperateAny?: boolean;
@@ -1269,6 +1295,7 @@ export function ExecutorTimesMap({
                               actions={flowerActionsFor({
                                 step: item.step,
                                 allSteps: steps,
+                                executionGates,
                                 busy,
                                 canAct:
                                   isMyExecutorStep(item.step, actorId) ||

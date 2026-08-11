@@ -15,10 +15,12 @@ import {
   ExecutionActDialog,
   type ExecutionActAction,
 } from "@/components/execution-act-dialog";
+import { ExecutionGatesPanel } from "@/components/execution-gates-panel";
 import { ExecutionStepInfoDialog } from "@/components/execution-step-info-dialog";
 import { ExecutorTimesMap } from "@/components/executor-times-map";
 import type { FlowerAction } from "@/components/step-action-flower";
 import { TimesView, type TimesViewRow } from "@/components/times-view";
+import type { ApprovalRole } from "@/domain/controlx";
 import type { GateSummary } from "@/lib/admin-data";
 import {
   EXECUTION_FOCUS_OPTIONS,
@@ -40,6 +42,7 @@ import {
 import { cn } from "@/lib/utils";
 
 type TimedAction = ExecutionActAction;
+type ExecutionViewMode = "timeline" | "gates";
 
 const TIMED_ACTION_LABELS = EXECUTION_ACT_LABELS;
 
@@ -72,14 +75,33 @@ function toTimesViewRow(
   };
 }
 
-function startBlockedLabel(step: RuntimeStepSummary, all: RuntimeStepSummary[]) {
-  const blockers = unmetStepDependencies(step, all);
-  if (!blockers.length) return null;
-  const failed = blockers.filter((item) => item.reason === "failed");
-  if (failed.length) {
-    return `Deps fallidas — rearrancar el fallido o Event Admin puede Forzar: ${failed.map((item) => item.name).join(", ")}`;
+function startBlockedLabel(step: RuntimeStepSummary, detail: ExecutionDetail) {
+  const blockers = unmetStepDependencies(step, detail.steps);
+  const parts: string[] = [];
+  if (blockers.length) {
+    const failed = blockers.filter((item) => item.reason === "failed");
+    if (failed.length) {
+      parts.push(
+        `Deps fallidas — rearrancar el fallido o Event Admin puede Forzar: ${failed.map((item) => item.name).join(", ")}`,
+      );
+    } else {
+      parts.push(
+        `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`,
+      );
+    }
   }
-  return `Esperando deps: ${blockers.map((item) => item.name).join(", ")}`;
+  for (const gateId of step.requiresGateIds ?? []) {
+    const gate = detail.gates.find((item) => item.id === gateId);
+    if (!gate) {
+      parts.push("Gate requerido faltante");
+      continue;
+    }
+    if (!gate.open) {
+      const details = gate.blockers.map((item) => item.detail).join(", ");
+      parts.push(`Esperando gate ${gate.name}${details ? `: ${details}` : ""}`);
+    }
+  }
+  return parts.length ? parts.join(" · ") : null;
 }
 
 /** Firma liviana para detectar cambios remotos (sync en vivo). */
@@ -89,6 +111,9 @@ function executionSyncKey(detail: ExecutionDetail) {
     ...detail.steps.map(
       (step) =>
         `${step.id}:${step.status}:${step.actualStartedAt ?? ""}:${step.actualEndedAt ?? ""}:${step.iterations?.length ?? 0}`,
+    ),
+    ...detail.gateApprovals.map(
+      (item) => `${item.gateId}:${item.role}:${item.approvedAt}`,
     ),
   ].join("|");
 }
@@ -142,6 +167,7 @@ function patchSteps(
 export function ExecutionTimesPanel({
   initial,
   actorId,
+  actorRoles = [],
   canOperateAny = false,
   canForceSuccess = false,
   canApproveAny = false,
@@ -151,6 +177,8 @@ export function ExecutionTimesPanel({
   initial: ExecutionDetail;
   actorId: string | null;
   actorName?: string | null;
+  /** Roles del actor efectivo (mapa); sirven para aprobar gates. */
+  actorRoles?: string[];
   /** Admin sin impersonar: puede operar cualquier paso. */
   canOperateAny?: boolean;
   /** Event Admin (o SuperAdmin): puede Forzar un paso Fallido. */
@@ -167,6 +195,8 @@ export function ExecutionTimesPanel({
     getServerMobileSnapshot,
   );
   const [detail, setDetail] = useState(initial);
+  const [viewMode, setViewMode] = useState<ExecutionViewMode>("timeline");
+  const [busyGateId, setBusyGateId] = useState<string | null>(null);
   const [focusMode, setFocusMode] = useState<ExecutionFocusMode>(
     hasActor ? "highlight-mine" : "all",
   );
@@ -331,6 +361,32 @@ export function ExecutionTimesPanel({
     flash(action === "approve" ? "Aprobado" : "Rechazado");
   }
 
+  async function runGateApprove(gateId: string, role: ApprovalRole) {
+    setBusyGateId(gateId);
+    setError("");
+    const response = await fetch(
+      `/api/executions/${detail.id}/gates/${gateId}/approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      },
+    ).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as {
+          execution?: ExecutionDetail;
+          error?: string;
+        })
+      : null;
+    setBusyGateId(null);
+    if (!response?.ok || !payload?.execution) {
+      setError(payload?.error ?? "No fue posible aprobar el gate.");
+      return;
+    }
+    setDetail(payload.execution);
+    flash(`Gate aprobado (${role})`);
+  }
+
   function getFlowerActions(row: TimesViewRow): FlowerAction[] {
     const step = stepsById.get(row.id);
     if (!step) return [];
@@ -412,12 +468,12 @@ export function ExecutionTimesPanel({
         : null;
     const actions: FlowerAction[] = [...approvalActions()];
     if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
-      const blocked = startBlockedLabel(step, detail.steps);
+      const blocked = startBlockedLabel(step, detail);
       actions.push({
         key: "start",
         label: blocked
           ? canAct
-            ? "Iniciar (deps)"
+            ? "Iniciar (bloqueado)"
             : "Iniciar (solo lectura)"
           : canAct
             ? onBehalf
@@ -699,8 +755,34 @@ export function ExecutionTimesPanel({
       ) : null}
 
       <div className="shrink-0 space-y-2 border-b py-3">
-        <div className="flex flex-wrap gap-2">
-          {hasActor ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex overflow-hidden rounded-md border">
+            <button
+              type="button"
+              onClick={() => setViewMode("timeline")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium transition",
+                viewMode === "timeline"
+                  ? "bg-cyan-500/20 text-cyan-100"
+                  : "bg-muted/20 text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Cronograma
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("gates")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium transition",
+                viewMode === "gates"
+                  ? "bg-cyan-500/20 text-cyan-100"
+                  : "bg-muted/20 text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Gates ({detail.gates.length})
+            </button>
+          </div>
+          {hasActor && viewMode === "timeline" ? (
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-md border">
               {EXECUTION_FOCUS_OPTIONS.map((option) => (
                 <button
@@ -730,8 +812,18 @@ export function ExecutionTimesPanel({
         ) : null}
       </div>
 
-      {/* Una sola vista montada: el mapa móvil oculto con CSS robaba clics al ?. */}
-      {isMobile ? (
+      {viewMode === "gates" ? (
+        <ExecutionGatesPanel
+          detail={detail}
+          actorRoles={actorRoles}
+          canApproveAny={canApproveAny || canOperateAny}
+          allowApprove={allowStepOperations || canApproveAny}
+          busyGateId={busyGateId}
+          onApprove={(gateId, role) => {
+            void runGateApprove(gateId, role);
+          }}
+        />
+      ) : isMobile ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <ExecutorTimesMap
             steps={detail.steps}
@@ -739,6 +831,7 @@ export function ExecutionTimesPanel({
             timezone={detail.timezone}
             anchorStartAt={detail.anchorStartAt}
             gates={timesGates}
+            executionGates={detail.gates}
             workstreamIds={null}
             focusMode={effectiveFocus}
             canOperateAny={canOperateAny}

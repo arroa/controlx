@@ -91,6 +91,7 @@ export default async function ExecutionPage({
           initial={detail}
           actorId={realActor?.id ?? null}
           actorName={realActor?.name ?? null}
+          actorRoles={realActor?.roles ?? []}
           canOperateAny={false}
           allowStepOperations={false}
           canForceSuccess={

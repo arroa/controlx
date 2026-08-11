@@ -133,6 +133,7 @@ export default async function ExecutorRunPage({
           initial={detail}
           actorId={actor?.id ?? null}
           actorName={actor?.name ?? null}
+          actorRoles={actor?.roles ?? []}
           canOperateAny={canOperateAny}
           canForceSuccess={canForceSuccess}
           canApproveAny={canApproveAny}
