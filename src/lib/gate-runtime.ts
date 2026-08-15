@@ -1,5 +1,10 @@
 import type { ApprovalRole } from "@/domain/controlx";
 import {
+  catalogGateIdsForStep,
+  stepMatchesGateTarget,
+  type GateTargetRef,
+} from "@/lib/gate-targets";
+import {
   stepUnlocksDependents,
   type ExecutionGateSummary,
   type GateApprovalSummary,
@@ -13,6 +18,7 @@ type GateStepLike = {
   status: RuntimeStepStatus;
   workstreamId: string;
   blockId: string;
+  designStepId?: string | null;
   producesGateId: string | null;
 };
 
@@ -22,23 +28,13 @@ type GateLike = Pick<
   | "name"
   | "plannedOpenAt"
   | "closesAfterTargets"
+  | "opensTargets"
   | "approvalRoles"
 >;
 
-function stepMatchesTarget(
-  step: Pick<GateStepLike, "workstreamId" | "blockId">,
-  target: { workstreamId: string; blockId: string | null },
-) {
-  if (step.workstreamId !== target.workstreamId) return false;
-  return target.blockId == null || step.blockId === target.blockId;
-}
-
-function stepsForTargets(
-  steps: GateStepLike[],
-  targets: Array<{ workstreamId: string; blockId: string | null }>,
-) {
+function stepsForTargets(steps: GateStepLike[], targets: GateTargetRef[]) {
   return steps.filter((step) =>
-    targets.some((target) => stepMatchesTarget(step, target)),
+    targets.some((target) => stepMatchesGateTarget(step, target)),
   );
 }
 
@@ -112,6 +108,24 @@ export function isGateOpen(input: {
   now: Date;
 }): boolean {
   return unmetGateConditions(input).length === 0;
+}
+
+export function requiredGateIdsForStep(
+  step: {
+    id: string;
+    workstreamId: string;
+    blockId: string;
+    designStepId?: string | null;
+    requiresGateIds?: string[];
+  },
+  gates: Array<{ id: string; opensTargets?: GateTargetRef[] | null }>,
+) {
+  return [
+    ...new Set([
+      ...catalogGateIdsForStep(step, gates),
+      ...(step.requiresGateIds ?? []),
+    ]),
+  ];
 }
 
 /** Gates que el paso requiere y aún no están activos. */

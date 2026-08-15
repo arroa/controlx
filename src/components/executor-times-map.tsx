@@ -35,6 +35,7 @@ import {
   type ExecutionGateSummary,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
+import { requiredGateIdsForStep } from "@/lib/gate-runtime";
 import { cn } from "@/lib/utils";
 
 /** Acciones que abren el diálogo con hora (y adjuntos opcionales al cerrar). */
@@ -288,7 +289,7 @@ function startBlockedLabel(
       );
     }
   }
-  for (const gateId of step.requiresGateIds ?? []) {
+  for (const gateId of requiredGateIdsForStep(step, executionGates)) {
     const gate = executionGates.find((item) => item.id === gateId);
     if (!gate) {
       parts.push("Gate requerido faltante");

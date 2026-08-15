@@ -213,10 +213,12 @@ export type ExecutionGateSummary = {
   opensTargets: Array<{
     workstreamId: string;
     blockId: string | null;
+    stepId?: string | null;
   }>;
   closesAfterTargets: Array<{
     workstreamId: string;
     blockId: string | null;
+    stepId?: string | null;
   }>;
   approvalRoles: Array<
     "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"

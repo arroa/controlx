@@ -170,25 +170,38 @@ export function EventDesign({
   }
 
   function upsertActivity(activity: ActivitySummary) {
-    setPairs((current) =>
-      current.map((pair) => {
+    setPairs((current) => {
+      let carried: ActivityTreeNode | null = null;
+      const stripped = current.map((pair) => ({
+        ...pair,
+        activities: pair.activities.filter((item) => {
+          if (item.id !== activity.id) return true;
+          carried = { ...item, ...activity };
+          return false;
+        }),
+      }));
+      return stripped.map((pair) => {
         if (
           pair.workstream.id !== activity.workstreamId ||
           pair.block.id !== activity.blockId
         ) {
           return pair;
         }
-        const exists = pair.activities.some((item) => item.id === activity.id);
-        return {
-          ...pair,
-          activities: exists
-            ? pair.activities.map((item) =>
-                item.id === activity.id ? { ...item, ...activity } : item,
-              )
-            : [...pair.activities, { ...activity, steps: [] }],
-        };
-      }),
-    );
+        const next: ActivityTreeNode = carried
+          ? {
+              ...carried,
+              ...activity,
+              steps: carried.steps.map((step) => ({
+                ...step,
+                workstreamId: activity.workstreamId,
+                blockId: activity.blockId,
+                activityId: activity.id,
+              })),
+            }
+          : { ...activity, steps: [] };
+        return { ...pair, activities: [...pair.activities, next] };
+      });
+    });
   }
 
   function replaceActivitiesInPair(
@@ -220,16 +233,13 @@ export function EventDesign({
       current.map((pair) => ({
         ...pair,
         activities: pair.activities.map((activity) => {
-          if (activity.id !== step.activityId) return activity;
-          const exists = activity.steps.some((item) => item.id === step.id);
-          return {
-            ...activity,
-            steps: exists
-              ? activity.steps.map((item) =>
-                  item.id === step.id ? { ...item, ...step } : item,
-                )
-              : [...activity.steps, step],
-          };
+          const others = activity.steps.filter((item) => item.id !== step.id);
+          if (activity.id !== step.activityId) {
+            return others.length === activity.steps.length
+              ? activity
+              : { ...activity, steps: others };
+          }
+          return { ...activity, steps: [...others, step] };
         }),
       })),
     );
@@ -382,6 +392,8 @@ export function EventDesign({
             body: JSON.stringify({
               name: editor.activityName,
               description: editor.activityDescription,
+              workstreamId: editor.workstreamId,
+              blockId: editor.blockId,
             }),
           },
         );
@@ -407,17 +419,22 @@ export function EventDesign({
               name: editor.stepName,
               description: editor.stepDescription,
               longDescription: editor.stepLongDescription,
+              activityId: editor.activityId,
             }),
           },
         );
         const payload = (await response.json()) as {
           step?: DesignStepSummary;
+          deletedActivityId?: string | null;
           error?: string;
         };
         if (!response.ok || !payload.step) {
           throw new Error(payload.error ?? "No fue posible guardar.");
         }
         upsertStep(payload.step);
+        if (payload.deletedActivityId) {
+          removeActivity(payload.deletedActivityId);
+        }
         closeModal();
         return;
       }
@@ -648,14 +665,14 @@ export function EventDesign({
               <TableCell className="bg-card">
                 <Input
                   className="h-8"
-                  value={bar.activityDescription}
+                  value={bar.stepDescription}
                   onChange={(event) =>
                     setBar((current) => ({
                       ...current,
-                      activityDescription: event.target.value,
+                      stepDescription: event.target.value,
                     }))
                   }
-                  placeholder="Descripción"
+                  placeholder="Descripción del paso"
                 />
               </TableCell>
               <TableCell className="bg-card text-right">
@@ -744,6 +761,7 @@ export function EventDesign({
         editor={modal}
         workstreams={workstreams}
         blocks={blocks}
+        pairs={pairs}
         saving={savingModal}
         error={modalError}
         onOpenChange={(open) => {
@@ -1071,15 +1089,22 @@ function ActivityRows({
               <TableCell className="pl-12">
                 <Badge variant="secondary">Paso</Badge>
               </TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="min-w-0 truncate text-muted-foreground" title={workstreamName}>
                 {workstreamName}
               </TableCell>
-              <TableCell className="text-muted-foreground">{blockName}</TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="min-w-0 truncate text-muted-foreground" title={blockName}>
+                {blockName}
+              </TableCell>
+              <TableCell className="min-w-0 truncate text-muted-foreground" title={activity.name}>
                 {activity.name}
               </TableCell>
-              <TableCell className="font-medium">{step.name}</TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="min-w-0 truncate font-medium" title={step.name}>
+                {step.name}
+              </TableCell>
+              <TableCell
+                className="min-w-0 truncate text-muted-foreground"
+                title={step.description || undefined}
+              >
                 {step.description || "—"}
               </TableCell>
               <TableCell>
@@ -1193,6 +1218,7 @@ function DesignEditorDialog({
   editor,
   workstreams,
   blocks,
+  pairs,
   saving,
   error,
   onOpenChange,
@@ -1203,6 +1229,7 @@ function DesignEditorDialog({
   editor: EditorState | null;
   workstreams: WorkstreamSummary[];
   blocks: BlockSummary[];
+  pairs: DesignPair[];
   saving: boolean;
   error: string;
   onOpenChange: (open: boolean) => void;
@@ -1233,9 +1260,9 @@ function DesignEditorDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {editor.mode === "edit-activity"
-              ? "Actualiza el nombre o la descripción de la actividad."
+              ? "Actualiza el nombre, la descripción o mueve la actividad a otro workstream y bloque."
               : editor.mode === "edit-step"
-                ? "Actualiza el nombre o la descripción del paso."
+                ? "Actualiza el paso o muévelo a otra actividad."
                 : isNewStep
                   ? `Agrega un paso a “${editor.activityName}”.`
                   : "Crea la unidad de diseño (actividad + paso obligatorio)."}
@@ -1245,6 +1272,42 @@ function DesignEditorDialog({
         <div className="grid gap-3">
           {editor.mode === "edit-activity" ? (
             <>
+              <div className="grid gap-1.5">
+                <Label>Workstream</Label>
+                <Select
+                  value={editor.workstreamId || undefined}
+                  onValueChange={(value) => patch({ workstreamId: value })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Workstream" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workstreams.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Bloque</Label>
+                <Select
+                  value={editor.blockId || undefined}
+                  onValueChange={(value) => patch({ blockId: value })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Bloque" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {blocks.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="grid gap-1.5">
                 <Label>Nombre</Label>
                 <Input
@@ -1374,6 +1437,27 @@ function DesignEditorDialog({
 
           {editor.mode === "edit-step" ? (
             <>
+              <div className="grid gap-1.5">
+                <Label>Actividad</Label>
+                <Select
+                  value={editor.activityId || undefined}
+                  onValueChange={(value) => patch({ activityId: value })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Actividad" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {pairs.flatMap((pair) =>
+                      pair.activities.map((activity) => (
+                        <SelectItem key={activity.id} value={activity.id}>
+                          {pair.workstream.name} · {pair.block.name} ·{" "}
+                          {activity.name}
+                        </SelectItem>
+                      )),
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="grid gap-1.5">
                 <Label>Nombre</Label>
                 <Input

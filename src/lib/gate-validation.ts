@@ -1,7 +1,9 @@
-export type GateTargetRef = {
-  workstreamId: string;
-  blockId: string | null;
-};
+import {
+  gateTargetsOverlap,
+  type GateTargetRef,
+} from "@/lib/gate-targets";
+
+export type { GateTargetRef };
 
 export type GateGraphNode = {
   id: string | null;
@@ -13,13 +15,14 @@ export type GateGraphNode = {
 export type DesignedPairRef = {
   workstreamId: string;
   blockId: string;
+  stepId?: string;
   workstreamName?: string;
   blockName?: string;
+  stepName?: string;
 };
 
-/** Unidad atómica del grafo: un WS×bloque del diseño. */
-function atomKey(workstreamId: string, blockId: string) {
-  return `${workstreamId}:${blockId}`;
+function atomKey(workstreamId: string, blockId: string, stepId: string) {
+  return `${workstreamId}:${blockId}:${stepId}`;
 }
 
 function expandTargets(
@@ -28,30 +31,22 @@ function expandTargets(
 ): string[] {
   const atoms = new Set<string>();
   for (const target of targets) {
-    if (target.blockId) {
-      atoms.add(atomKey(target.workstreamId, target.blockId));
-      continue;
-    }
     for (const pair of designed) {
-      if (pair.workstreamId === target.workstreamId) {
-        atoms.add(atomKey(pair.workstreamId, pair.blockId));
-      }
+      if (pair.workstreamId !== target.workstreamId) continue;
+      if (target.blockId != null && pair.blockId !== target.blockId) continue;
+      const stepId = pair.stepId ?? pair.blockId;
+      if (target.stepId != null && stepId !== target.stepId) continue;
+      atoms.add(atomKey(pair.workstreamId, pair.blockId, stepId));
     }
   }
   return [...atoms];
 }
 
-function targetsOverlap(a: GateTargetRef, b: GateTargetRef) {
-  if (a.workstreamId !== b.workstreamId) return false;
-  if (a.blockId == null || b.blockId == null) return true;
-  return a.blockId === b.blockId;
-}
-
 function findSameGateOverlap(gate: GateGraphNode): string | null {
   for (const open of gate.opensTargets) {
     for (const close of gate.closesAfterTargets) {
-      if (targetsOverlap(open, close)) {
-        return `“${gate.name || "Este gate"}” no puede requerir y abrir el mismo workstream/bloque.`;
+      if (gateTargetsOverlap(open, close)) {
+        return `“${gate.name || "Este gate"}” no puede requerir y abrir el mismo workstream, bloque o paso.`;
       }
     }
   }
@@ -94,15 +89,17 @@ function findCycleMessage(
   const parent = new Map<string, string | null>();
 
   function atomLabel(key: string) {
-    const sep = key.indexOf(":");
-    const workstreamId = key.slice(0, sep);
-    const blockId = key.slice(sep + 1);
+    const [workstreamId, blockId, stepId] = key.split(":");
     const pair = designed.find(
       (item) =>
-        item.workstreamId === workstreamId && item.blockId === blockId,
+        item.workstreamId === workstreamId &&
+        item.blockId === blockId &&
+        (item.stepId ?? item.blockId) === stepId,
     );
     if (pair?.workstreamName && pair.blockName) {
-      return `${pair.workstreamName} · ${pair.blockName}`;
+      return pair.stepName
+        ? `${pair.workstreamName} · ${pair.blockName} · ${pair.stepName}`
+        : `${pair.workstreamName} · ${pair.blockName}`;
     }
     return key;
   }
@@ -126,7 +123,7 @@ function findCycleMessage(
     if (involved.length) {
       return `Referencia circular entre gates (${involved.join(", ")}): ${chain}.`;
     }
-    return `Referencia circular en habilitación de workstreams/bloques: ${chain}.`;
+    return `Referencia circular en habilitación de workstreams/bloques/pasos: ${chain}.`;
   }
 
   function dfs(node: string): string[] | null {
@@ -166,7 +163,7 @@ function findCycleMessage(
 /**
  * Valida el grafo de gates antes de persistir.
  * - Solape origen/destino en el mismo gate
- * - Ciclos entre gates vía WS/bloques (incl. “todo el WS” vs bloque)
+ * - Ciclos entre gates vía WS/bloques/pasos
  */
 export function validateGateGraph(options: {
   gates: GateGraphNode[];
@@ -175,15 +172,6 @@ export function validateGateGraph(options: {
 }): { ok: true } | { ok: false; message: string } {
   const same = findSameGateOverlap(options.draft);
   if (same) return { ok: false, message: same };
-
-  if (
-    !options.draft.opensTargets.length ||
-    !options.draft.closesAfterTargets.length
-  ) {
-    // Sin ambos lados no hay arista de habilitación; no hay ciclo por este gate.
-    // Aun así revisamos el grafo del resto por si el draft quitaba un edge
-    // (no aplica a create) — al editar, usamos el draft en el set.
-  }
 
   const merged = [
     ...options.gates.filter((gate) => gate.id !== options.draft.id),
@@ -194,14 +182,12 @@ export function validateGateGraph(options: {
   const cycle = findCycleMessage(graph, options.designedPairs, merged);
   if (cycle) return { ok: false, message: cycle };
 
-  // Autobucle: un gate que cierra A y abre A ya se cubrió; también
-  // aristas from→from si expand deja el mismo átomo.
   for (const [from, tos] of graph) {
     if (tos.has(from)) {
       return {
         ok: false,
         message:
-          "Un gate no puede habilitar el mismo workstream/bloque que usa como condición de cierre.",
+          "Un gate no puede habilitar el mismo workstream, bloque o paso que usa como condición de cierre.",
       };
     }
   }

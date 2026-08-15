@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { Command } from "lucide-react";
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
@@ -89,11 +90,14 @@ export async function AppHeader({
   const bypassEnabled = isDevBypassEnabled();
   const user = await getCurrentUser();
   const isMobile = await isMobileRequest();
+  const headerList = await headers();
+  const pathname = headerList.get("x-pathname")?.split("?")[0] ?? "";
   const nav = user
     ? await getNavWorkspaceModel({
         email: user.email,
         isSuperAdmin: user.isSuperAdmin,
         isMobile,
+        pathname,
       })
     : null;
   const logoHref = user

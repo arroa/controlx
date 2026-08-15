@@ -1,3 +1,5 @@
+import { stepMatchesGateTarget, type GateTargetRef } from "@/lib/gate-targets";
+
 const DEFAULT_DURATION_MINUTES = 30;
 
 /** Día civil YYYY-MM-DD en una zona horaria. */
@@ -54,6 +56,8 @@ export type ScheduleStepInput = {
 export type ScheduleGateInput = {
   id: string;
   plannedOpenAt: string | null;
+  opensTargets?: GateTargetRef[];
+  closesAfterTargets?: GateTargetRef[];
 };
 
 /**
@@ -108,6 +112,24 @@ export function computeRuntimePlannedStarts(input: {
     for (const gateId of row.requiresGateIds) {
       const producerId = producerByGate.get(gateId);
       if (producerId) addEdge(producerId, row.id);
+    }
+  }
+
+  for (const gate of input.gates) {
+    const closers = rows.filter((row) =>
+      (gate.closesAfterTargets ?? []).some((target) =>
+        stepMatchesGateTarget(row, target),
+      ),
+    );
+    const opened = rows.filter((row) =>
+      (gate.opensTargets ?? []).some((target) =>
+        stepMatchesGateTarget(row, target),
+      ),
+    );
+    const producerId = producerByGate.get(gate.id);
+    for (const openStep of opened) {
+      for (const closer of closers) addEdge(closer.id, openStep.id);
+      if (producerId) addEdge(producerId, openStep.id);
     }
   }
 
@@ -167,9 +189,35 @@ export function computeRuntimePlannedStarts(input: {
       }
       const gate = input.gates.find((item) => item.id === gateId);
       if (gate?.plannedOpenAt && designT0Ms != null) {
-        // Ancla de gate en offset de diseño → misma escala que startMin de diseño;
-        // se interpreta como minutos desde T0 de instancia (igual que materialización).
         gateEnds.push(toDesignOffsetMin(gate.plannedOpenAt));
+      }
+    }
+    for (const gate of input.gates) {
+      if (
+        !(gate.opensTargets ?? []).some((target) =>
+          stepMatchesGateTarget(row, target),
+        )
+      ) {
+        continue;
+      }
+      if (gate.plannedOpenAt && designT0Ms != null) {
+        gateEnds.push(toDesignOffsetMin(gate.plannedOpenAt));
+      }
+      const producerId = producerByGate.get(gate.id);
+      if (producerId) {
+        const end = items.get(producerId)?.endMin;
+        if (end != null) gateEnds.push(end);
+      }
+      for (const closer of rows) {
+        if (
+          !(gate.closesAfterTargets ?? []).some((target) =>
+            stepMatchesGateTarget(closer, target),
+          )
+        ) {
+          continue;
+        }
+        const end = items.get(closer.id)?.endMin;
+        if (end != null) gateEnds.push(end);
       }
     }
 

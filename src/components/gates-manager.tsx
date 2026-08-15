@@ -26,19 +26,67 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type {
+  ActivityTreeNode,
   BlockSummary,
   DesignPair,
   GateSummary,
   WorkstreamSummary,
 } from "@/lib/admin-data";
 import { APPROVAL_ROLE_OPTIONS, type ApprovalRole } from "@/domain/controlx";
+import {
+  gateTargetsOverlap,
+  stepMatchesGateTarget,
+  type GateTargetRef,
+} from "@/lib/gate-targets";
 import { validateGateGraph } from "@/lib/gate-validation";
 import { cn } from "@/lib/utils";
 
+type DesignedStep = {
+  id: string;
+  name: string;
+  activityId: string;
+  activityName: string;
+  order: number;
+};
+
+type DesignedActivity = {
+  id: string;
+  name: string;
+  order: number;
+  steps: DesignedStep[];
+};
+
+type DesignedBlock = BlockSummary & { activities: DesignedActivity[] };
+
 type DesignedWorkstream = {
   workstream: WorkstreamSummary;
-  blocks: BlockSummary[];
+  blocks: DesignedBlock[];
 };
+
+function activitiesFromPair(activities: ActivityTreeNode[]): DesignedActivity[] {
+  return activities
+    .slice()
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, "es"))
+    .map((activity) => ({
+      id: activity.id,
+      name: activity.name,
+      order: activity.order,
+      steps: activity.steps
+        .slice()
+        .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, "es"))
+        .map((step) => ({
+          id: step.id,
+          name: step.name,
+          activityId: activity.id,
+          activityName: activity.name,
+          order: step.order,
+        })),
+    }));
+}
+
+function allBlockSteps(block: DesignedBlock) {
+  return block.activities.flatMap((activity) => activity.steps);
+}
 
 /** Solo WS/bloques con actividades en el diseño (no el catálogo vacío). */
 function designedFromPairs(pairs: DesignPair[]): DesignedWorkstream[] {
@@ -51,7 +99,10 @@ function designedFromPairs(pairs: DesignPair[]): DesignedWorkstream[] {
       byWs.set(pair.workstream.id, entry);
     }
     if (!entry.blocks.some((block) => block.id === pair.block.id)) {
-      entry.blocks.push(pair.block);
+      entry.blocks.push({
+        ...pair.block,
+        activities: activitiesFromPair(pair.activities),
+      });
     }
   }
   return [...byWs.values()].map((entry) => ({
@@ -65,23 +116,26 @@ function designedFromPairs(pairs: DesignPair[]): DesignedWorkstream[] {
 function catalogsFromPairs(pairs: DesignPair[]): {
   workstreams: WorkstreamSummary[];
   blocks: BlockSummary[];
+  steps: DesignedStep[];
 } {
   const workstreams = new Map<string, WorkstreamSummary>();
   const blocks = new Map<string, BlockSummary>();
+  const steps: DesignedStep[] = [];
   for (const pair of pairs) {
     workstreams.set(pair.workstream.id, pair.workstream);
     blocks.set(pair.block.id, pair.block);
+    for (const activity of activitiesFromPair(pair.activities)) {
+      steps.push(...activity.steps);
+    }
   }
   return {
     workstreams: [...workstreams.values()],
     blocks: [...blocks.values()],
+    steps,
   };
 }
 
-type GateTargetDraft = {
-  workstreamId: string;
-  blockId: string | null;
-};
+type GateTargetDraft = GateTargetRef;
 
 type EditorState = {
   id: string | null;
@@ -109,18 +163,26 @@ function summarizeTargets(
   targets: GateTargetDraft[],
   workstreams: WorkstreamSummary[],
   blocks: BlockSummary[],
+  steps: DesignedStep[],
   emptyLabel: string,
 ) {
   if (!targets.length) return emptyLabel;
 
   const wsName = new Map(workstreams.map((item) => [item.id, item.name]));
   const blockName = new Map(blocks.map((item) => [item.id, item.name]));
+  const stepName = new Map(steps.map((item) => [item.id, item.name]));
 
   return targets
     .map((target) => {
       const workstream = wsName.get(target.workstreamId) ?? "WS";
       if (!target.blockId) return `${workstream} (todo)`;
-      return `${workstream} · ${blockName.get(target.blockId) ?? "Bloque"}`;
+      const block = blockName.get(target.blockId) ?? "Bloque";
+      if (!target.stepId) return `${workstream} · ${block}`;
+      const step = steps.find((item) => item.id === target.stepId);
+      const stepLabel = step?.name ?? stepName.get(target.stepId) ?? "Paso";
+      return step?.activityName
+        ? `${workstream} · ${block} · ${step.activityName} · ${stepLabel}`
+        : `${workstream} · ${block} · ${stepLabel}`;
     })
     .join(", ");
 }
@@ -129,6 +191,7 @@ function summarizeActivation(
   gate: GateSummary,
   workstreams: WorkstreamSummary[],
   blocks: BlockSummary[],
+  steps: DesignedStep[],
   eventTimezone: string,
 ) {
   const parts: string[] = [];
@@ -148,81 +211,221 @@ function summarizeActivation(
   }
   if (gate.closesAfterTargets?.length) {
     parts.push(
-      `cierre: ${summarizeTargets(gate.closesAfterTargets, workstreams, blocks, "")}`,
+      `cierre: ${summarizeTargets(gate.closesAfterTargets, workstreams, blocks, steps, "")}`,
     );
   }
   return parts.length ? parts.join(" · ") : "sin condición (manual / productor)";
 }
 
-function toggleWhole(
+function stepsOf(
+  tree: DesignedWorkstream[],
+  workstreamId: string,
+  blockId?: string,
+  activityId?: string,
+) {
+  const ws = tree.find((entry) => entry.workstream.id === workstreamId);
+  if (!ws) return [];
+  const blocks = blockId
+    ? ws.blocks.filter((block) => block.id === blockId)
+    : ws.blocks;
+  return blocks.flatMap((block) =>
+    (activityId
+      ? block.activities.filter((activity) => activity.id === activityId)
+      : block.activities
+    ).flatMap((activity) =>
+      activity.steps.map((step) => ({
+        id: step.id,
+        workstreamId,
+        blockId: block.id,
+      })),
+    ),
+  );
+}
+
+function coveredStepIds(
+  targets: GateTargetDraft[],
+  tree: DesignedWorkstream[],
+  workstreamId: string,
+) {
+  return new Set(
+    stepsOf(tree, workstreamId)
+      .filter((step) =>
+        targets.some((target) => stepMatchesGateTarget(step, target)),
+      )
+      .map((step) => step.id),
+  );
+}
+
+function compactWsTargets(
+  workstreamId: string,
+  covered: Set<string>,
+  tree: DesignedWorkstream[],
+  previous: GateTargetDraft[],
+): GateTargetDraft[] {
+  const ws = tree.find((entry) => entry.workstream.id === workstreamId);
+  if (!ws) return [];
+  const allSteps = stepsOf(tree, workstreamId);
+  if (allSteps.length && allSteps.every((step) => covered.has(step.id))) {
+    return [{ workstreamId, blockId: null, stepId: null }];
+  }
+
+  const out: GateTargetDraft[] = [];
+  for (const block of ws.blocks) {
+    if (!allBlockSteps(block).length) {
+      const keepEmpty = previous.some(
+        (target) =>
+          target.workstreamId === workstreamId &&
+          (target.blockId == null ||
+            (target.blockId === block.id && !target.stepId)),
+      );
+      if (keepEmpty) {
+        out.push({ workstreamId, blockId: block.id, stepId: null });
+      }
+      continue;
+    }
+    const blockSteps = allBlockSteps(block);
+    if (blockSteps.every((step) => covered.has(step.id))) {
+      out.push({ workstreamId, blockId: block.id, stepId: null });
+      continue;
+    }
+    for (const step of blockSteps) {
+      if (covered.has(step.id)) {
+        out.push({ workstreamId, blockId: block.id, stepId: step.id });
+      }
+    }
+  }
+  return out;
+}
+
+function replaceWsTargets(
   targets: GateTargetDraft[],
   workstreamId: string,
-): GateTargetDraft[] {
-  const whole = targets.some(
-    (target) => target.workstreamId === workstreamId && target.blockId == null,
-  );
-  if (whole) {
-    return targets.filter((target) => target.workstreamId !== workstreamId);
-  }
+  next: GateTargetDraft[],
+) {
   return [
     ...targets.filter((target) => target.workstreamId !== workstreamId),
-    { workstreamId, blockId: null },
+    ...next,
   ];
+}
+
+function toggleWhole(
+  targets: GateTargetDraft[],
+  tree: DesignedWorkstream[],
+  workstreamId: string,
+): GateTargetDraft[] {
+  const all = stepsOf(tree, workstreamId);
+  const covered = coveredStepIds(targets, tree, workstreamId);
+  const allSelected =
+    all.length > 0 && all.every((step) => covered.has(step.id));
+  if (allSelected || (!all.length && targets.some((t) => t.workstreamId === workstreamId && t.blockId == null))) {
+    return replaceWsTargets(targets, workstreamId, []);
+  }
+  return replaceWsTargets(targets, workstreamId, [
+    { workstreamId, blockId: null, stepId: null },
+  ]);
 }
 
 function toggleBlockTarget(
   targets: GateTargetDraft[],
+  tree: DesignedWorkstream[],
   workstreamId: string,
   blockId: string,
-  allBlockIds: string[],
 ): GateTargetDraft[] {
-  if (
-    targets.some(
-      (target) => target.workstreamId === workstreamId && target.blockId == null,
-    )
-  ) {
+  const blockSteps = stepsOf(tree, workstreamId, blockId);
+  const covered = coveredStepIds(targets, tree, workstreamId);
+  const next = new Set(covered);
+  if (!blockSteps.length) {
+    const selected = targets.some(
+      (target) =>
+        (target.workstreamId === workstreamId && target.blockId == null) ||
+        (target.workstreamId === workstreamId &&
+          target.blockId === blockId &&
+          !target.stepId),
+    );
+    const remaining = targets.filter(
+      (target) =>
+        !(
+          target.workstreamId === workstreamId &&
+          (target.blockId == null || target.blockId === blockId)
+        ),
+    );
+    if (selected) {
+      const ws = tree.find((entry) => entry.workstream.id === workstreamId);
+      const otherBlocks = (ws?.blocks ?? [])
+        .filter((block) => block.id !== blockId)
+        .map((block) => ({
+          workstreamId,
+          blockId: block.id,
+          stepId: null as string | null,
+        }));
+      return [...remaining, ...otherBlocks];
+    }
     return [
-      ...targets.filter((target) => target.workstreamId !== workstreamId),
-      ...allBlockIds
-        .filter((id) => id !== blockId)
-        .map((id) => ({ workstreamId, blockId: id })),
+      ...remaining,
+      { workstreamId, blockId, stepId: null },
     ];
   }
-
-  const exists = targets.some(
-    (target) =>
-      target.workstreamId === workstreamId && target.blockId === blockId,
+  const allBlock = blockSteps.every((step) => covered.has(step.id));
+  if (allBlock) blockSteps.forEach((step) => next.delete(step.id));
+  else blockSteps.forEach((step) => next.add(step.id));
+  return replaceWsTargets(
+    targets,
+    workstreamId,
+    compactWsTargets(workstreamId, next, tree, targets),
   );
-  if (exists) {
-    return targets.filter(
-      (target) =>
-        !(target.workstreamId === workstreamId && target.blockId === blockId),
-    );
-  }
-  return [...targets, { workstreamId, blockId }];
 }
 
-/** Conflicto origen↔destino: mismo WS completo o el mismo bloque. */
-function isTargetBlocked(
+function toggleActivityTarget(
+  targets: GateTargetDraft[],
+  tree: DesignedWorkstream[],
   workstreamId: string,
-  blockId: string | null,
+  blockId: string,
+  activityId: string,
+): GateTargetDraft[] {
+  const activitySteps = stepsOf(tree, workstreamId, blockId, activityId);
+  const covered = coveredStepIds(targets, tree, workstreamId);
+  const next = new Set(covered);
+  if (!activitySteps.length) return targets;
+  const allActivity = activitySteps.every((step) => covered.has(step.id));
+  if (allActivity) activitySteps.forEach((step) => next.delete(step.id));
+  else activitySteps.forEach((step) => next.add(step.id));
+  return replaceWsTargets(
+    targets,
+    workstreamId,
+    compactWsTargets(workstreamId, next, tree, targets),
+  );
+}
+
+function toggleStepTarget(
+  targets: GateTargetDraft[],
+  tree: DesignedWorkstream[],
+  workstreamId: string,
+  blockId: string,
+  stepId: string,
+): GateTargetDraft[] {
+  const covered = coveredStepIds(targets, tree, workstreamId);
+  const next = new Set(covered);
+  if (next.has(stepId)) next.delete(stepId);
+  else next.add(stepId);
+  return replaceWsTargets(
+    targets,
+    workstreamId,
+    compactWsTargets(workstreamId, next, tree, targets),
+  );
+}
+
+function isTargetBlocked(
+  candidate: GateTargetDraft,
   blocked: GateTargetDraft[],
 ) {
-  return blocked.some((item) => {
-    if (item.workstreamId !== workstreamId) return false;
-    if (item.blockId == null || blockId == null) return true;
-    return item.blockId === blockId;
-  });
+  return blocked.some((item) => gateTargetsOverlap(candidate, item));
 }
 
 function withoutBlockedTargets(
   targets: GateTargetDraft[],
   blocked: GateTargetDraft[],
 ) {
-  return targets.filter(
-    (target) =>
-      !isTargetBlocked(target.workstreamId, target.blockId, blocked),
-  );
+  return targets.filter((target) => !isTargetBlocked(target, blocked));
 }
 
 function TargetChecklist({
@@ -239,11 +442,11 @@ function TargetChecklist({
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
 
-  function toggleExpanded(workstreamId: string) {
+  function toggleExpanded(id: string) {
     setExpandedIds((current) => {
       const next = new Set(current);
-      if (next.has(workstreamId)) next.delete(workstreamId);
-      else next.add(workstreamId);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -260,25 +463,25 @@ function TargetChecklist({
   return (
     <div className="space-y-2 rounded-xl border">
       {designed.map(({ workstream, blocks }) => {
-        const blockIds = blocks.map((block) => block.id);
+        const wsSteps = stepsOf(designed, workstream.id);
+        const covered = coveredStepIds(targets, designed, workstream.id);
         const wholeBlocked = isTargetBlocked(
-          workstream.id,
-          null,
+          { workstreamId: workstream.id, blockId: null, stepId: null },
           blockedTargets,
         );
-        const whole = targets.some(
-          (target) =>
-            target.workstreamId === workstream.id && target.blockId == null,
-        );
-        const selectedBlocks = targets.filter(
-          (target) =>
-            target.workstreamId === workstream.id && target.blockId != null,
-        ).length;
+        const whole =
+          (wsSteps.length > 0 &&
+            wsSteps.every((step) => covered.has(step.id))) ||
+          targets.some(
+            (target) =>
+              target.workstreamId === workstream.id && target.blockId == null,
+          );
+        const selectedCount = covered.size;
         const expanded = expandedIds.has(workstream.id);
         const summary = whole
           ? "Todo el WS"
-          : selectedBlocks
-            ? `${selectedBlocks} bloque${selectedBlocks === 1 ? "" : "s"}`
+          : selectedCount
+            ? `${selectedCount} paso${selectedCount === 1 ? "" : "s"}`
             : wholeBlocked
               ? "En el otro lado"
               : "Ninguno";
@@ -288,7 +491,7 @@ function TargetChecklist({
             <div
               className={cn(
                 "flex items-center gap-2 px-2 py-2 hover:bg-muted/50",
-                (whole || selectedBlocks > 0) && "bg-muted/30",
+                (whole || selectedCount > 0) && "bg-muted/30",
                 wholeBlocked && !whole && "opacity-60",
               )}
             >
@@ -325,7 +528,7 @@ function TargetChecklist({
                   checked={whole}
                   disabled={wholeBlocked}
                   onChange={() =>
-                    onChange(toggleWhole(targets, workstream.id))
+                    onChange(toggleWhole(targets, designed, workstream.id))
                   }
                 />
                 <span className="truncate text-sm font-medium">
@@ -338,57 +541,238 @@ function TargetChecklist({
             </div>
 
             {expanded ? (
-              <div className="space-y-0.5 border-t bg-muted/10 px-3 py-2 pl-11">
+              <div className="space-y-0.5 border-t bg-muted/10 px-3 py-2 pl-9">
                 <p className="px-2 pb-1 text-[11px] text-muted-foreground">
-                  Bloques diseñados (o marca “todo el WS” arriba)
+                  Bloques → actividades → pasos (o marca “todo el WS” arriba)
                 </p>
                 {blocks.map((block) => {
-                  const blockBlocked = isTargetBlocked(
+                  const blockKey = `${workstream.id}:${block.id}`;
+                  const blockExpanded = expandedIds.has(blockKey);
+                  const blockSteps = stepsOf(
+                    designed,
                     workstream.id,
                     block.id,
+                  );
+                  const blockAll =
+                    blockSteps.length > 0 &&
+                    blockSteps.every((step) => covered.has(step.id));
+                  const blockSome = blockSteps.some((step) =>
+                    covered.has(step.id),
+                  );
+                  const blockBlocked = isTargetBlocked(
+                    {
+                      workstreamId: workstream.id,
+                      blockId: block.id,
+                      stepId: null,
+                    },
                     blockedTargets,
                   );
-                  const checked =
-                    whole ||
-                    targets.some(
-                      (target) =>
-                        target.workstreamId === workstream.id &&
-                        target.blockId === block.id,
-                    );
                   return (
-                    <label
-                      key={`${workstream.id}-${block.id}`}
-                      title={
-                        blockBlocked
-                          ? "Ya está en el otro lado del gate"
-                          : undefined
-                      }
-                      className={cn(
-                        "flex items-center gap-3 rounded-md px-2 py-1.5",
-                        blockBlocked || whole
-                          ? "cursor-not-allowed"
-                          : "cursor-pointer hover:bg-muted/40",
-                        checked && !whole && "bg-muted/30",
-                        (whole || blockBlocked) && "opacity-60",
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={whole || blockBlocked}
-                        onChange={() =>
-                          onChange(
-                            toggleBlockTarget(
-                              targets,
-                              workstream.id,
-                              block.id,
-                              blockIds,
-                            ),
-                          )
-                        }
-                      />
-                      <span className="text-sm">{block.name}</span>
-                    </label>
+                    <div key={blockKey}>
+                      <div
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-1 py-1",
+                          blockAll && !whole && "bg-muted/30",
+                          (whole || blockBlocked) && "opacity-60",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-expanded={blockExpanded}
+                          aria-label={
+                            blockExpanded
+                              ? `Colapsar ${block.name}`
+                              : `Expandir ${block.name}`
+                          }
+                          onClick={() => toggleExpanded(blockKey)}
+                        >
+                          {blockExpanded ? (
+                            <ChevronDown className="size-3.5" />
+                          ) : (
+                            <ChevronRight className="size-3.5" />
+                          )}
+                        </button>
+                        <label
+                          title={
+                            blockBlocked
+                              ? "Ya está en el otro lado del gate"
+                              : undefined
+                          }
+                          className={cn(
+                            "flex min-w-0 flex-1 items-center gap-3 py-0.5",
+                            blockBlocked
+                              ? "cursor-not-allowed"
+                              : "cursor-pointer hover:bg-muted/40",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={whole || blockAll}
+                            disabled={blockBlocked}
+                            onChange={() =>
+                              onChange(
+                                toggleBlockTarget(
+                                  targets,
+                                  designed,
+                                  workstream.id,
+                                  block.id,
+                                ),
+                              )
+                            }
+                          />
+                          <span className="truncate text-sm">{block.name}</span>
+                        </label>
+                        {blockSome && !blockAll && !whole ? (
+                          <Badge variant="outline" className="shrink-0 text-[10px]">
+                            parcial
+                          </Badge>
+                        ) : null}
+                      </div>
+                      {blockExpanded ? (
+                        <div className="space-y-0.5 py-1 pl-8">
+                          {block.activities.map((activity) => {
+                            const activityKey = `${blockKey}:${activity.id}`;
+                            const activityExpanded = expandedIds.has(activityKey);
+                            const activitySteps = activity.steps;
+                            const activityAll =
+                              activitySteps.length > 0 &&
+                              activitySteps.every((step) => covered.has(step.id));
+                            const activitySome = activitySteps.some((step) =>
+                              covered.has(step.id),
+                            );
+                            return (
+                              <div key={activity.id}>
+                                <div
+                                  className={cn(
+                                    "flex items-center gap-2 rounded-md px-1 py-1",
+                                    activityAll && !whole && !blockAll && "bg-muted/30",
+                                  )}
+                                >
+                                  <button
+                                    type="button"
+                                    className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    aria-expanded={activityExpanded}
+                                    aria-label={
+                                      activityExpanded
+                                        ? `Colapsar ${activity.name}`
+                                        : `Expandir ${activity.name}`
+                                    }
+                                    onClick={() => toggleExpanded(activityKey)}
+                                  >
+                                    {activityExpanded ? (
+                                      <ChevronDown className="size-3.5" />
+                                    ) : (
+                                      <ChevronRight className="size-3.5" />
+                                    )}
+                                  </button>
+                                  <label
+                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-0.5 hover:bg-muted/40"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={whole || blockAll || activityAll}
+                                      onChange={() =>
+                                        onChange(
+                                          toggleActivityTarget(
+                                            targets,
+                                            designed,
+                                            workstream.id,
+                                            block.id,
+                                            activity.id,
+                                          ),
+                                        )
+                                      }
+                                    />
+                                    <span className="truncate text-sm">
+                                      {activity.name}
+                                    </span>
+                                  </label>
+                                  {activitySome && !activityAll && !whole && !blockAll ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="shrink-0 text-[10px]"
+                                    >
+                                      parcial
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                {activityExpanded ? (
+                                  <div className="space-y-0.5 py-1 pl-10">
+                                    {activity.steps.map((step) => {
+                                      const stepBlocked = isTargetBlocked(
+                                        {
+                                          workstreamId: workstream.id,
+                                          blockId: block.id,
+                                          stepId: step.id,
+                                        },
+                                        blockedTargets,
+                                      );
+                                      const checked =
+                                        whole ||
+                                        blockAll ||
+                                        activityAll ||
+                                        covered.has(step.id);
+                                      return (
+                                        <label
+                                          key={step.id}
+                                          title={
+                                            stepBlocked
+                                              ? "Ya está en el otro lado del gate"
+                                              : undefined
+                                          }
+                                          className={cn(
+                                            "flex items-center gap-3 rounded-md px-2 py-1",
+                                            stepBlocked
+                                              ? "cursor-not-allowed opacity-60"
+                                              : "cursor-pointer hover:bg-muted/40",
+                                            checked &&
+                                              !whole &&
+                                              !blockAll &&
+                                              !activityAll &&
+                                              "bg-muted/30",
+                                          )}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            disabled={stepBlocked}
+                                            onChange={() =>
+                                              onChange(
+                                                toggleStepTarget(
+                                                  targets,
+                                                  designed,
+                                                  workstream.id,
+                                                  block.id,
+                                                  step.id,
+                                                ),
+                                              )
+                                            }
+                                          />
+                                          <span className="truncate text-sm">
+                                            {step.name}
+                                          </span>
+                                        </label>
+                                      );
+                                    })}
+                                    {!activity.steps.length ? (
+                                      <p className="px-2 py-1 text-xs text-muted-foreground">
+                                        Sin pasos en esta actividad.
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                          {!block.activities.length ? (
+                            <p className="px-2 py-1 text-xs text-muted-foreground">
+                              Sin actividades en este bloque.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
                 {!blocks.length ? (
@@ -430,7 +814,7 @@ export function GatesManager({
   const [formError, setFormError] = useState("");
 
   const designed = useMemo(() => designedFromPairs(pairs), [pairs]);
-  const { workstreams, blocks } = useMemo(
+  const { workstreams, blocks, steps } = useMemo(
     () => catalogsFromPairs(pairs),
     [pairs],
   );
@@ -446,11 +830,17 @@ export function GatesManager({
       id: gate.id,
       name: gate.name,
       description: gate.description,
-      opensTargets: (gate.opensTargets ?? []).map((target) => ({ ...target })),
+      opensTargets: (gate.opensTargets ?? []).map((target) => ({
+        workstreamId: target.workstreamId,
+        blockId: target.blockId,
+        stepId: target.stepId ?? null,
+      })),
       plannedOpenAt: gate.plannedOpenAt ?? null,
       approvalRoles: [...(gate.approvalRoles ?? [])],
       closesAfterTargets: (gate.closesAfterTargets ?? []).map((target) => ({
-        ...target,
+        workstreamId: target.workstreamId,
+        blockId: target.blockId,
+        stepId: target.stepId ?? null,
       })),
     });
   }
@@ -489,20 +879,34 @@ export function GatesManager({
       closesAfterTargets.length !== editor.closesAfterTargets.length
     ) {
       setFormError(
-        "Hay solape entre origen y destino. Revisa los workstreams/bloques.",
+        "Hay solape entre origen y destino. Revisa WS, bloques y pasos.",
       );
-      onError("Un gate no puede requerir y abrir el mismo workstream/bloque.");
+      onError("Un gate no puede requerir y abrir el mismo workstream, bloque o paso.");
       setEditor({ ...editor, opensTargets, closesAfterTargets });
       return;
     }
 
     const designedPairs = designed.flatMap((entry) =>
-      entry.blocks.map((block) => ({
-        workstreamId: entry.workstream.id,
-        blockId: block.id,
-        workstreamName: entry.workstream.name,
-        blockName: block.name,
-      })),
+      entry.blocks.flatMap((block) => {
+        const steps = allBlockSteps(block);
+        return steps.length
+          ? steps.map((step) => ({
+              workstreamId: entry.workstream.id,
+              blockId: block.id,
+              stepId: step.id,
+              workstreamName: entry.workstream.name,
+              blockName: block.name,
+              stepName: step.name,
+            }))
+          : [
+              {
+                workstreamId: entry.workstream.id,
+                blockId: block.id,
+                workstreamName: entry.workstream.name,
+                blockName: block.name,
+              },
+            ];
+      }),
     );
     const graphCheck = validateGateGraph({
       gates: gates.map((gate) => ({
@@ -589,12 +993,12 @@ export function GatesManager({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[min(90dvh,800px)] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-6xl">
+      <DialogContent className="flex max-h-[min(92dvh,900px)] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(96vw,88rem)]">
         <DialogHeader className="shrink-0 border-b p-4 pr-12">
           <DialogTitle>Gates</DialogTitle>
           <DialogDescription>
             Dependencia no granular: un hito con condiciones de activación que
-            abre workstreams o bloques.
+            abre workstreams, bloques, actividades o pasos.
           </DialogDescription>
         </DialogHeader>
 
@@ -644,12 +1048,12 @@ export function GatesManager({
                 ) : null}
               </div>
 
-              <div className="grid gap-3 lg:grid-cols-3 lg:items-start">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_15rem_minmax(0,1.15fr)] lg:items-start">
                 <section className="flex min-h-0 flex-col space-y-2 rounded-xl border bg-muted/10 p-3">
                   <div>
-                    <p className="text-sm font-medium">Workstreams requeridos</p>
+                    <p className="text-sm font-medium">Qué lo activa</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Cierre OK de estos WS/bloques para activar el gate.
+                      Cierre OK de estos WS, bloques, actividades o pasos.
                     </p>
                   </div>
                   <TargetChecklist
@@ -716,9 +1120,9 @@ export function GatesManager({
 
                 <section className="flex min-h-0 flex-col space-y-2 rounded-xl border bg-muted/10 p-3">
                   <div>
-                    <p className="text-sm font-medium">Workstreams que abre</p>
+                    <p className="text-sm font-medium">Qué abre</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      WS/bloques que libera (no pueden repetir el origen).
+                      WS, bloques, actividades o pasos que libera (no pueden repetir el origen).
                     </p>
                   </div>
                   <TargetChecklist
@@ -784,6 +1188,7 @@ export function GatesManager({
                             gate,
                             workstreams,
                             blocks,
+                            steps,
                             eventTimezone,
                           )}
                         </p>
@@ -793,6 +1198,7 @@ export function GatesManager({
                             gate.opensTargets,
                             workstreams,
                             blocks,
+                            steps,
                             "Sin anclas aún",
                           )}
                         </p>

@@ -13,7 +13,7 @@ import {
 } from "@/lib/evidence-blob";
 import { assertCanCreateExecution } from "@/lib/event-readiness";
 import { computeRuntimePlannedStarts } from "@/lib/execution-schedule";
-import { unmetRequiredGates } from "@/lib/gate-runtime";
+import { unmetRequiredGates, requiredGateIdsForStep } from "@/lib/gate-runtime";
 import {
   actionNeedsOccurredAt,
   runtimeStepActionSchema,
@@ -157,8 +157,16 @@ function shiftGatesToAnchor(input: {
     name: string;
     order: number;
     plannedOpenAt: string | null;
-    opensTargets: Array<{ workstreamId: string; blockId: string | null }>;
-    closesAfterTargets: Array<{ workstreamId: string; blockId: string | null }>;
+    opensTargets: Array<{
+      workstreamId: string;
+      blockId: string | null;
+      stepId?: string | null;
+    }>;
+    closesAfterTargets: Array<{
+      workstreamId: string;
+      blockId: string | null;
+      stepId?: string | null;
+    }>;
     approvalRoles: Array<ApprovalRole>;
   }>;
   designDayDStartAt: string | null;
@@ -368,6 +376,8 @@ async function recomputeScheduleFromActuals(input: {
     gates: design.gates.map((gate) => ({
       id: gate.id,
       plannedOpenAt: gate.plannedOpenAt,
+      opensTargets: gate.opensTargets,
+      closesAfterTargets: gate.closesAfterTargets,
     })),
     designDayDStartAt: input.designDayDStartAt,
     instanceAnchorStartAt: input.anchorStartAt,
@@ -445,6 +455,8 @@ export async function materializeExecutionSteps(input: {
     gates: design.gates.map((gate) => ({
       id: gate.id,
       plannedOpenAt: gate.plannedOpenAt,
+      opensTargets: gate.opensTargets,
+      closesAfterTargets: gate.closesAfterTargets,
     })),
     designDayDStartAt: input.designDayDStartAt,
     instanceAnchorStartAt: input.anchorStartAt,
@@ -640,6 +652,8 @@ export async function syncExecutionPlanFromDesign(input: {
     gates: design.gates.map((gate) => ({
       id: gate.id,
       plannedOpenAt: gate.plannedOpenAt,
+      opensTargets: gate.opensTargets,
+      closesAfterTargets: gate.closesAfterTargets,
     })),
     designDayDStartAt: input.designDayDStartAt,
     instanceAnchorStartAt: input.anchorStartAt,
@@ -1149,20 +1163,32 @@ export async function transitionRuntimeStep(input: {
     const stepGateMeta = gateMetaByDesignStep.get(
       step.designStepId.toHexString(),
     );
-    const requiresGateIds = stepGateMeta?.requiresGateIds ?? [];
+    const shiftedGates = shiftGatesToAnchor({
+      gates: design?.gates ?? [],
+      designDayDStartAt: design?.event.dayDStartAt ?? null,
+      instanceAnchorStartAt: execution.anchorStartAt ?? null,
+    });
+    const requiresGateIds = requiredGateIdsForStep(
+      {
+        id: step._id!.toHexString(),
+        designStepId: step.designStepId.toHexString(),
+        workstreamId: step.workstreamId.toHexString(),
+        blockId: step.blockId.toHexString(),
+        requiresGateIds: stepGateMeta?.requiresGateIds ?? [],
+      },
+      shiftedGates,
+    );
     if (requiresGateIds.length) {
-      const shiftedGates = shiftGatesToAnchor({
-        gates: design?.gates ?? [],
-        designDayDStartAt: design?.event.dayDStartAt ?? null,
-        instanceAnchorStartAt: execution.anchorStartAt ?? null,
-      });
       const gateApprovals = (execution.gateApprovals ?? []).map(
         toGateApprovalSummary,
       );
       const unmetGates = unmetRequiredGates({
         requiresGateIds,
         gates: shiftedGates,
-        steps: summaries,
+        steps: summaries.map((item) => ({
+          ...item,
+          designStepId: item.designStepId,
+        })),
         approvals: gateApprovals,
         now: occurredAt,
       });

@@ -16,6 +16,7 @@ import {
   type FlowerAction,
 } from "@/components/step-action-flower";
 import type { GateSummary } from "@/lib/admin-data";
+import { stepMatchesGateTarget } from "@/lib/gate-targets";
 import { cn } from "@/lib/utils";
 
 export const DEFAULT_DURATION_MINUTES = 30;
@@ -86,20 +87,16 @@ type GateMarker = {
   colorIndex: number;
 };
 
-function stepMatchesTarget(
-  row: TimesViewRow,
-  target: { workstreamId: string; blockId: string | null },
-) {
-  if (row.workstreamId !== target.workstreamId) return false;
-  return target.blockId == null || row.blockId === target.blockId;
-}
-
 function stepsForTargets(
   rows: TimesViewRow[],
-  targets: Array<{ workstreamId: string; blockId: string | null }>,
+  targets: Array<{
+    workstreamId: string;
+    blockId: string | null;
+    stepId?: string | null;
+  }>,
 ) {
   return rows.filter((row) =>
-    targets.some((target) => stepMatchesTarget(row, target)),
+    targets.some((target) => stepMatchesGateTarget(row, target)),
   );
 }
 
@@ -269,7 +266,7 @@ export function computeSchedule(
     for (const gate of gates) {
       if (
         !(gate.opensTargets ?? []).some((target) =>
-          stepMatchesTarget(row, target),
+          stepMatchesGateTarget(row, target),
         )
       ) {
         continue;

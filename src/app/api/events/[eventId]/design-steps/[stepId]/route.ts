@@ -79,8 +79,17 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   }
 
   try {
-    const step = await updateDesignStep(eventId, stepId, updateParsed.data);
-    return NextResponse.json({ step });
+    const result = await updateDesignStep(eventId, stepId, updateParsed.data);
+    if (result.relocated) {
+      const { refreshOpenExecutionsFromDesign } = await import(
+        "@/lib/execution-runtime"
+      );
+      await refreshOpenExecutionsFromDesign(eventId);
+    }
+    return NextResponse.json({
+      step: result.step,
+      deletedActivityId: result.deletedActivityId,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No fue posible." },

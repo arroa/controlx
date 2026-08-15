@@ -232,6 +232,17 @@ function ActorsMapCard({
       setCreating(false);
       return;
     }
+    const emailNeedle = draftEmail.trim().toLowerCase();
+    const duplicate = actors.find(
+      (actor) => actor.email.trim().toLowerCase() === emailNeedle,
+    );
+    if (duplicate) {
+      setError(
+        `Ese correo ya está en el mapa (${duplicate.name}). Edita ese actor.`,
+      );
+      setCreating(false);
+      return;
+    }
     const response = await fetch(`/api/events/${eventId}/actors`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

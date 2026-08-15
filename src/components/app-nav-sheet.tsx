@@ -3,14 +3,17 @@
 import { useAuth, useClerk } from "@clerk/nextjs";
 import {
   Building2,
+  CalendarClock,
   CalendarDays,
   ListChecks,
   LogOut,
   Menu,
   MessageSquareText,
   Newspaper,
+  PencilRuler,
   ScrollText,
   Settings2,
+  UsersRound,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -138,9 +141,28 @@ function AppNavSheetShell({
     },
     {
       href: nav.eventAdminHref ?? "",
-      label: "Admin del evento",
+      label: "Preparación del evento",
       icon: Settings2,
       show: Boolean(nav.eventAdminHref),
+      exact: true,
+    },
+    {
+      href: nav.eventDesignHref ?? "",
+      label: "Diseño",
+      icon: PencilRuler,
+      show: Boolean(nav.eventDesignHref),
+    },
+    {
+      href: nav.eventRolesHref ?? "",
+      label: "Roles",
+      icon: UsersRound,
+      show: Boolean(nav.eventRolesHref),
+    },
+    {
+      href: nav.eventPlanHref ?? "",
+      label: "Planificador",
+      icon: CalendarClock,
+      show: Boolean(nav.eventPlanHref),
     },
     {
       href: "/novedades",
@@ -240,8 +262,10 @@ function AppNavSheetShell({
 
             {links.map((item) => {
               const itemPath = item.href.split("?")[0] ?? item.href;
+              const exact = "exact" in item && item.exact;
               const active =
-                pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+                pathname === itemPath ||
+                (!exact && pathname.startsWith(`${itemPath}/`));
               return (
                 <NavLink
                   key={`${item.label}:${item.href}`}

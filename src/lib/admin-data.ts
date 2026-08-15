@@ -124,52 +124,88 @@ export const designStepInputSchema = z.object({
   longDescription: z.string().trim().max(4000).default(""),
 });
 
-export const activityUpdateSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  description: z.string().trim().max(500).default(""),
-});
+export const activityUpdateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120),
+    description: z.string().trim().max(500).default(""),
+    workstreamId: z
+      .string()
+      .refine(ObjectId.isValid, "Workstream inválido")
+      .optional(),
+    blockId: z
+      .string()
+      .refine(ObjectId.isValid, "Bloque inválido")
+      .optional(),
+  })
+  .refine(
+    (value) =>
+      Boolean(value.workstreamId) === Boolean(value.blockId),
+    { message: "Indica workstream y bloque juntos." },
+  );
 
 export const designStepUpdateSchema = z.object({
   name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(1000).default(""),
   longDescription: z.string().trim().max(4000).default(""),
+  activityId: z
+    .string()
+    .refine(ObjectId.isValid, "Actividad inválida")
+    .optional(),
 });
 
 export const moveDirectionSchema = z.object({
   direction: z.enum(["up", "down"]),
 });
 
-export const gateTargetSchema = z.object({
-  workstreamId: z.string().refine(ObjectId.isValid, "Workstream inválido"),
-  /** null = abre todo el workstream; si hay id, solo ese bloque del WS. */
-  blockId: z
-    .string()
-    .refine(ObjectId.isValid, "Bloque inválido")
-    .nullable(),
-});
+export const gateTargetSchema = z
+  .object({
+    workstreamId: z.string().refine(ObjectId.isValid, "Workstream inválido"),
+    /** null = todo el workstream; si hay id, ese bloque. */
+    blockId: z
+      .string()
+      .refine(ObjectId.isValid, "Bloque inválido")
+      .nullable(),
+    /** null = todo el WS/bloque; si hay id, ese paso (requiere blockId). */
+    stepId: z
+      .string()
+      .refine(ObjectId.isValid, "Paso inválido")
+      .nullable()
+      .default(null),
+  })
+  .superRefine((value, ctx) => {
+    if (value.stepId && !value.blockId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Un paso del gate necesita su bloque.",
+        path: ["stepId"],
+      });
+    }
+  });
 
 export const gateInputSchema = z.object({
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(500).default(""),
-  /** Qué workstreams/bloques libera cuando el gate se activa. */
+  /** Qué WS/bloques/pasos libera cuando el gate se activa. */
   opensTargets: z.array(gateTargetSchema).default([]),
   /** Condiciones de activación (AND). Todas opcionales. */
   plannedOpenAt: z.iso.datetime().nullable().default(null),
   approvalRoles: z.array(approvalRoleSchema).default([]),
-  /** Cierre (OK) de estos WS/bloques para activar el gate. */
+  /** Cierre (OK) de estos WS/bloques/pasos para activar el gate. */
   closesAfterTargets: z.array(gateTargetSchema).default([]),
 }).superRefine((value, ctx) => {
   for (const open of value.opensTargets) {
     const conflict = value.closesAfterTargets.some((close) => {
       if (close.workstreamId !== open.workstreamId) return false;
       if (close.blockId == null || open.blockId == null) return true;
-      return close.blockId === open.blockId;
+      if (close.blockId !== open.blockId) return false;
+      if (close.stepId == null || open.stepId == null) return true;
+      return close.stepId === open.stepId;
     });
     if (conflict) {
       ctx.addIssue({
         code: "custom",
         message:
-          "Un gate no puede requerir y abrir el mismo workstream/bloque.",
+          "Un gate no puede requerir y abrir el mismo workstream, bloque o paso.",
         path: ["opensTargets"],
       });
       return;
@@ -195,11 +231,17 @@ export const stepPlanningInputSchema = z.object({
     .string()
     .refine(ObjectId.isValid, "Gate inválido")
     .nullable()
-    .default(null),
+    .optional(),
   requiresGateIds: z
     .array(z.string().refine(ObjectId.isValid, "Gate inválido"))
-    .default([]),
+    .optional(),
 });
+
+export type DesignStepUpdateResult = {
+  step: DesignStepSummary;
+  deletedActivityId: string | null;
+  relocated: boolean;
+};
 
 /** Asignar un ejecutor (actor del evento) a varios pasos sin ejecutor. */
 export const assignStepExecutorsSchema = z.object({
@@ -350,10 +392,11 @@ export type GateSummary = {
   name: string;
   description: string;
   order: number;
-  /** Workstreams (o WS×bloque) que este gate abre / libera. */
+  /** WS, bloque o paso que este gate abre / libera. */
   opensTargets: Array<{
     workstreamId: string;
     blockId: string | null;
+    stepId: string | null;
   }>;
   /** Activación: no antes de esta hora (opcional). */
   plannedOpenAt: string | null;
@@ -361,10 +404,11 @@ export type GateSummary = {
   approvalRoles: Array<
     "EVENT_ADMIN" | "WORKSTREAM_ADMIN" | "APPROVER" | "STEERCO"
   >;
-  /** Activación: cierre OK de estos WS/bloques (opcional). */
+  /** Activación: cierre OK de estos WS/bloques/pasos (opcional). */
   closesAfterTargets: Array<{
     workstreamId: string;
     blockId: string | null;
+    stepId: string | null;
   }>;
   createdAt: string;
 };
@@ -562,6 +606,7 @@ type GateDocument = {
   opensTargets?: Array<{
     workstreamId: ObjectId;
     blockId: ObjectId | null;
+    stepId?: ObjectId | null;
   }>;
   plannedOpenAt?: Date | null;
   approvalRoles?: Array<
@@ -570,6 +615,7 @@ type GateDocument = {
   closesAfterTargets?: Array<{
     workstreamId: ObjectId;
     blockId: ObjectId | null;
+    stepId?: ObjectId | null;
   }>;
   createdBy: string;
   createdAt: Date;
@@ -1926,7 +1972,7 @@ export async function upsertEventActor(
   eventId: string,
   input: z.infer<typeof eventActorInputSchema>,
   actorId: string,
-  options?: { mergeRoles?: boolean },
+  options?: { mergeRoles?: boolean; failIfActive?: boolean },
 ): Promise<EventActorSummary> {
   if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
   const roles = normalizeActorRoles(input.roles);
@@ -1950,6 +1996,12 @@ export async function upsertEventActor(
     eventId: id,
     email: normalizedEmail,
   });
+
+  if (options?.failIfActive && existing?.status === "ACTIVE") {
+    throw new Error(
+      `Ese correo ya está en el mapa (${existing.name}). Edita ese actor.`,
+    );
+  }
 
   const nextRoles = normalizeActorRoles(
     options?.mergeRoles && existing
@@ -2496,12 +2548,14 @@ function toGateSummary(eventId: string, gate: GateDocument): GateSummary {
     opensTargets: (gate.opensTargets ?? []).map((target) => ({
       workstreamId: target.workstreamId.toHexString(),
       blockId: target.blockId ? target.blockId.toHexString() : null,
+      stepId: target.stepId ? target.stepId.toHexString() : null,
     })),
     plannedOpenAt: gate.plannedOpenAt?.toISOString() ?? null,
     approvalRoles: gate.approvalRoles ?? [],
     closesAfterTargets: (gate.closesAfterTargets ?? []).map((target) => ({
       workstreamId: target.workstreamId.toHexString(),
       blockId: target.blockId ? target.blockId.toHexString() : null,
+      stepId: target.stepId ? target.stepId.toHexString() : null,
     })),
     createdAt: gate.createdAt.toISOString(),
   };
@@ -2509,9 +2563,17 @@ function toGateSummary(eventId: string, gate: GateDocument): GateSummary {
 
 async function resolveGateTargets(
   eventId: string,
-  targets: Array<{ workstreamId: string; blockId: string | null }>,
+  targets: Array<{
+    workstreamId: string;
+    blockId: string | null;
+    stepId?: string | null;
+  }>,
 ): Promise<
-  Array<{ workstreamId: ObjectId; blockId: ObjectId | null }>
+  Array<{
+    workstreamId: ObjectId;
+    blockId: ObjectId | null;
+    stepId: ObjectId | null;
+  }>
 > {
   if (!targets.length) return [];
 
@@ -2527,8 +2589,15 @@ async function resolveGateTargets(
         .filter((id): id is string => Boolean(id)),
     ),
   ].map((id) => new ObjectId(id));
+  const stepIds = [
+    ...new Set(
+      targets
+        .map((target) => target.stepId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ].map((id) => new ObjectId(id));
 
-  const [workstreams, blocks] = await Promise.all([
+  const [workstreams, blocks, steps] = await Promise.all([
     database
       .collection<WorkstreamDocument>("workstreams")
       .find(
@@ -2545,6 +2614,15 @@ async function resolveGateTargets(
           )
           .toArray()
       : Promise.resolve([]),
+    stepIds.length
+      ? database
+          .collection<DesignStepDocument>("designSteps")
+          .find(
+            { eventId: eventObjectId, _id: { $in: stepIds } },
+            { projection: { _id: 1, workstreamId: 1, blockId: 1 } },
+          )
+          .toArray()
+      : Promise.resolve([]),
   ]);
 
   if (workstreams.length !== workstreamIds.length) {
@@ -2553,15 +2631,40 @@ async function resolveGateTargets(
   if (blocks.length !== blockIds.length) {
     throw new Error("Un bloque del gate no pertenece a este evento.");
   }
+  if (steps.length !== stepIds.length) {
+    throw new Error("Un paso del gate no pertenece a este evento.");
+  }
 
-  // Normaliza: si hay “todo el WS”, no guardar bloques sueltos del mismo WS.
+  const stepById = new Map(
+    steps.map((step) => [step._id!.toHexString(), step]),
+  );
+  for (const target of targets) {
+    if (!target.stepId || !target.blockId) continue;
+    const step = stepById.get(target.stepId);
+    if (!step) continue;
+    if (
+      step.workstreamId.toHexString() !== target.workstreamId ||
+      step.blockId.toHexString() !== target.blockId
+    ) {
+      throw new Error("Un paso del gate no coincide con su workstream/bloque.");
+    }
+  }
+
   const wholeWorkstreams = new Set(
     targets
       .filter((target) => target.blockId == null)
       .map((target) => target.workstreamId),
   );
-  const normalized: Array<{ workstreamId: ObjectId; blockId: ObjectId | null }> =
-    [];
+  const wholeBlocks = new Set(
+    targets
+      .filter((target) => target.blockId != null && !target.stepId)
+      .map((target) => `${target.workstreamId}:${target.blockId}`),
+  );
+  const normalized: Array<{
+    workstreamId: ObjectId;
+    blockId: ObjectId | null;
+    stepId: ObjectId | null;
+  }> = [];
   const seen = new Set<string>();
 
   for (const target of targets) {
@@ -2569,25 +2672,42 @@ async function resolveGateTargets(
       continue;
     }
     if (
-      wholeWorkstreams.has(target.workstreamId) &&
-      target.blockId == null
+      target.blockId &&
+      target.stepId &&
+      wholeBlocks.has(`${target.workstreamId}:${target.blockId}`)
     ) {
+      continue;
+    }
+    if (wholeWorkstreams.has(target.workstreamId) && target.blockId == null) {
       const key = `${target.workstreamId}:*`;
       if (seen.has(key)) continue;
       seen.add(key);
       normalized.push({
         workstreamId: new ObjectId(target.workstreamId),
         blockId: null,
+        stepId: null,
       });
       continue;
     }
     if (!target.blockId) continue;
-    const key = `${target.workstreamId}:${target.blockId}`;
+    if (!target.stepId) {
+      const key = `${target.workstreamId}:${target.blockId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      normalized.push({
+        workstreamId: new ObjectId(target.workstreamId),
+        blockId: new ObjectId(target.blockId),
+        stepId: null,
+      });
+      continue;
+    }
+    const key = `${target.workstreamId}:${target.blockId}:${target.stepId}`;
     if (seen.has(key)) continue;
     seen.add(key);
     normalized.push({
       workstreamId: new ObjectId(target.workstreamId),
       blockId: new ObjectId(target.blockId),
+      stepId: new ObjectId(target.stepId),
     });
   }
 
@@ -2897,19 +3017,59 @@ export async function updateActivity(
     throw new Error("Actividad inválida.");
   }
   const database = await getDatabase();
-  const result = await database
-    .collection<ActivityDocument>("activities")
-    .findOneAndUpdate(
-      { _id: new ObjectId(activityId), eventId: new ObjectId(eventId) },
-      {
-        $set: {
-          name: input.name,
-          description: input.description,
-          updatedAt: new Date(),
-        },
-      },
-      { returnDocument: "after" },
-    );
+  const eventObjectId = new ObjectId(eventId);
+  const id = new ObjectId(activityId);
+  const collection = database.collection<ActivityDocument>("activities");
+  const current = await collection.findOne({
+    _id: id,
+    eventId: eventObjectId,
+  });
+  if (!current) throw new Error("La actividad no existe.");
+
+  const $set: Partial<ActivityDocument> = {
+    name: input.name,
+    description: input.description,
+    updatedAt: new Date(),
+  };
+
+  if (input.workstreamId && input.blockId) {
+    const workstreamId = new ObjectId(input.workstreamId);
+    const blockId = new ObjectId(input.blockId);
+    const [workstream, block] = await Promise.all([
+      database
+        .collection<WorkstreamDocument>("workstreams")
+        .findOne({ _id: workstreamId, eventId: eventObjectId }),
+      database
+        .collection<BlockDocument>("blocks")
+        .findOne({ _id: blockId, eventId: eventObjectId }),
+    ]);
+    if (!workstream || !block) {
+      throw new Error("El workstream o bloque no pertenece a este evento.");
+    }
+    const moved =
+      !current.workstreamId.equals(workstreamId) ||
+      !current.blockId.equals(blockId);
+    if (moved) {
+      const last = await collection
+        .find({ workstreamId, blockId, _id: { $ne: id } })
+        .sort({ order: -1 })
+        .limit(1)
+        .next();
+      $set.workstreamId = workstreamId;
+      $set.blockId = blockId;
+      $set.order = (last?.order ?? 0) + 1;
+      await database.collection<DesignStepDocument>("designSteps").updateMany(
+        { eventId: eventObjectId, activityId: id },
+        { $set: { workstreamId, blockId, updatedAt: new Date() } },
+      );
+    }
+  }
+
+  const result = await collection.findOneAndUpdate(
+    { _id: id, eventId: eventObjectId },
+    { $set },
+    { returnDocument: "after" },
+  );
   if (!result) throw new Error("La actividad no existe.");
   await touchPrepReadiness(eventId);
 
@@ -3001,29 +3161,74 @@ export async function updateDesignStep(
   eventId: string,
   stepId: string,
   input: z.infer<typeof designStepUpdateSchema>,
-): Promise<DesignStepSummary> {
+): Promise<DesignStepUpdateResult> {
   if (!ObjectId.isValid(eventId) || !ObjectId.isValid(stepId)) {
     throw new Error("Paso inválido.");
   }
   const database = await getDatabase();
-  const result = await database
-    .collection<DesignStepDocument>("designSteps")
-    .findOneAndUpdate(
-      { _id: new ObjectId(stepId), eventId: new ObjectId(eventId) },
-      {
-        $set: {
-          name: input.name,
-          description: input.description,
-          longDescription: input.longDescription,
-          updatedAt: new Date(),
-        },
-      },
-      { returnDocument: "after" },
-    );
+  const eventObjectId = new ObjectId(eventId);
+  const id = new ObjectId(stepId);
+  const collection = database.collection<DesignStepDocument>("designSteps");
+  const current = await collection.findOne({
+    _id: id,
+    eventId: eventObjectId,
+  });
+  if (!current) throw new Error("El paso no existe.");
+
+  const $set: Partial<DesignStepDocument> = {
+    name: input.name,
+    description: input.description,
+    longDescription: input.longDescription,
+    updatedAt: new Date(),
+  };
+
+  let deletedActivityId: string | null = null;
+  const oldActivityId = current.activityId.toHexString();
+
+  if (input.activityId && input.activityId !== oldActivityId) {
+    const nextActivityId = new ObjectId(input.activityId);
+    const activity = await database
+      .collection<ActivityDocument>("activities")
+      .findOne({ _id: nextActivityId, eventId: eventObjectId });
+    if (!activity) {
+      throw new Error("La actividad destino no existe en este evento.");
+    }
+    const last = await collection
+      .find({ activityId: nextActivityId, _id: { $ne: id } })
+      .sort({ order: -1 })
+      .limit(1)
+      .next();
+    $set.activityId = nextActivityId;
+    $set.workstreamId = activity.workstreamId;
+    $set.blockId = activity.blockId;
+    $set.order = (last?.order ?? 0) + 1;
+  }
+
+  const result = await collection.findOneAndUpdate(
+    { _id: id, eventId: eventObjectId },
+    { $set },
+    { returnDocument: "after" },
+  );
   if (!result) throw new Error("El paso no existe.");
+
+  if (input.activityId && input.activityId !== oldActivityId) {
+    const remaining = await collection.countDocuments({
+      eventId: eventObjectId,
+      activityId: current.activityId,
+    });
+    if (remaining === 0) {
+      await deleteActivity(eventId, oldActivityId);
+      deletedActivityId = oldActivityId;
+    }
+  }
+
   await touchPrepReadiness(eventId);
 
-  return toDesignStepSummary(eventId, result);
+  return {
+    step: toDesignStepSummary(eventId, result),
+    deletedActivityId,
+    relocated: Boolean(input.activityId && input.activityId !== oldActivityId),
+  };
 }
 
 export async function deleteDesignStep(
@@ -3113,10 +3318,35 @@ export async function moveDesignStep(
 
 async function loadDesignedPairRefs(
   eventId: string,
-): Promise<Array<{ workstreamId: string; blockId: string }>> {
+): Promise<
+  Array<{
+    workstreamId: string;
+    blockId: string;
+    stepId?: string;
+    stepName?: string;
+  }>
+> {
   if (!ObjectId.isValid(eventId)) return [];
   const database = await getDatabase();
   const eventObjectId = new ObjectId(eventId);
+  const steps = await database
+    .collection<DesignStepDocument>("designSteps")
+    .find(
+      { eventId: eventObjectId, blockId: { $exists: true } },
+      { projection: { workstreamId: 1, blockId: 1, name: 1 } },
+    )
+    .toArray();
+
+  if (steps.length) {
+    await touchPrepReadiness(eventId);
+    return steps.map((step) => ({
+      workstreamId: step.workstreamId.toHexString(),
+      blockId: step.blockId.toHexString(),
+      stepId: step._id!.toHexString(),
+      stepName: step.name,
+    }));
+  }
+
   const activities = await database
     .collection<ActivityDocument>("activities")
     .find(
@@ -3145,8 +3375,16 @@ async function assertGateGraphValid(
   draft: {
     id: string | null;
     name: string;
-    opensTargets: Array<{ workstreamId: string; blockId: string | null }>;
-    closesAfterTargets: Array<{ workstreamId: string; blockId: string | null }>;
+    opensTargets: Array<{
+      workstreamId: string;
+      blockId: string | null;
+      stepId?: string | null;
+    }>;
+    closesAfterTargets: Array<{
+      workstreamId: string;
+      blockId: string | null;
+      stepId?: string | null;
+    }>;
   },
 ) {
   const database = await getDatabase();
@@ -3166,10 +3404,12 @@ async function assertGateGraphValid(
       opensTargets: (gate.opensTargets ?? []).map((target) => ({
         workstreamId: target.workstreamId.toHexString(),
         blockId: target.blockId ? target.blockId.toHexString() : null,
+        stepId: target.stepId ? target.stepId.toHexString() : null,
       })),
       closesAfterTargets: (gate.closesAfterTargets ?? []).map((target) => ({
         workstreamId: target.workstreamId.toHexString(),
         blockId: target.blockId ? target.blockId.toHexString() : null,
+        stepId: target.stepId ? target.stepId.toHexString() : null,
       })),
     })),
     draft,
@@ -3329,7 +3569,7 @@ export async function updateStepPlanning(
   }
   if (
     input.producesGateId &&
-    input.requiresGateIds.includes(input.producesGateId)
+    (input.requiresGateIds ?? []).includes(input.producesGateId)
   ) {
     throw new Error("Un paso no puede producir y requerir el mismo gate.");
   }
@@ -3337,14 +3577,17 @@ export async function updateStepPlanning(
   const database = await getDatabase();
   const eventObjectId = new ObjectId(eventId);
   const dependencyIds = input.dependencyStepIds.map((id) => new ObjectId(id));
-  const requireGateIds = input.requiresGateIds.map((id) => new ObjectId(id));
-  const produceGateId = input.producesGateId
-    ? new ObjectId(input.producesGateId)
-    : null;
+  const requireGateIds = input.requiresGateIds?.map((id) => new ObjectId(id));
+  const produceGateId =
+    input.producesGateId === undefined
+      ? undefined
+      : input.producesGateId
+        ? new ObjectId(input.producesGateId)
+        : null;
 
   const gateIds = [
     ...new Set([
-      ...input.requiresGateIds,
+      ...(input.requiresGateIds ?? []),
       ...(input.producesGateId ? [input.producesGateId] : []),
     ]),
   ];
@@ -3407,7 +3650,8 @@ export async function updateStepPlanning(
     const id = step._id!.toHexString();
     const required =
       id === stepId
-        ? input.requiresGateIds
+        ? (input.requiresGateIds ??
+          (step.requiresGateIds ?? []).map((gateId) => gateId.toHexString()))
         : (step.requiresGateIds ?? []).map((gateId) => gateId.toHexString());
     for (const gateId of required) {
       const producerId = producerByGate.get(gateId);
@@ -3445,8 +3689,8 @@ export async function updateStepPlanning(
           estimatedDurationMinutes: input.estimatedDurationMinutes,
           dependencyStepIds: dependencyIds,
           approvalRoles: input.approvalRoles,
-          producesGateId: produceGateId,
-          requiresGateIds: requireGateIds,
+          ...(produceGateId !== undefined ? { producesGateId: produceGateId } : {}),
+          ...(requireGateIds !== undefined ? { requiresGateIds: requireGateIds } : {}),
           updatedAt: new Date(),
         },
       },

@@ -131,27 +131,28 @@ function countsAsRealProgress(
  * pintándose en el umbral.
  */
 function failEndedAts(step: RuntimeStepSummary): number[] {
-  const times: number[] = [];
-  for (const iter of step.iterations) {
-    if (iter.status !== "FALLIDA" && iter.end?.outcome !== "fail") continue;
-    const endAt = iter.end?.at;
-    if (!endAt) continue;
-    const ended = new Date(endAt).getTime();
-    if (Number.isFinite(ended)) times.push(ended);
-  }
-  if (
-    times.length === 0 &&
-    (step.status === "FALLIDO" || step.status === "RECHAZADO")
-  ) {
-    if (step.actualEndedAt) {
-      const ended = new Date(step.actualEndedAt).getTime();
-      if (Number.isFinite(ended)) times.push(ended);
-    } else if (step.updatedAt) {
-      const updated = new Date(step.updatedAt).getTime();
-      if (Number.isFinite(updated)) times.push(updated);
+  const times = new Set<number>();
+  const push = (iso?: string | null) => {
+    if (!iso) return;
+    const ended = new Date(iso).getTime();
+    if (Number.isFinite(ended)) times.add(ended);
+  };
+
+  for (const iter of step.iterations ?? []) {
+    if (iter.status === "FALLIDA" || iter.end?.outcome === "fail") {
+      push(iter.end?.at);
     }
   }
-  return times;
+  for (const comment of step.comments ?? []) {
+    if (comment.kind === "fail") {
+      push(comment.occurredAt ?? comment.createdAt);
+    }
+  }
+  if (step.status === "FALLIDO" || step.status === "RECHAZADO") {
+    push(step.actualEndedAt);
+    if (times.size === 0) push(step.updatedAt);
+  }
+  return [...times].sort((a, b) => a - b);
 }
 
 function isRunning(step: RuntimeStepSummary): boolean {
@@ -486,6 +487,13 @@ export function buildThresholdMonitorModel(
   }
 
   const nowBeyondDomain = nowMs > domainEndMs;
+  const visibleFails = failMarkers.map((marker) => ({
+    ...marker,
+    t: Math.min(
+      Math.max(marker.t, domainStartMs),
+      Math.min(nowMs, domainEndMs),
+    ),
+  }));
 
   return {
     nowMs,
@@ -500,7 +508,7 @@ export function buildThresholdMonitorModel(
     planEvents,
     realEvents,
     runningDeltas,
-    failMarkers,
+    failMarkers: visibleFails,
     runningNow,
     remainingNow,
     anchor,

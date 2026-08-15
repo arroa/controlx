@@ -243,14 +243,6 @@ export function EventPlanner({
       return false;
     }
 
-    if (
-      draft.producesGateId &&
-      draft.requiresGateIds.includes(draft.producesGateId)
-    ) {
-      setError("Un paso no puede producir y requerir el mismo gate.");
-      return false;
-    }
-
     setSavingId(row.id);
     setError("");
     const response = await fetch(
@@ -263,8 +255,6 @@ export function EventPlanner({
           estimatedDurationMinutes,
           dependencyStepIds: draft.dependencyStepIds,
           approvalRoles: draft.approvalRoles,
-          producesGateId: draft.producesGateId,
-          requiresGateIds: draft.requiresGateIds,
         }),
       },
     ).catch(() => null);
@@ -428,14 +418,12 @@ export function EventPlanner({
           rows={filteredRows}
           allRows={rows}
           drafts={drafts}
-          gates={gates}
           eventTimezone={eventTimezone}
           savingId={savingId}
           onDraftChange={(id, next) =>
             setDrafts((current) => ({ ...current, [id]: next }))
           }
           onSave={(row) => void saveRow(row)}
-          onOpenGatesCatalog={() => setGatesOpen(true)}
         />
       </TabsContent>
 
@@ -475,7 +463,6 @@ export function EventPlanner({
           ? (drafts[editingRow.id] ?? draftFromRow(editingRow))
           : null
       }
-      gates={gates}
       eventTimezone={eventTimezone}
       saving={savingId === editingRow?.id}
       error={error}
@@ -492,7 +479,6 @@ export function EventPlanner({
           if (ok) setEditingId(null);
         });
       }}
-      onOpenGatesCatalog={() => setGatesOpen(true)}
     />
 
     <GatesManager
@@ -514,27 +500,23 @@ function StepPlanningEditor({
   row,
   allRows,
   draft,
-  gates,
   eventTimezone,
   saving,
   error,
   onOpenChange,
   onDraftChange,
   onSave,
-  onOpenGatesCatalog,
 }: {
   open: boolean;
   row: PlannerRow | null;
   allRows: PlannerRow[];
   draft: Draft | null;
-  gates: GateSummary[];
   eventTimezone: string;
   saving: boolean;
   error: string;
   onOpenChange: (open: boolean) => void;
   onDraftChange: (draft: Draft) => void;
   onSave: () => void;
-  onOpenGatesCatalog: () => void;
 }) {
   const dirty = row && draft ? isDirty(row, draft) : false;
 
@@ -581,24 +563,6 @@ function StepPlanningEditor({
                   onChange={(dependencyStepIds) =>
                     onDraftChange({ ...draft, dependencyStepIds })
                   }
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Gates</Label>
-                <GatePicker
-                  stepName={row.name}
-                  gates={gates}
-                  producesGateId={draft.producesGateId}
-                  requiresGateIds={draft.requiresGateIds}
-                  onChange={(producesGateId, requiresGateIds) =>
-                    onDraftChange({
-                      ...draft,
-                      producesGateId,
-                      requiresGateIds,
-                    })
-                  }
-                  onOpenGatesCatalog={onOpenGatesCatalog}
                 />
               </div>
 
@@ -665,35 +629,30 @@ function PlannerGrid({
   rows,
   allRows,
   drafts,
-  gates,
   eventTimezone,
   savingId,
   onDraftChange,
   onSave,
-  onOpenGatesCatalog,
 }: {
   rows: PlannerRow[];
   allRows: PlannerRow[];
   drafts: Record<string, Draft>;
-  gates: GateSummary[];
   eventTimezone: string;
   savingId: string | null;
   onDraftChange: (id: string, draft: Draft) => void;
   onSave: (row: PlannerRow) => void;
-  onOpenGatesCatalog: () => void;
 }) {
   const colgroup = (
     <colgroup>
-      <col className="w-[10%]" />
-      <col className="w-[8%]" />
-      <col className="w-[11%]" />
-      <col className="w-[11%]" />
-      <col className="w-[7%]" />
-      <col className="w-[12%]" />
-      <col className="w-[11%]" />
       <col className="w-[12%]" />
       <col className="w-[10%]" />
+      <col className="w-[13%]" />
+      <col className="w-[13%]" />
       <col className="w-[8%]" />
+      <col className="w-[14%]" />
+      <col className="w-[12%]" />
+      <col className="w-[12%]" />
+      <col className="w-[6%]" />
     </colgroup>
   );
 
@@ -710,7 +669,6 @@ function PlannerGrid({
               <TableHead className="bg-muted/40">Paso</TableHead>
               <TableHead className="bg-muted/40">Duración</TableHead>
               <TableHead className="bg-muted/40">Deps (OK exitoso)</TableHead>
-              <TableHead className="bg-muted/40">Gates</TableHead>
               <TableHead className="bg-muted/40">Aprobaciones</TableHead>
               <TableHead className="bg-muted/40">Hora (no antes de)</TableHead>
               <TableHead className="bg-muted/40 text-right"> </TableHead>
@@ -726,7 +684,7 @@ function PlannerGrid({
             {!rows.length ? (
               <TableRow>
                 <TableCell
-                  colSpan={10}
+                  colSpan={9}
                   className="h-24 text-center text-muted-foreground"
                 >
                   No hay filas que coincidan con la búsqueda.
@@ -777,22 +735,6 @@ function PlannerGrid({
                         onChange={(dependencyStepIds) =>
                           onDraftChange(row.id, { ...draft, dependencyStepIds })
                         }
-                      />
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <GatePicker
-                        stepName={row.name}
-                        gates={gates}
-                        producesGateId={draft.producesGateId}
-                        requiresGateIds={draft.requiresGateIds}
-                        onChange={(producesGateId, requiresGateIds) =>
-                          onDraftChange(row.id, {
-                            ...draft,
-                            producesGateId,
-                            requiresGateIds,
-                          })
-                        }
-                        onOpenGatesCatalog={onOpenGatesCatalog}
                       />
                     </TableCell>
                     <TableCell className="align-top">
@@ -1073,204 +1015,6 @@ function DependencyPicker({
               Cancelar
             </Button>
             <Button type="button" onClick={apply}>
-              Aplicar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
-function GatePicker({
-  stepName,
-  gates,
-  producesGateId,
-  requiresGateIds,
-  onChange,
-  onOpenGatesCatalog,
-}: {
-  stepName: string;
-  gates: GateSummary[];
-  producesGateId: string | null;
-  requiresGateIds: string[];
-  onChange: (producesGateId: string | null, requiresGateIds: string[]) => void;
-  onOpenGatesCatalog: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [pendingProduce, setPendingProduce] = useState<string | null>(
-    producesGateId,
-  );
-  const [pendingRequire, setPendingRequire] = useState<string[]>(requiresGateIds);
-
-  function openModal() {
-    setPendingProduce(producesGateId);
-    setPendingRequire([...requiresGateIds]);
-    setOpen(true);
-  }
-
-  function toggleRequire(id: string) {
-    setPendingRequire((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id],
-    );
-  }
-
-  function apply() {
-    const requires = pendingRequire.filter((id) => id !== pendingProduce);
-    onChange(pendingProduce, requires);
-    setOpen(false);
-  }
-
-  const produceName = gates.find((gate) => gate.id === producesGateId)?.name;
-  const requireNames = gates
-    .filter((gate) => requiresGateIds.includes(gate.id))
-    .map((gate) => gate.name);
-  const label = [
-    produceName ? `→ ${produceName}` : null,
-    requireNames.length
-      ? `← ${requireNames.length === 1 ? requireNames[0] : `${requireNames.length} gates`}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8 w-full justify-between font-normal"
-        onClick={openModal}
-      >
-        <span className="truncate text-left">{label || "Ninguno"}</span>
-      </Button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Gates de “{stepName}”</DialogTitle>
-            <DialogDescription>
-              Usa gates del catálogo: este paso puede producir uno (al terminar
-              OK) o esperar gates que abren otros workstreams.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {!gates.length ? (
-              <div className="rounded-lg border border-dashed p-4 text-center text-sm">
-                <p className="text-muted-foreground">
-                  Aún no hay gates. Créalos en el catálogo (qué WS/bloques
-                  abren).
-                </p>
-                <Button
-                  type="button"
-                  className="mt-3"
-                  variant="secondary"
-                  onClick={() => {
-                    setOpen(false);
-                    onOpenGatesCatalog();
-                  }}
-                >
-                  Abrir Gates
-                </Button>
-              </div>
-            ) : (
-              <>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium">Produce (enciende)</p>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setOpen(false);
-                        onOpenGatesCatalog();
-                      }}
-                    >
-                      Gestionar…
-                    </Button>
-                  </div>
-                  <Select
-                    value={pendingProduce ?? "none"}
-                    onValueChange={(value) =>
-                      setPendingProduce(value === "none" ? null : value)
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Ninguno" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Ninguno</SelectItem>
-                      {gates.map((gate) => (
-                        <SelectItem key={gate.id} value={gate.id}>
-                          {gate.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Requiere (espera)</p>
-                  <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border p-1">
-                    {gates.map((gate) => {
-                      const disabled = gate.id === pendingProduce;
-                      return (
-                        <label
-                          key={gate.id}
-                          className={cn(
-                            "flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 hover:bg-muted/60",
-                            pendingRequire.includes(gate.id) && "bg-muted/40",
-                            disabled && "cursor-not-allowed opacity-50",
-                          )}
-                        >
-                          <input
-                            type="checkbox"
-                            disabled={disabled}
-                            checked={pendingRequire.includes(gate.id)}
-                            onChange={() => toggleRequire(gate.id)}
-                          />
-                          <span className="min-w-0 flex-1 text-sm font-medium">
-                            {gate.name}
-                            {gate.opensTargets.length ? (
-                              <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-                                Abre {gate.opensTargets.length} ancla
-                                {gate.opensTargets.length === 1 ? "" : "s"}
-                              </span>
-                            ) : null}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setPendingProduce(null);
-                setPendingRequire([]);
-              }}
-            >
-              Limpiar
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-            >
-              Cancelar
-            </Button>
-            <Button type="button" onClick={apply} disabled={!gates.length}>
               Aplicar
             </Button>
           </DialogFooter>

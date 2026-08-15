@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ApprovalRole } from "@/domain/controlx";
+import { stepMatchesGateTarget } from "@/lib/gate-targets";
 import { roleLabel } from "@/lib/gate-runtime";
 import type {
   ExecutionDetail,
@@ -54,10 +55,9 @@ function compareDesignPath(a: RuntimeStepSummary, b: RuntimeStepSummary) {
 function closersForGate(gate: ExecutionGateSummary, steps: RuntimeStepSummary[]) {
   return steps
     .filter((step) =>
-      (gate.closesAfterTargets ?? []).some((target) => {
-        if (step.workstreamId !== target.workstreamId) return false;
-        return target.blockId == null || step.blockId === target.blockId;
-      }),
+      (gate.closesAfterTargets ?? []).some((target) =>
+        stepMatchesGateTarget(step, target),
+      ),
     )
     .sort(compareDesignPath);
 }

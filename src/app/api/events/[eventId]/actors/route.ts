@@ -68,12 +68,16 @@ export async function POST(request: Request, { params }: RouteParams) {
       eventId,
       parsed.data,
       authResult.user.id,
+      { failIfActive: true },
     );
     return NextResponse.json({ actor }, { status: 201 });
   } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "No fue posible.";
+    const conflict = message.includes("ya está en el mapa");
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "No fue posible." },
-      { status: 500 },
+      { error: message },
+      { status: conflict ? 409 : 500 },
     );
   }
 }

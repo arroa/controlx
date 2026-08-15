@@ -60,6 +60,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
   try {
     const activity = await updateActivity(eventId, activityId, parsed.data);
+    if (parsed.data.workstreamId) {
+      const { refreshOpenExecutionsFromDesign } = await import(
+        "@/lib/execution-runtime"
+      );
+      await refreshOpenExecutionsFromDesign(eventId);
+    }
     return NextResponse.json({ activity });
   } catch (error) {
     return NextResponse.json(

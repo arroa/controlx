@@ -1,6 +1,7 @@
 import "server-only";
 
 import { canAccessOrganization } from "@/lib/admin-data";
+import { getExecutionAccessContext } from "@/lib/execution-runtime";
 import {
   listAccessibleEventsForUser,
   listAccessibleOrganizationsForUser,
@@ -17,19 +18,40 @@ export type NavWorkspaceModel = {
   eventosHref: string | null;
   /** Panel / lista de orgs (también sirve para cambiar). */
   organizacionesHref: string | null;
-  /** Setup del evento activo — solo PC. */
+  /** Hub de preparación del evento contextual (ejecución o sticky). */
   eventAdminHref: string | null;
+  eventDesignHref: string | null;
+  eventRolesHref: string | null;
+  eventPlanHref: string | null;
   changeEventHref: string | null;
   orgCount: number;
   eventCount: number;
 };
 
+function idsFromPathname(pathname: string): {
+  eventId: string | null;
+  executionId: string | null;
+} {
+  const path = pathname.split("?")[0] ?? pathname;
+  const eventMatch = path.match(/^\/events\/([^/]+)/);
+  if (eventMatch?.[1]) {
+    return { eventId: eventMatch[1], executionId: null };
+  }
+  const runMatch = path.match(/^\/run\/([^/]+)/);
+  if (runMatch?.[1]) {
+    return { eventId: null, executionId: runMatch[1] };
+  }
+  return { eventId: null, executionId: null };
+}
+
 export async function getNavWorkspaceModel(input: {
   email: string;
   isSuperAdmin: boolean;
   isMobile: boolean;
+  pathname?: string;
 }): Promise<NavWorkspaceModel> {
   const ctx = await getWorkspaceContext();
+  const fromPath = idsFromPathname(input.pathname ?? "");
   const orgs = await listAccessibleOrganizationsForUser(input.email, {
     isSuperAdmin: input.isSuperAdmin,
   });
@@ -49,9 +71,17 @@ export async function getNavWorkspaceModel(input: {
   });
   const eventCount = events.length;
 
-  let eventId = ctx.eventId;
+  let eventId = fromPath.eventId ?? ctx.eventId;
   if (eventId && !events.some((e) => e.id === eventId)) {
     eventId = null;
+  }
+  if (!eventId && fromPath.executionId) {
+    const execution = await getExecutionAccessContext(fromPath.executionId);
+    if (execution && events.some((e) => e.id === execution.eventId)) {
+      eventId = execution.eventId;
+    } else if (execution && input.isSuperAdmin) {
+      eventId = execution.eventId;
+    }
   }
 
   const orgAdminFlags = input.isSuperAdmin
@@ -104,14 +134,20 @@ export async function getNavWorkspaceModel(input: {
   }
 
   let eventAdminHref: string | null = null;
-  if (!input.isMobile && eventId) {
+  let eventDesignHref: string | null = null;
+  let eventRolesHref: string | null = null;
+  let eventPlanHref: string | null = null;
+  if (eventId) {
     const ev = events.find((e) => e.id === eventId);
-    if (
+    const canPrep =
       input.isSuperAdmin ||
       ev?.isOrgAdmin ||
-      ev?.roles.includes("EVENT_ADMIN")
-    ) {
-      eventAdminHref = `/events/${eventId}/setup`;
+      ev?.roles.includes("EVENT_ADMIN");
+    if (canPrep) {
+      eventAdminHref = `/events/${eventId}`;
+      eventDesignHref = `/events/${eventId}/design`;
+      eventRolesHref = `/events/${eventId}/roles`;
+      eventPlanHref = `/events/${eventId}/plan`;
     }
   }
 
@@ -129,7 +165,9 @@ export async function getNavWorkspaceModel(input: {
     eventosHref,
     organizacionesHref,
     eventAdminHref,
-    // Eventos ya es el catálogo/cambio; no duplicar “Cambiar evento”.
+    eventDesignHref,
+    eventRolesHref,
+    eventPlanHref,
     changeEventHref: null,
     orgCount,
     eventCount,

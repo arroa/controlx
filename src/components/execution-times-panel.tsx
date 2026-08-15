@@ -22,6 +22,7 @@ import type { FlowerAction } from "@/components/step-action-flower";
 import { TimesView, type TimesViewRow } from "@/components/times-view";
 import type { ApprovalRole } from "@/domain/controlx";
 import type { GateSummary } from "@/lib/admin-data";
+import { requiredGateIdsForStep } from "@/lib/gate-runtime";
 import {
   EXECUTION_FOCUS_OPTIONS,
   filterStepsByFocus,
@@ -90,7 +91,7 @@ function startBlockedLabel(step: RuntimeStepSummary, detail: ExecutionDetail) {
       );
     }
   }
-  for (const gateId of step.requiresGateIds ?? []) {
+  for (const gateId of requiredGateIdsForStep(step, detail.gates)) {
     const gate = detail.gates.find((item) => item.id === gateId);
     if (!gate) {
       parts.push("Gate requerido faltante");
@@ -290,10 +291,18 @@ export function ExecutionTimesPanel({
         name: gate.name,
         description: "",
         order: gate.order,
-        opensTargets: gate.opensTargets,
+        opensTargets: gate.opensTargets.map((target) => ({
+          workstreamId: target.workstreamId,
+          blockId: target.blockId,
+          stepId: target.stepId ?? null,
+        })),
         plannedOpenAt: gate.plannedOpenAt,
         approvalRoles: gate.approvalRoles,
-        closesAfterTargets: gate.closesAfterTargets,
+        closesAfterTargets: gate.closesAfterTargets.map((target) => ({
+          workstreamId: target.workstreamId,
+          blockId: target.blockId,
+          stepId: target.stepId ?? null,
+        })),
         createdAt: detail.createdAt,
       })),
     [detail.gates, detail.eventId, detail.createdAt],
