@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import {
   FEEDBACK_STATUSES,
+  normalizeFeedbackStatus,
   type FeedbackItem,
   type FeedbackStatus,
 } from "@/lib/feedback-types";
@@ -19,20 +20,46 @@ export type FeedbackUser = {
   isSuperAdmin: boolean;
 };
 
-export const feedbackInputSchema = z.object({
-  message: z.string().trim().min(5).max(4000),
-  status: z.enum(FEEDBACK_STATUSES).default("OPEN"),
-});
+const statusNoteSchema = z.string().trim().max(4000).optional().default("");
 
-export const feedbackUpdateSchema = z.object({
-  message: z.string().trim().min(5).max(4000),
-  status: z.enum(FEEDBACK_STATUSES),
-});
+function requireStatusNote(
+  data: { status: FeedbackStatus; statusNote: string },
+  ctx: z.RefinementCtx,
+) {
+  if (data.status !== "OPEN" && data.statusNote.trim().length < 5) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["statusNote"],
+      message:
+        data.status === "DISCARDED"
+          ? "Indica por qué se descarta."
+          : "Indica cómo se implementó.",
+    });
+  }
+}
+
+export const feedbackInputSchema = z
+  .object({
+    message: z.string().trim().min(5).max(4000),
+    status: z.enum(FEEDBACK_STATUSES).default("OPEN"),
+    statusNote: statusNoteSchema,
+  })
+  .superRefine(requireStatusNote);
+
+export const feedbackUpdateSchema = z
+  .object({
+    message: z.string().trim().min(5).max(4000),
+    status: z.enum(FEEDBACK_STATUSES),
+    statusNote: statusNoteSchema,
+  })
+  .superRefine(requireStatusNote);
 
 type FeedbackDocument = {
   _id?: ObjectId;
   message: string;
-  status?: FeedbackStatus;
+  status?: string;
+  statusNote?: string | null;
+  statusChangedAt?: Date | null;
   authorEmail: string;
   authorId: string;
   createdAt: Date;
@@ -40,10 +67,13 @@ type FeedbackDocument = {
 };
 
 function toItem(row: FeedbackDocument): FeedbackItem {
+  const statusChangedAt = row.statusChangedAt ?? row.updatedAt ?? row.createdAt;
   return {
     id: row._id!.toHexString(),
     message: row.message,
-    status: row.status ?? "OPEN",
+    status: normalizeFeedbackStatus(row.status),
+    statusNote: row.statusNote?.trim() ? row.statusNote.trim() : null,
+    statusChangedAt: statusChangedAt.toISOString(),
     authorId: row.authorId,
     authorEmail: row.authorEmail,
     createdAt: row.createdAt.toISOString(),
@@ -144,14 +174,22 @@ export async function listFeedbackForUser(
 }
 
 export async function createFeedback(
-  input: { message: string; status?: FeedbackStatus },
+  input: {
+    message: string;
+    status?: FeedbackStatus;
+    statusNote?: string;
+  },
   author: { id: string; email: string },
 ): Promise<FeedbackItem> {
   const database = await getDatabase();
   const now = new Date();
+  const status = input.status ?? "OPEN";
+  const statusNote = input.statusNote?.trim() || null;
   const doc: FeedbackDocument = {
     message: input.message.trim(),
-    status: input.status ?? "OPEN",
+    status,
+    statusNote,
+    statusChangedAt: now,
     authorEmail: author.email.toLowerCase(),
     authorId: author.id,
     createdAt: now,
@@ -165,13 +203,22 @@ export async function createFeedback(
 
 export async function updateFeedback(
   id: string,
-  input: { message: string; status: FeedbackStatus },
+  input: {
+    message: string;
+    status: FeedbackStatus;
+    statusNote?: string;
+  },
 ): Promise<FeedbackItem> {
   if (!ObjectId.isValid(id)) {
     throw new Error("Comentario inválido.");
   }
+  const existing = await getFeedbackById(id);
+  if (!existing) {
+    throw new Error("El comentario no existe.");
+  }
   const database = await getDatabase();
   const now = new Date();
+  const statusChanged = existing.status !== input.status;
   const result = await database
     .collection<FeedbackDocument>("feedback")
     .findOneAndUpdate(
@@ -180,7 +227,9 @@ export async function updateFeedback(
         $set: {
           message: input.message.trim(),
           status: input.status,
+          statusNote: input.statusNote?.trim() || null,
           updatedAt: now,
+          ...(statusChanged ? { statusChangedAt: now } : {}),
         },
       },
       { returnDocument: "after" },

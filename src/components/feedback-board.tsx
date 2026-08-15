@@ -1,14 +1,18 @@
 "use client";
 
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   CirclePlus,
+  Download,
   Eye,
   LoaderCircle,
   Pencil,
   Trash2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   AlertDialog,
@@ -49,12 +53,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { downloadFeedbackExcel } from "@/lib/feedback-export";
 import {
   FEEDBACK_STATUS_LABELS,
   FEEDBACK_STATUSES,
+  feedbackStatusNoteHint,
+  feedbackStatusNoteLabel,
   type FeedbackItem,
   type FeedbackStatus,
 } from "@/lib/feedback-types";
+import { cn } from "@/lib/utils";
+
+type StatusFilter = "ALL" | FeedbackStatus;
+type SortKey = "createdAt" | "statusChangedAt";
+type SortDir = "asc" | "desc";
 
 function formatWhen(iso: string) {
   try {
@@ -74,8 +86,8 @@ function previewMessage(message: string, max = 72) {
 }
 
 function statusBadgeVariant(status: FeedbackStatus) {
-  if (status === "DONE") return "secondary" as const;
-  if (status === "IN_PROGRESS") return "default" as const;
+  if (status === "IMPLEMENTED") return "secondary" as const;
+  if (status === "DISCARDED") return "destructive" as const;
   return "outline" as const;
 }
 
@@ -92,6 +104,33 @@ export function FeedbackBoard({
 }) {
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [sortKey, setSortKey] = useState<SortKey>("statusChangedAt");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const visible = useMemo(() => {
+    const filtered =
+      statusFilter === "ALL"
+        ? items
+        : items.filter((item) => item.status === statusFilter);
+
+    return [...filtered].sort((a, b) => {
+      const factor = sortDir === "asc" ? 1 : -1;
+      return (
+        (new Date(a[sortKey]).getTime() - new Date(b[sortKey]).getTime()) *
+        factor
+      );
+    });
+  }, [items, statusFilter, sortKey, sortDir]);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir("desc");
+  }
 
   function canMutate(item: FeedbackItem) {
     if (viewer.canModerate) return true;
@@ -117,7 +156,7 @@ export function FeedbackBoard({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Comentarios</h2>
           <p className="text-sm text-muted-foreground">
@@ -126,8 +165,34 @@ export function FeedbackBoard({
               : "Solo tus comentarios · puedes editar o borrar los tuyos"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline">{items.length}</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+          >
+            <SelectTrigger className="w-[11.5rem]" aria-label="Filtrar por estado">
+              <SelectValue placeholder="Estado" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">Todos los estados</SelectItem>
+              {FEEDBACK_STATUSES.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {FEEDBACK_STATUS_LABELS[value]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Badge variant="outline">{visible.length}</Badge>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!visible.length}
+            onClick={() => downloadFeedbackExcel(visible)}
+          >
+            <Download className="size-4" />
+            Excel
+          </Button>
           <FeedbackFormDialog
             mode="create"
             onSaved={upsertItem}
@@ -139,16 +204,29 @@ export function FeedbackBoard({
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="w-[42%]">Comentario</TableHead>
-              <TableHead className="w-[14%]">Estado</TableHead>
-              <TableHead className="w-[22%]">Autor</TableHead>
-              <TableHead className="w-[12%]">Fecha</TableHead>
-              <TableHead className="w-[10%] text-right">Acciones</TableHead>
+              <TableHead className="w-[34%]">Comentario</TableHead>
+              <TableHead className="w-[12%]">Estado</TableHead>
+              <TableHead className="w-[18%]">Autor</TableHead>
+              <SortableHead
+                label="Creada"
+                active={sortKey === "createdAt"}
+                dir={sortDir}
+                onClick={() => toggleSort("createdAt")}
+                className="w-[14%]"
+              />
+              <SortableHead
+                label="Último estado"
+                active={sortKey === "statusChangedAt"}
+                dir={sortDir}
+                onClick={() => toggleSort("statusChangedAt")}
+                className="w-[14%]"
+              />
+              <TableHead className="w-[8%] text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {items.length ? (
-              items.map((item) => (
+            {visible.length ? (
+              visible.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="max-w-0 font-medium">
                     <span className="block truncate" title={item.message}>
@@ -167,6 +245,9 @@ export function FeedbackBoard({
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-muted-foreground">
                     {formatWhen(item.createdAt)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">
+                    {formatWhen(item.statusChangedAt)}
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1">
@@ -191,10 +272,12 @@ export function FeedbackBoard({
             ) : (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={6}
                   className="h-24 text-center text-muted-foreground"
                 >
-                  Todavía no hay comentarios.
+                  {items.length
+                    ? "Ningún comentario coincide con el filtro."
+                    : "Todavía no hay comentarios."}
                 </TableCell>
               </TableRow>
             )}
@@ -202,6 +285,37 @@ export function FeedbackBoard({
         </Table>
       </div>
     </div>
+  );
+}
+
+function SortableHead({
+  label,
+  active,
+  dir,
+  onClick,
+  className,
+}: {
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+  className?: string;
+}) {
+  const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <TableHead className={className}>
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          "inline-flex items-center gap-1.5 hover:text-foreground",
+          active ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {label}
+        <Icon className="size-3.5 opacity-70" />
+      </button>
+    </TableHead>
   );
 }
 
@@ -217,16 +331,31 @@ function FeedbackViewDialog({ item }: { item: FeedbackItem }) {
         <DialogHeader>
           <DialogTitle>Detalle del comentario</DialogTitle>
           <DialogDescription>
-            {item.authorEmail} · {formatWhen(item.createdAt)}
+            {item.authorEmail} · creada {formatWhen(item.createdAt)}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <Badge variant={statusBadgeVariant(item.status)}>
-            {FEEDBACK_STATUS_LABELS[item.status]}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={statusBadgeVariant(item.status)}>
+              {FEEDBACK_STATUS_LABELS[item.status]}
+            </Badge>
+            <span className="text-xs text-muted-foreground">
+              Último estado: {formatWhen(item.statusChangedAt)}
+            </span>
+          </div>
           <p className="whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 text-sm leading-6">
             {item.message}
           </p>
+          {item.statusNote ? (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">
+                {feedbackStatusNoteLabel(item.status)}
+              </p>
+              <p className="whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 text-sm leading-6">
+                {item.statusNote}
+              </p>
+            </div>
+          ) : null}
           {item.updatedAt ? (
             <p className="text-xs text-muted-foreground">
               Actualizado: {formatWhen(item.updatedAt)}
@@ -250,12 +379,15 @@ function FeedbackFormDialog({
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState(item?.message ?? "");
   const [status, setStatus] = useState<FeedbackStatus>(item?.status ?? "OPEN");
+  const [statusNote, setStatusNote] = useState(item?.statusNote ?? "");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const needsNote = status !== "OPEN";
 
   function resetForm() {
     setMessage(item?.message ?? "");
     setStatus(item?.status ?? "OPEN");
+    setStatusNote(item?.statusNote ?? "");
     setError("");
   }
 
@@ -269,7 +401,7 @@ function FeedbackFormDialog({
         {
           method: mode === "create" ? "POST" : "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, status }),
+          body: JSON.stringify({ message, status, statusNote }),
         },
       );
       const payload = (await response.json().catch(() => null)) as {
@@ -287,6 +419,7 @@ function FeedbackFormDialog({
       if (mode === "create") {
         setMessage("");
         setStatus("OPEN");
+        setStatusNote("");
       }
     } catch {
       setError("No fue posible conectar con ControlX.");
@@ -363,6 +496,23 @@ function FeedbackFormDialog({
               </SelectContent>
             </Select>
           </div>
+          {needsNote ? (
+            <div className="space-y-2">
+              <Label htmlFor={`feedback-note-${mode}-${item?.id ?? "new"}`}>
+                {feedbackStatusNoteLabel(status)}
+              </Label>
+              <Textarea
+                id={`feedback-note-${mode}-${item?.id ?? "new"}`}
+                required
+                minLength={5}
+                maxLength={4000}
+                rows={3}
+                value={statusNote}
+                onChange={(event) => setStatusNote(event.target.value)}
+                placeholder={feedbackStatusNoteHint(status)}
+              />
+            </div>
+          ) : null}
           {error ? (
             <p
               role="alert"
@@ -381,7 +531,11 @@ function FeedbackFormDialog({
             </Button>
             <Button
               type="submit"
-              disabled={loading || message.trim().length < 5}
+              disabled={
+                loading ||
+                message.trim().length < 5 ||
+                (needsNote && statusNote.trim().length < 5)
+              }
             >
               {loading ? (
                 <>

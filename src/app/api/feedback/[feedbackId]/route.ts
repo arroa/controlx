@@ -46,7 +46,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   );
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Revisa el comentario y el estado." },
+      { error: "Revisa el comentario, el estado y la nota." },
       { status: 400 },
     );
   }
