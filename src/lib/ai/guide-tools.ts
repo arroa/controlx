@@ -149,7 +149,7 @@ export function createGuideTools(ctx: GuideToolContext) {
   return {
     search_knowledge_base: tool({
       description:
-        "Busca en la base de conocimiento curada de ControlX (conceptos de producto). Úsala PRIMERO para 'cómo funciona', 'ayuda con roles/setup/diseño/plan', etc.",
+        "Busca en la base de conocimiento curada de ControlX (conceptos de producto). Úsala PRIMERO para 'cómo funciona', 'ayuda con roles/setup/diseño/plan/carga masiva/gates/panel/mapa', etc.",
       inputSchema: z.object({
         query: z
           .string()
@@ -160,7 +160,7 @@ export function createGuideTools(ctx: GuideToolContext) {
         const articles = searchGuideKnowledge({
           query,
           zone: ctx.zone,
-          limit: 4,
+          limit: 5,
         });
         return {
           query,
