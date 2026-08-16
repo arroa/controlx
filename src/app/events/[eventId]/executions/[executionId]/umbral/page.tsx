@@ -1,10 +1,8 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { Eye } from "lucide-react";
 
 import { AppHeader } from "@/components/app-header";
+import { ExecutionObserveNav } from "@/components/execution-observe-nav";
 import { ThresholdMonitor } from "@/components/threshold-monitor";
-import { Button } from "@/components/ui/button";
 import { canAccessEvent } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { canViewExecution } from "@/lib/execution-auth";
@@ -43,12 +41,11 @@ export default async function ThresholdMonitorPage({
           { label: "Monitor de Umbral" },
         ]}
         actions={
-          <Button size="sm" variant="outline" asChild>
-            <Link href={`/events/${eventId}/executions/${executionId}`}>
-              <Eye className="size-3.5" />
-              Panel
-            </Link>
-          </Button>
+          <ExecutionObserveNav
+            eventId={eventId}
+            executionId={executionId}
+            current="monitor"
+          />
         }
       />
       <main className="mx-auto min-h-0 w-full max-w-7xl flex-1 overflow-y-auto px-3 pb-8 sm:px-6">

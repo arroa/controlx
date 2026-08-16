@@ -1,0 +1,1085 @@
+"use client";
+
+import { BadgeInfo, ChevronDown, ChevronRight, Paperclip } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  StepActionFlower,
+  type FlowerAction,
+} from "@/components/step-action-flower";
+import type { GateSummary } from "@/lib/admin-data";
+import { stepMatchesGateTarget } from "@/lib/gate-targets";
+import { cn } from "@/lib/utils";
+
+export const DEFAULT_DURATION_MINUTES = 30;
+
+export const TIMES_VIEW_ZOOM_OPTIONS = [
+  { id: "1h" as const, label: "1 h", minutes: 60 },
+  { id: "4h" as const, label: "4 h", minutes: 240 },
+  { id: "12h" as const, label: "12 h", minutes: 720 },
+  { id: "1d" as const, label: "1 día", minutes: 1440 },
+  { id: "all" as const, label: "Todo", minutes: null },
+];
+export type TimesViewZoomId = (typeof TIMES_VIEW_ZOOM_OPTIONS)[number]["id"];
+/**
+ * Ancho mínimo de barra: pasos cortos (p.ej. 5 min) seguirían siendo un punto
+ * a la densidad del eje. Se dibujan más anchos para poder leer/tocar; la
+ * duración real sigue en el title y en la modal de info.
+ */
+/** Aire a la derecha del eje para que la última barra no se meta en el scroll. */
+const CHART_RIGHT_GUTTER_PX = 20;
+const MIN_BAR_WIDTH_PX = 56;
+/** Con flor abierta hace falta sitio para el trigger "?" + un poco de etiqueta. */
+const MIN_BAR_WIDTH_WITH_FLOWER_PX = 84;
+const GATE_COLORS = [
+  "border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  "border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  "border-emerald-500 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  "border-rose-500 bg-rose-500/15 text-rose-700 dark:text-rose-300",
+  "border-violet-500 bg-violet-500/15 text-violet-700 dark:text-violet-300",
+];
+
+function gateColorClass(index: number) {
+  return GATE_COLORS[index % GATE_COLORS.length]!;
+}
+
+/**
+ * Fila mínima que necesita TimesView para calendarizar y renderizar.
+ * Cubre tanto pasos del planificador (DesignStepSummary) como pasos de
+ * ejecución (RuntimeStepSummary): el consumidor mapea su tipo a este.
+ */
+export type TimesViewRow = {
+  id: string;
+  name: string;
+  workstreamId: string;
+  blockId: string;
+  workstreamName: string;
+  blockName: string;
+  activityName: string;
+  description?: string;
+  plannedStartAt: string | null;
+  estimatedDurationMinutes: number | null;
+  dependencyStepIds: string[];
+  approvalRoles?: string[];
+  producesGateId?: string | null;
+  requiresGateIds?: string[];
+  order: number;
+  /** Campos opcionales de runtime (ejecución). Ausentes en el planificador. */
+  status?: string;
+  mine?: boolean;
+  /** Si el paso exige adjunto al marcar éxito. */
+  evidenceRequired?: boolean;
+  /** false = el paso no se puede seleccionar/operar (p. ej. no es mío ni admin). */
+  operable?: boolean;
+  actualStartedAt?: string | null;
+  actualEndedAt?: string | null;
+};
+
+export type ScheduleItem = {
+  id: string;
+  startMin: number;
+  endMin: number;
+  durationMin: number;
+  usedDefaultDuration: boolean;
+};
+
+type GateMarker = {
+  id: string;
+  name: string;
+  openMin: number;
+  colorIndex: number;
+};
+
+function stepsForTargets(
+  rows: TimesViewRow[],
+  targets: Array<{
+    workstreamId: string;
+    blockId: string | null;
+    stepId?: string | null;
+  }>,
+) {
+  return rows.filter((row) =>
+    targets.some((target) => stepMatchesGateTarget(row, target)),
+  );
+}
+
+export function computeSchedule(
+  rows: TimesViewRow[],
+  gates: GateSummary[],
+  dayDStartAt: string | null,
+): {
+  items: Map<string, ScheduleItem>;
+  totalMin: number;
+  gateMarkers: GateMarker[];
+  t0Ms: number | null;
+} {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const producerByGate = new Map<string, string>();
+  for (const row of rows) {
+    if (row.producesGateId) producerByGate.set(row.producesGateId, row.id);
+  }
+
+  const inbound = new Map(rows.map((row) => [row.id, 0]));
+  const outgoing = new Map<string, string[]>(rows.map((row) => [row.id, []]));
+
+  function addEdge(fromId: string, toId: string) {
+    if (!byId.has(fromId) || !byId.has(toId) || fromId === toId) return;
+    inbound.set(toId, (inbound.get(toId) ?? 0) + 1);
+    outgoing.get(fromId)?.push(toId);
+  }
+
+  for (const row of rows) {
+    for (const depId of row.dependencyStepIds) {
+      addEdge(depId, row.id);
+    }
+    for (const gateId of row.requiresGateIds ?? []) {
+      const producerId = producerByGate.get(gateId);
+      if (producerId) addEdge(producerId, row.id);
+      const gate = gates.find((item) => item.id === gateId);
+      if (!gate) continue;
+      for (const closer of stepsForTargets(
+        rows,
+        gate.closesAfterTargets ?? [],
+      )) {
+        addEdge(closer.id, row.id);
+      }
+    }
+  }
+
+  // Megadeps del catálogo: cierre → apertura del gate.
+  for (const gate of gates) {
+    const closers = stepsForTargets(rows, gate.closesAfterTargets ?? []);
+    const opened = stepsForTargets(rows, gate.opensTargets ?? []);
+    const producerId = producerByGate.get(gate.id);
+    for (const openStep of opened) {
+      for (const closer of closers) {
+        addEdge(closer.id, openStep.id);
+      }
+      if (producerId) addEdge(producerId, openStep.id);
+    }
+  }
+
+  const queue = rows
+    .filter((row) => (inbound.get(row.id) ?? 0) === 0)
+    .map((row) => row.id);
+  const order: string[] = [];
+  while (queue.length) {
+    const id = queue.shift()!;
+    order.push(id);
+    for (const next of outgoing.get(id) ?? []) {
+      const remaining = (inbound.get(next) ?? 0) - 1;
+      inbound.set(next, remaining);
+      if (remaining === 0) queue.push(next);
+    }
+  }
+  for (const row of rows) {
+    if (!order.includes(row.id)) order.push(row.id);
+  }
+
+  const fallbackPoints = [
+    ...rows
+      .filter((row) => row.plannedStartAt)
+      .map((row) => new Date(row.plannedStartAt!).getTime()),
+    ...gates
+      .filter((gate) => gate.plannedOpenAt)
+      .map((gate) => new Date(gate.plannedOpenAt!).getTime()),
+  ];
+  const t0Ms = dayDStartAt
+    ? new Date(dayDStartAt).getTime()
+    : fallbackPoints.length
+      ? Math.min(...fallbackPoints)
+      : null;
+
+  const toOffsetMin = (iso: string) =>
+    t0Ms == null
+      ? 0
+      : Math.max(0, Math.round((new Date(iso).getTime() - t0Ms) / 60_000));
+
+  const anchorMin = new Map(
+    rows
+      .filter((row) => row.plannedStartAt && t0Ms != null)
+      .map((row) => [row.id, toOffsetMin(row.plannedStartAt!)]),
+  );
+  const gateTimeMin = new Map(
+    gates
+      .filter((gate) => gate.plannedOpenAt && t0Ms != null)
+      .map((gate) => [gate.id, toOffsetMin(gate.plannedOpenAt!)]),
+  );
+
+  const items = new Map<string, ScheduleItem>();
+  for (const id of order) {
+    const row = byId.get(id)!;
+    const usedDefaultDuration = row.estimatedDurationMinutes == null;
+    const durationMin = row.estimatedDurationMinutes ?? DEFAULT_DURATION_MINUTES;
+
+    // Ejecución: ventana real fija → los dependientes se redibujan desde ese fin.
+    if (row.actualEndedAt && t0Ms != null) {
+      const endMin = toOffsetMin(row.actualEndedAt);
+      const startMin = row.actualStartedAt
+        ? toOffsetMin(row.actualStartedAt)
+        : Math.max(0, endMin - durationMin);
+      const safeStart = Math.min(startMin, endMin);
+      const safeEnd = Math.max(startMin, endMin);
+      items.set(id, {
+        id,
+        startMin: safeStart,
+        endMin: safeEnd,
+        durationMin: Math.max(1, safeEnd - safeStart),
+        usedDefaultDuration: false,
+      });
+      continue;
+    }
+
+    if (row.actualStartedAt && t0Ms != null) {
+      const startMin = toOffsetMin(row.actualStartedAt);
+      items.set(id, {
+        id,
+        startMin,
+        endMin: startMin + durationMin,
+        durationMin,
+        usedDefaultDuration,
+      });
+      continue;
+    }
+
+    const depEnds = row.dependencyStepIds
+      .map((depId) => items.get(depId)?.endMin)
+      .filter((value): value is number => value != null);
+
+    const gateConstraintMins: number[] = [];
+    for (const gateId of row.requiresGateIds ?? []) {
+      const producerId = producerByGate.get(gateId);
+      if (producerId) {
+        const end = items.get(producerId)?.endMin;
+        if (end != null) gateConstraintMins.push(end);
+      }
+      const gate = gates.find((item) => item.id === gateId);
+      if (!gate) continue;
+      const timed = gateTimeMin.get(gateId);
+      if (timed != null) gateConstraintMins.push(timed);
+      for (const closer of stepsForTargets(
+        rows,
+        gate.closesAfterTargets ?? [],
+      )) {
+        const end = items.get(closer.id)?.endMin;
+        if (end != null) gateConstraintMins.push(end);
+      }
+    }
+
+    for (const gate of gates) {
+      if (
+        !(gate.opensTargets ?? []).some((target) =>
+          stepMatchesGateTarget(row, target),
+        )
+      ) {
+        continue;
+      }
+      const timed = gateTimeMin.get(gate.id);
+      if (timed != null) gateConstraintMins.push(timed);
+      const producerId = producerByGate.get(gate.id);
+      if (producerId) {
+        const end = items.get(producerId)?.endMin;
+        if (end != null) gateConstraintMins.push(end);
+      }
+      for (const closer of stepsForTargets(
+        rows,
+        gate.closesAfterTargets ?? [],
+      )) {
+        const end = items.get(closer.id)?.endMin;
+        if (end != null) gateConstraintMins.push(end);
+      }
+    }
+
+    const fromDeps = depEnds.length ? Math.max(...depEnds) : 0;
+    const fromGates = gateConstraintMins.length
+      ? Math.max(...gateConstraintMins)
+      : 0;
+    const anchored = anchorMin.get(id);
+    const startMin =
+      anchored !== undefined
+        ? Math.max(anchored, fromDeps, fromGates)
+        : Math.max(fromDeps, fromGates);
+    items.set(id, {
+      id,
+      startMin,
+      endMin: startMin + durationMin,
+      durationMin,
+      usedDefaultDuration,
+    });
+  }
+
+  const gateMarkers: GateMarker[] = gates
+    .map((gate, index) => {
+      const parts: number[] = [];
+      const timed = gateTimeMin.get(gate.id);
+      if (timed != null) parts.push(timed);
+      const producerId = producerByGate.get(gate.id);
+      if (producerId) {
+        const end = items.get(producerId)?.endMin;
+        if (end != null) parts.push(end);
+      }
+      for (const closer of stepsForTargets(
+        rows,
+        gate.closesAfterTargets ?? [],
+      )) {
+        const end = items.get(closer.id)?.endMin;
+        if (end != null) parts.push(end);
+      }
+
+      const hasActivation =
+        timed != null ||
+        Boolean(producerId) ||
+        (gate.closesAfterTargets ?? []).length > 0 ||
+        (gate.approvalRoles ?? []).length > 0;
+
+      if (!hasActivation && !(gate.opensTargets ?? []).length) return null;
+
+      return {
+        id: gate.id,
+        name: gate.name,
+        openMin: parts.length ? Math.max(...parts) : 0,
+        colorIndex: index,
+      };
+    })
+    .filter((marker): marker is GateMarker => marker != null);
+
+  const totalMin = Math.max(
+    60,
+    ...[...items.values()].map((item) => item.endMin),
+    ...gateMarkers.map((marker) => marker.openMin + 15),
+  );
+  return { items, totalMin, gateMarkers, t0Ms };
+}
+
+type LaneStats = {
+  stepCount: number;
+  durationMin: number;
+  startMin: number | null;
+  endMin: number | null;
+};
+
+function computeLaneStats(
+  laneRows: TimesViewRow[],
+  items: Map<string, ScheduleItem>,
+): LaneStats {
+  let durationMin = 0;
+  let startMin: number | null = null;
+  let endMin: number | null = null;
+  for (const row of laneRows) {
+    const item = items.get(row.id);
+    if (!item) continue;
+    durationMin += item.durationMin;
+    startMin =
+      startMin == null ? item.startMin : Math.min(startMin, item.startMin);
+    endMin = endMin == null ? item.endMin : Math.max(endMin, item.endMin);
+  }
+  return { stepCount: laneRows.length, durationMin, startMin, endMin };
+}
+
+function formatDurationCompact(totalMin: number) {
+  if (totalMin < 60) return `${totalMin}m`;
+  const hours = Math.floor(totalMin / 60);
+  const minutes = totalMin % 60;
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+type LaneStatsDisplay = {
+  /** Conteo de grupo (bloques o actividades); null en el nivel actividad. */
+  blocksLabel: string | null;
+  stepsLabel: string;
+  durationLabel: string;
+  rangeLabel: string;
+};
+
+export function TimesLaneHeader({
+  title,
+  expanded,
+  onToggle,
+  stats,
+  tone,
+}: {
+  title: string;
+  expanded: boolean;
+  onToggle: () => void;
+  stats: LaneStatsDisplay;
+  tone: "workstream" | "block" | "activity";
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className={cn(
+        "sticky left-0 right-0 flex w-full items-center gap-2 py-1.5 pr-3 text-left backdrop-blur transition-colors",
+        tone === "workstream" &&
+          "z-[5] border-l-2 border-l-cyan-500/80 bg-slate-700/55 pl-3 text-slate-100 hover:bg-slate-700/70",
+        tone === "block" &&
+          "z-[4] border-l-2 border-l-slate-500/70 bg-slate-800/40 pl-5 text-slate-200 hover:bg-slate-800/55",
+        tone === "activity" &&
+          "z-[3] border-l-2 border-l-teal-500/50 bg-slate-900/35 pl-7 text-slate-300 hover:bg-slate-900/50",
+      )}
+    >
+      <Chevron className="size-4 shrink-0 opacity-70" />
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-left font-semibold tracking-wide",
+          tone === "workstream" && "text-sm",
+          tone === "block" && "text-[13px]",
+          tone === "activity" && "text-xs font-medium",
+        )}
+      >
+        {title}
+      </span>
+      <span
+        className="ml-auto flex shrink-0 items-baseline gap-x-2 font-mono text-[10px] leading-none text-slate-300/85 tabular-nums"
+        title={[
+          stats.blocksLabel,
+          stats.stepsLabel,
+          stats.durationLabel,
+          stats.rangeLabel,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+      >
+        <span className="inline-block w-[5.5rem] text-right whitespace-nowrap">
+          {stats.blocksLabel ?? "\u00A0"}
+        </span>
+        <span className="inline-block w-[4.25rem] text-right whitespace-nowrap">
+          {stats.stepsLabel}
+        </span>
+        <span className="inline-block w-[3.75rem] text-right whitespace-nowrap">
+          {stats.durationLabel}
+        </span>
+        <span className="inline-block w-[6.75rem] text-right whitespace-nowrap">
+          {stats.rangeLabel}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function tickStepForSpan(spanMin: number) {
+  if (spanMin <= 120) return 15;
+  if (spanMin <= 480) return 30;
+  if (spanMin <= 1440) return 60;
+  return 120;
+}
+
+function buildWindowTicks(windowStart: number, windowSpan: number) {
+  const step = tickStepForSpan(windowSpan);
+  const end = windowStart + windowSpan;
+  const first = Math.ceil(windowStart / step) * step;
+  const ticks: number[] = [];
+  for (let value = first; value <= end + 0.001; value += step) {
+    ticks.push(value);
+  }
+  return ticks;
+}
+
+function clampWindowStart(start: number, span: number, totalMin: number) {
+  if (span >= totalMin) return 0;
+  return Math.max(0, Math.min(start, totalMin - span));
+}
+
+function formatMinutes(total: number) {
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+/** Etiqueta del eje: hora civil desde Día D, o offset relativo. */
+function formatAxisLabel(
+  offsetMin: number,
+  t0Ms: number | null,
+  timezone: string,
+  useClock: boolean,
+) {
+  if (!useClock || t0Ms == null) return formatMinutes(offsetMin);
+  const instant = new Date(t0Ms + offsetMin * 60_000);
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(instant);
+}
+
+export function TimesView2({
+  rows,
+  allRows,
+  gates,
+  eventTimezone,
+  dayDStartAt,
+  selectedId,
+  onSelect,
+  getFlowerActions,
+  getBarClass,
+  onOpenInfo,
+  showBuiltInInfoDialog = true,
+  zoom,
+  foldAll = null,
+}: {
+  /** Filas visibles (tras filtro de búsqueda / WS / focus). */
+  rows: TimesViewRow[];
+  /** Todas las filas del plan/ejecución, usadas para calcular el schedule. */
+  allRows: TimesViewRow[];
+  gates: GateSummary[];
+  eventTimezone: string;
+  /** Inicio del Día D (planificador) o ancla de la ejecución. */
+  dayDStartAt: string | null;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  /** Acciones adicionales de la flor (además del "info" que gestiona TimesView). */
+  getFlowerActions: (row: TimesViewRow) => FlowerAction[];
+  /** Clase CSS completa de la barra (borde/fondo/texto) para el paso. */
+  getBarClass: (row: TimesViewRow, active: boolean, flowerOpen: boolean) => string;
+  /** Se llama cuando showBuiltInInfoDialog es false y se pulsa "Más información". */
+  onOpenInfo?: (row: TimesViewRow) => void;
+  /** Si es false, no se muestra el diálogo interno de información. */
+  showBuiltInInfoDialog?: boolean;
+  zoom: TimesViewZoomId;
+  foldAll?: { action: "open" | "collapse"; nonce: number } | null;
+}) {
+  const { items, totalMin, gateMarkers, t0Ms } = useMemo(
+    () => computeSchedule(allRows, gates, dayDStartAt),
+    [allRows, gates, dayDStartAt],
+  );
+  const [flowerOpenId, setFlowerOpenId] = useState<string | null>(null);
+  const [infoRowId, setInfoRowId] = useState<string | null>(null);
+  const infoRow =
+    infoRowId == null
+      ? null
+      : (allRows.find((row) => row.id === infoRowId) ?? null);
+
+  // Cierra la flor abierta cuando cambia la selección (ver "Adjusting state
+  // when a prop changes" en la doc de React: evita un efecto para esto).
+  const [prevSelectedId, setPrevSelectedId] = useState(selectedId);
+  if (selectedId !== prevSelectedId) {
+    setPrevSelectedId(selectedId);
+    setFlowerOpenId(null);
+  }
+
+  const lanes = useMemo(() => {
+    const visibleIds = new Set(rows.map((row) => row.id));
+    // workstream → block → activity → steps
+    const byWs = new Map<
+      string,
+      Map<string, Map<string, TimesViewRow[]>>
+    >();
+    for (const row of allRows) {
+      if (!visibleIds.has(row.id)) continue;
+      let byBlock = byWs.get(row.workstreamName);
+      if (!byBlock) {
+        byBlock = new Map();
+        byWs.set(row.workstreamName, byBlock);
+      }
+      let byActivity = byBlock.get(row.blockName);
+      if (!byActivity) {
+        byActivity = new Map();
+        byBlock.set(row.blockName, byActivity);
+      }
+      const activityName = row.activityName?.trim() || "Sin actividad";
+      const list = byActivity.get(activityName) ?? [];
+      list.push(row);
+      byActivity.set(activityName, list);
+    }
+
+    function earliestStart(laneRows: TimesViewRow[]) {
+      let min = Number.POSITIVE_INFINITY;
+      for (const row of laneRows) {
+        const start = items.get(row.id)?.startMin;
+        if (start != null && start < min) min = start;
+      }
+      return min;
+    }
+
+    function sortSteps(stepRows: TimesViewRow[]) {
+      return [...stepRows].sort((a, b) => {
+        const aStart = items.get(a.id)?.startMin ?? Number.POSITIVE_INFINITY;
+        const bStart = items.get(b.id)?.startMin ?? Number.POSITIVE_INFINITY;
+        return aStart - bStart || a.order - b.order;
+      });
+    }
+
+    return [...byWs.entries()]
+      .map(([workstreamName, byBlock]) => {
+        const blocks = [...byBlock.entries()]
+          .map(([blockName, byActivity]) => {
+            const activities = [...byActivity.entries()]
+              .map(([activityName, activityRows]) => ({
+                activityName,
+                rows: sortSteps(activityRows),
+              }))
+              .sort(
+                (a, b) =>
+                  earliestStart(a.rows) - earliestStart(b.rows) ||
+                  a.activityName.localeCompare(b.activityName, "es"),
+              );
+            return {
+              blockName,
+              activities,
+              rows: activities.flatMap((activity) => activity.rows),
+            };
+          })
+          .sort(
+            (a, b) =>
+              earliestStart(a.rows) - earliestStart(b.rows) ||
+              a.blockName.localeCompare(b.blockName, "es"),
+          );
+        return { workstreamName, blocks };
+      })
+      .sort((a, b) => {
+        const aRows = a.blocks.flatMap((block) => block.rows);
+        const bRows = b.blocks.flatMap((block) => block.rows);
+        return (
+          earliestStart(aRows) - earliestStart(bRows) ||
+          a.workstreamName.localeCompare(b.workstreamName, "es")
+        );
+      });
+  }, [allRows, rows, items]);
+
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [nowMs, setNowMs] = useState<number | null>(null);
+
+  const allGroupKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const { workstreamName, blocks } of lanes) {
+      keys.push(`ws:${workstreamName}`);
+      for (const { blockName, activities } of blocks) {
+        const laneKey = `${workstreamName}::${blockName}`;
+        keys.push(`block:${laneKey}`);
+        for (const { activityName } of activities) {
+          keys.push(`activity:${laneKey}::${activityName}`);
+        }
+      }
+    }
+    return keys;
+  }, [lanes]);
+
+  useEffect(() => {
+    if (!foldAll) return;
+    setCollapsed(
+      foldAll.action === "collapse" ? new Set(allGroupKeys) : new Set(),
+    );
+    // Solo al pulsar Colapsar/Abrir; no reaplicar si el plan se actualiza.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- nonce
+  }, [foldAll]);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+
+  useEffect(() => {
+    const node = scrollerRef.current;
+    if (!node) return;
+    const update = () => setViewportWidth(node.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const zoomOption = TIMES_VIEW_ZOOM_OPTIONS.find((option) => option.id === zoom)!;
+  const windowSpan =
+    zoomOption.minutes == null
+      ? totalMin
+      : Math.min(zoomOption.minutes, totalMin);
+  const nowMin =
+    t0Ms != null && nowMs != null ? (nowMs - t0Ms) / 60_000 : null;
+  const windowStart = clampWindowStart(
+    (nowMin ?? 0) - windowSpan / 2,
+    windowSpan,
+    totalMin,
+  );
+  const windowEnd = windowStart + windowSpan;
+  const chartWidth = Math.max(
+    1,
+    (viewportWidth || 960) - CHART_RIGHT_GUTTER_PX,
+  );
+  const pxPerMin = chartWidth / Math.max(windowSpan, 1);
+  const ticks = buildWindowTicks(windowStart, windowSpan);
+  const useClockLabels = Boolean(dayDStartAt && t0Ms != null);
+
+  function xOf(offsetMin: number) {
+    return (offsetMin - windowStart) * pxPerMin;
+  }
+
+  function toggleCollapsed(key: string) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function laneStatsFor(
+    laneRows: TimesViewRow[],
+    meta?: { blocks?: number; activities?: number },
+  ): LaneStatsDisplay {
+    const stats = computeLaneStats(laneRows, items);
+    let groupLabel: string | null = null;
+    if (meta?.blocks != null) {
+      groupLabel = `${meta.blocks} bloque${meta.blocks === 1 ? "" : "s"}`;
+    } else if (meta?.activities != null) {
+      groupLabel = `${meta.activities} actividad${meta.activities === 1 ? "" : "es"}`;
+    }
+    return {
+      blocksLabel: groupLabel,
+      stepsLabel: `${stats.stepCount} paso${stats.stepCount === 1 ? "" : "s"}`,
+      durationLabel: formatDurationCompact(stats.durationMin),
+      rangeLabel:
+        stats.startMin != null && stats.endMin != null
+          ? `${formatAxisLabel(stats.startMin, t0Ms, eventTimezone, useClockLabels)}–${formatAxisLabel(stats.endMin, t0Ms, eventTimezone, useClockLabels)}`
+          : "—",
+    };
+  }
+
+  function renderStepBars(stepRows: TimesViewRow[], laneKey: string) {
+    return (
+      <div
+        className="relative overflow-hidden py-1.5"
+        style={{
+          width: chartWidth,
+          minHeight: stepRows.length * 32,
+        }}
+      >
+        {ticks.map((tick) => (
+          <div
+            key={`${laneKey}-${tick}`}
+            className="absolute inset-y-0 border-l border-border/40"
+            style={{ left: xOf(tick) }}
+          />
+        ))}
+        {gateMarkers.map((marker) => (
+          <div
+            key={`${laneKey}-${marker.id}`}
+            className={cn(
+              "pointer-events-none absolute inset-y-0 z-[1] border-l-2 border-dashed opacity-70",
+              gateColorClass(marker.colorIndex).split(" ")[0],
+            )}
+            style={{
+              left: xOf(marker.openMin),
+            }}
+          />
+        ))}
+        {nowMin != null ? (
+          <div
+            className="pointer-events-none absolute inset-y-0 z-[3] border-l border-dashed border-rose-500"
+            style={{ left: xOf(nowMin) }}
+          />
+        ) : null}
+        {stepRows.map((row, index) => {
+          const item = items.get(row.id);
+          if (!item) return null;
+          if (item.endMin < windowStart || item.startMin > windowEnd) {
+            return null;
+          }
+          const top = 2 + index * 30;
+          const left = xOf(item.startMin);
+          const active = selectedId === row.id;
+          const flowerOpen = flowerOpenId === row.id;
+          const operable = row.operable !== false;
+          const naturalWidth = item.durationMin * pxPerMin;
+          const minWidth =
+            active && operable
+              ? MIN_BAR_WIDTH_WITH_FLOWER_PX
+              : MIN_BAR_WIDTH_PX;
+          const width = Math.max(minWidth, naturalWidth);
+          const openFlowerToRight = left + width < 220;
+          return (
+            <div
+              key={row.id}
+              className={cn(
+                "absolute flex h-6 items-center overflow-visible rounded-md border shadow-sm",
+                flowerOpen ? "z-50" : active ? "z-20" : "z-[2]",
+                item.usedDefaultDuration && "opacity-70",
+                getBarClass(row, active, flowerOpen),
+              )}
+              style={{ top, left, width }}
+              title={`${row.name} · ${item.durationMin} min · ${formatAxisLabel(item.startMin, t0Ms, eventTimezone, useClockLabels)}`}
+            >
+              <button
+                type="button"
+                disabled={!operable}
+                onClick={() => {
+                  if (!operable) return;
+                  onSelect(active ? null : row.id);
+                }}
+                className="flex min-w-0 flex-1 items-center gap-1 py-0 pr-1.5 pl-2 text-left text-[11px] font-medium disabled:cursor-not-allowed"
+              >
+                {row.evidenceRequired ? (
+                  <Paperclip
+                    className="size-3 shrink-0 opacity-90"
+                    aria-label="Evidencia obligatoria al marcar éxito"
+                  />
+                ) : null}
+                <span className="min-w-0 truncate">
+                  {row.mine ? "★ " : ""}
+                  {row.name}
+                </span>
+              </button>
+              {active && operable ? (
+                <div className="relative mr-0.5 shrink-0">
+                  <StepActionFlower
+                    open={flowerOpen}
+                    layout="horizontal"
+                    openToRight={openFlowerToRight}
+                    onToggle={() =>
+                      setFlowerOpenId((current) =>
+                        current === row.id ? null : row.id,
+                      )
+                    }
+                    onClose={() => setFlowerOpenId(null)}
+                    actions={[
+                      {
+                        key: "info",
+                        label: "Más información",
+                        icon: BadgeInfo,
+                        tone: "info",
+                        onClick: () => {
+                          setFlowerOpenId(null);
+                          if (showBuiltInInfoDialog) {
+                            setInfoRowId(row.id);
+                          } else {
+                            onOpenInfo?.(row);
+                          }
+                        },
+                      },
+                      ...getFlowerActions(row),
+                    ]}
+                  />
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div
+        ref={scrollerRef}
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-xl border [scrollbar-gutter:stable]"
+      >
+      <div style={{ width: chartWidth }} className="min-w-0">
+        {!dayDStartAt ? (
+          <div className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
+            Sin Inicio del Día D el eje es relativo. Configúralo en{" "}
+            <span className="font-medium text-foreground">Setup</span>.
+          </div>
+        ) : null}
+        <div className="sticky top-0 z-10 overflow-hidden border-b bg-background/95 backdrop-blur">
+          {gateMarkers.length ? (
+            <div
+              className="relative h-7 overflow-hidden border-b border-border/60"
+              style={{ width: chartWidth }}
+            >
+              {gateMarkers.map((marker) => (
+                <div
+                  key={`head-${marker.id}`}
+                  className="absolute top-1 bottom-1 z-[1]"
+                  style={{ left: xOf(marker.openMin) }}
+                  title={`${marker.name} · ${formatAxisLabel(marker.openMin, t0Ms, eventTimezone, useClockLabels)}`}
+                >
+                  <div
+                    className={cn(
+                      "h-full border-l-2 border-dashed",
+                      gateColorClass(marker.colorIndex).split(" ")[0],
+                    )}
+                  />
+                  <span
+                    className={cn(
+                      "absolute top-0.5 left-1.5 max-w-32 truncate rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                      gateColorClass(marker.colorIndex),
+                    )}
+                  >
+                    {marker.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div
+            className="relative h-7 overflow-hidden"
+            style={{ width: chartWidth }}
+          >
+            {ticks.map((tick) => (
+              <div
+                key={tick}
+                className="absolute top-0 bottom-0 border-l border-border/60"
+                style={{ left: xOf(tick) }}
+              >
+                <span className="ml-1 text-[10px] text-muted-foreground">
+                  {formatAxisLabel(
+                    tick,
+                    t0Ms,
+                    eventTimezone,
+                    useClockLabels,
+                  )}
+                </span>
+              </div>
+            ))}
+            {nowMin != null ? (
+              <div
+                className="pointer-events-none absolute inset-y-0 z-[2] border-l border-dashed border-rose-500"
+                style={{ left: xOf(nowMin) }}
+              >
+                <span className="ml-1 text-[10px] font-semibold text-rose-500">
+                  ahora
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {!lanes.length ? (
+          <p className="p-8 text-center text-sm text-muted-foreground">
+            No hay filas que coincidan con la búsqueda.
+          </p>
+        ) : (
+          lanes.map(({ workstreamName, blocks }) => {
+            const wsKey = `ws:${workstreamName}`;
+            const wsExpanded = !collapsed.has(wsKey);
+            const wsRows = blocks.flatMap((block) => block.rows);
+            return (
+              <div key={workstreamName} className="border-b last:border-b-0">
+                <TimesLaneHeader
+                  title={workstreamName}
+                  expanded={wsExpanded}
+                  onToggle={() => toggleCollapsed(wsKey)}
+                  tone="workstream"
+                  stats={laneStatsFor(wsRows, { blocks: blocks.length })}
+                />
+                {wsExpanded
+                  ? blocks.map(({ blockName, activities, rows: blockRows }) => {
+                      const laneKey = `${workstreamName}::${blockName}`;
+                      const blockKey = `block:${laneKey}`;
+                      const blockExpanded = !collapsed.has(blockKey);
+                      return (
+                        <div key={laneKey}>
+                          <TimesLaneHeader
+                            title={blockName}
+                            expanded={blockExpanded}
+                            onToggle={() => toggleCollapsed(blockKey)}
+                            tone="block"
+                            stats={laneStatsFor(blockRows, {
+                              activities: activities.length,
+                            })}
+                          />
+                          {blockExpanded
+                            ? activities.map(
+                                ({ activityName, rows: activityRows }) => {
+                                  const activityKey = `activity:${laneKey}::${activityName}`;
+                                  const activityExpanded =
+                                    !collapsed.has(activityKey);
+                                  return (
+                                    <div key={activityKey}>
+                                      <TimesLaneHeader
+                                        title={activityName}
+                                        expanded={activityExpanded}
+                                        onToggle={() =>
+                                          toggleCollapsed(activityKey)
+                                        }
+                                        tone="activity"
+                                        stats={laneStatsFor(activityRows)}
+                                      />
+                                      {activityExpanded
+                                        ? renderStepBars(
+                                            activityRows,
+                                            activityKey,
+                                          )
+                                        : null}
+                                    </div>
+                                  );
+                                },
+                              )
+                            : null}
+                        </div>
+                      );
+                    })
+                  : null}
+              </div>
+            );
+          })
+        )}
+      </div>
+      </div>
+
+      {showBuiltInInfoDialog ? (
+        <Dialog
+          open={Boolean(infoRow)}
+          onOpenChange={(open) => {
+            if (!open) setInfoRowId(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            {infoRow ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{infoRow.name}</DialogTitle>
+                  <DialogDescription>
+                    Detalle del paso en el plan.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 text-sm">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge variant="outline">{infoRow.workstreamName}</Badge>
+                    <Badge variant="secondary">{infoRow.blockName}</Badge>
+                    <Badge variant="outline">{infoRow.activityName}</Badge>
+                  </div>
+                  {infoRow.status ? (
+                    <p>
+                      <span className="text-muted-foreground">Estado: </span>
+                      {infoRow.status}
+                    </p>
+                  ) : null}
+                  <p>
+                    <span className="text-muted-foreground">Duración: </span>
+                    {infoRow.estimatedDurationMinutes != null
+                      ? `${infoRow.estimatedDurationMinutes} min`
+                      : `default ${DEFAULT_DURATION_MINUTES} min`}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Deps: </span>
+                    {infoRow.dependencyStepIds.length || "ninguna"}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">
+                      Aprobaciones:{" "}
+                    </span>
+                    {(infoRow.approvalRoles ?? []).length
+                      ? (infoRow.approvalRoles ?? []).join(", ")
+                      : "ninguna"}
+                  </p>
+                  <div>
+                    <p className="text-muted-foreground">Descripción</p>
+                    <p className="mt-1 whitespace-pre-wrap">
+                      {infoRow.description?.trim() || "Sin descripción."}
+                    </p>
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+      ) : null}
+    </div>
+  );
+}

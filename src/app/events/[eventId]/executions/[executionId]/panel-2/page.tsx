@@ -4,7 +4,7 @@ import { Play } from "lucide-react";
 
 import { AppHeader } from "@/components/app-header";
 import { ExecutionObserveNav } from "@/components/execution-observe-nav";
-import { ExecutionTimesPanel } from "@/components/execution-times-panel";
+import { ExecutionTimesPanel2 } from "@/components/execution-times-panel-2";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +16,7 @@ import { canUseDevActorImpersonation } from "@/lib/dev-impersonation";
 import { canViewExecution } from "@/lib/execution-auth";
 import { getExecutionDetail } from "@/lib/execution-runtime";
 
-export default async function ExecutionPage({
+export default async function ExecutionPanel2Page({
   params,
 }: {
   params: Promise<{ eventId: string; executionId: string }>;
@@ -45,7 +45,6 @@ export default async function ExecutionPage({
     redirect(`/run/${executionId}`);
   }
 
-  // Panel = solo observación. Operar (incl. contingencia EventAdmin) vive en /run.
   const canOpenCockpit =
     isAdmin ||
     Boolean(
@@ -61,7 +60,11 @@ export default async function ExecutionPage({
         crumbs={[
           { label: "Evento", href: `/events/${eventId}` },
           { label: "Ejecuciones", href: `/events/${eventId}/executions` },
-          { label: detail.name },
+          {
+            label: detail.name,
+            href: `/events/${eventId}/executions/${executionId}`,
+          },
+          { label: "Panel 2" },
         ]}
         actions={
           <>
@@ -71,7 +74,7 @@ export default async function ExecutionPage({
             <ExecutionObserveNav
               eventId={eventId}
               executionId={executionId}
-              current="panel"
+              current="panel-2"
             />
             {canOpenCockpit ? (
               <Button size="sm" variant="secondary" asChild>
@@ -85,7 +88,7 @@ export default async function ExecutionPage({
         }
       />
       <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-x-hidden px-3 pb-4 sm:px-6">
-        <ExecutionTimesPanel
+        <ExecutionTimesPanel2
           initial={detail}
           actorId={realActor?.id ?? null}
           actorName={realActor?.name ?? null}
@@ -103,7 +106,7 @@ export default async function ExecutionPage({
                 realActor?.roles.includes("STEERCO"),
             )
           }
-          title="Panel"
+          title="Panel 2"
         />
       </main>
     </div>
