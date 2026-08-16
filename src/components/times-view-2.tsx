@@ -1,7 +1,7 @@
 "use client";
 
 import { BadgeInfo, ChevronDown, ChevronRight, Paperclip } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -467,23 +467,7 @@ export function TimesLaneHeader({
   );
 }
 
-function tickStepForSpan(spanMin: number) {
-  if (spanMin <= 120) return 15;
-  if (spanMin <= 480) return 30;
-  if (spanMin <= 1440) return 60;
-  return 120;
-}
-
-function buildWindowTicks(windowStart: number, windowSpan: number) {
-  const step = tickStepForSpan(windowSpan);
-  const end = windowStart + windowSpan;
-  const first = Math.ceil(windowStart / step) * step;
-  const ticks: number[] = [];
-  for (let value = first; value <= end + 0.001; value += step) {
-    ticks.push(value);
-  }
-  return ticks;
-}
+const WINDOW_COLUMNS = 24;
 
 function clampWindowStart(start: number, span: number, totalMin: number) {
   if (span >= totalMin) return 0;
@@ -494,6 +478,86 @@ function formatMinutes(total: number) {
   const hours = Math.floor(total / 60);
   const minutes = total % 60;
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function civilDayKey(
+  offsetMin: number,
+  t0Ms: number | null,
+  timezone: string,
+  useClock: boolean,
+) {
+  if (!useClock || t0Ms == null) {
+    return `d${Math.floor(Math.max(0, offsetMin) / 1440)}`;
+  }
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(t0Ms + offsetMin * 60_000));
+}
+
+function formatDayChip(
+  offsetMin: number,
+  t0Ms: number | null,
+  timezone: string,
+  useClock: boolean,
+) {
+  if (!useClock || t0Ms == null) {
+    const day = Math.floor(Math.max(0, offsetMin) / 1440) + 1;
+    return `Día ${day}`;
+  }
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: timezone,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  })
+    .format(new Date(t0Ms + offsetMin * 60_000))
+    .replaceAll(".", "");
+}
+
+function minutesIntoCivilDay(
+  offsetMin: number,
+  t0Ms: number | null,
+  timezone: string,
+  useClock: boolean,
+) {
+  if (!useClock || t0Ms == null) {
+    return ((Math.floor(offsetMin) % 1440) + 1440) % 1440;
+  }
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(t0Ms + offsetMin * 60_000));
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+  const minute = Number(
+    parts.find((part) => part.type === "minute")?.value ?? 0,
+  );
+  return hour * 60 + minute;
+}
+
+function visibleDayBands(
+  windowStart: number,
+  windowEnd: number,
+  t0Ms: number | null,
+  timezone: string,
+  useClock: boolean,
+) {
+  const bands: { startMin: number; endMin: number }[] = [];
+  let cursor = windowStart;
+  let guard = 0;
+  while (cursor < windowEnd - 0.001 && guard < 8) {
+    const intoDay = minutesIntoCivilDay(cursor, t0Ms, timezone, useClock);
+    const remaining = intoDay === 0 ? 1440 : 1440 - intoDay;
+    const end = Math.min(windowEnd, cursor + Math.max(remaining, 1));
+    bands.push({ startMin: cursor, endMin: end });
+    cursor = end;
+    guard += 1;
+  }
+  return bands;
 }
 
 /** Etiqueta del eje: hora civil desde Día D, o offset relativo. */
@@ -673,13 +737,30 @@ export function TimesView2({
     // Solo al pulsar Colapsar/Abrir; no reaplicar si el plan se actualiza.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- nonce
   }, [foldAll]);
+  const frameRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const hScrollRef = useRef<HTMLDivElement>(null);
+  const ignoreHScroll = useRef(false);
+  const didSnapNow = useRef(false);
+  const prevSpanRef = useRef<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
+  const [trackWidth, setTrackWidth] = useState(0);
+  const [windowStart, setWindowStart] = useState(0);
 
   useEffect(() => {
-    const node = scrollerRef.current;
+    const node = frameRef.current;
     if (!node) return;
     const update = () => setViewportWidth(node.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const node = hScrollRef.current;
+    if (!node) return;
+    const update = () => setTrackWidth(node.clientWidth);
     update();
     const observer = new ResizeObserver(update);
     observer.observe(node);
@@ -699,22 +780,104 @@ export function TimesView2({
       : Math.min(zoomOption.minutes, totalMin);
   const nowMin =
     t0Ms != null && nowMs != null ? (nowMs - t0Ms) / 60_000 : null;
-  const windowStart = clampWindowStart(
-    (nowMin ?? 0) - windowSpan / 2,
-    windowSpan,
-    totalMin,
-  );
-  const windowEnd = windowStart + windowSpan;
+
+  useEffect(() => {
+    if (didSnapNow.current || nowMin == null) return;
+    didSnapNow.current = true;
+    setWindowStart(
+      clampWindowStart(nowMin - windowSpan / 2, windowSpan, totalMin),
+    );
+  }, [nowMin, windowSpan, totalMin]);
+
+  useEffect(() => {
+    if (prevSpanRef.current == null) {
+      prevSpanRef.current = windowSpan;
+      return;
+    }
+    if (prevSpanRef.current === windowSpan) return;
+    const oldSpan = prevSpanRef.current;
+    prevSpanRef.current = windowSpan;
+    setWindowStart((start) =>
+      clampWindowStart(start + oldSpan / 2 - windowSpan / 2, windowSpan, totalMin),
+    );
+  }, [windowSpan, totalMin]);
+
+  const panRange = Math.max(0, totalMin - windowSpan);
+  const canPan = panRange > 0;
+  const clampedStart = clampWindowStart(windowStart, windowSpan, totalMin);
+  const windowEnd = clampedStart + windowSpan;
   const chartWidth = Math.max(
     1,
     (viewportWidth || 960) - CHART_RIGHT_GUTTER_PX,
   );
   const pxPerMin = chartWidth / Math.max(windowSpan, 1);
-  const ticks = buildWindowTicks(windowStart, windowSpan);
+  const planWidth = canPan
+    ? (totalMin / windowSpan) * Math.max(trackWidth, 1)
+    : undefined;
   const useClockLabels = Boolean(dayDStartAt && t0Ms != null);
+  const columns = Array.from({ length: WINDOW_COLUMNS }, (_, index) => {
+    const startMin = clampedStart + (index / WINDOW_COLUMNS) * windowSpan;
+    const dayKey = civilDayKey(
+      startMin,
+      t0Ms,
+      eventTimezone,
+      useClockLabels,
+    );
+    const prevDayKey =
+      index === 0
+        ? dayKey
+        : civilDayKey(
+            clampedStart + ((index - 1) / WINDOW_COLUMNS) * windowSpan,
+            t0Ms,
+            eventTimezone,
+            useClockLabels,
+          );
+    return {
+      index,
+      startMin,
+      x: (index / WINDOW_COLUMNS) * chartWidth,
+      width: chartWidth / WINDOW_COLUMNS,
+      isMidnight: index > 0 && dayKey !== prevDayKey,
+    };
+  });
+  const dayBands = visibleDayBands(
+    clampedStart,
+    windowEnd,
+    t0Ms,
+    eventTimezone,
+    useClockLabels,
+  );
+
+  useEffect(() => {
+    const node = hScrollRef.current;
+    if (!node) return;
+    if (!canPan) {
+      if (node.scrollLeft !== 0) node.scrollLeft = 0;
+      return;
+    }
+    const maxScroll = node.scrollWidth - node.clientWidth;
+    if (maxScroll <= 0) return;
+    const expected = (clampedStart / panRange) * maxScroll;
+    if (Math.abs(node.scrollLeft - expected) < 1) return;
+    ignoreHScroll.current = true;
+    node.scrollLeft = expected;
+    requestAnimationFrame(() => {
+      ignoreHScroll.current = false;
+    });
+  }, [canPan, clampedStart, panRange, planWidth]);
+
+  function onPlanScroll(event: UIEvent<HTMLDivElement>) {
+    if (ignoreHScroll.current) return;
+    const node = event.currentTarget;
+    const maxScroll = node.scrollWidth - node.clientWidth;
+    if (maxScroll <= 0 || panRange <= 0) return;
+    setWindowStart(
+      clampWindowStart((node.scrollLeft / maxScroll) * panRange, windowSpan, totalMin),
+    );
+  }
 
   function xOf(offsetMin: number) {
-    return (offsetMin - windowStart) * pxPerMin;
+    return (offsetMin - clampedStart) * pxPerMin;
   }
 
   function toggleCollapsed(key: string) {
@@ -757,11 +920,15 @@ export function TimesView2({
           minHeight: stepRows.length * 32,
         }}
       >
-        {ticks.map((tick) => (
+        {columns.map((column) => (
           <div
-            key={`${laneKey}-${tick}`}
-            className="absolute inset-y-0 border-l border-border/40"
-            style={{ left: xOf(tick) }}
+            key={`${laneKey}-col-${column.index}`}
+            className={cn(
+              "absolute inset-y-0 border-l border-border/40",
+              column.index % 2 === 0 && "bg-foreground/[0.035]",
+              column.isMidnight && "border-l-2 border-l-cyan-400/80",
+            )}
+            style={{ left: column.x, width: column.width }}
           />
         ))}
         {gateMarkers.map((marker) => (
@@ -785,7 +952,7 @@ export function TimesView2({
         {stepRows.map((row, index) => {
           const item = items.get(row.id);
           if (!item) return null;
-          if (item.endMin < windowStart || item.startMin > windowEnd) {
+          if (item.endMin < clampedStart || item.startMin > windowEnd) {
             return null;
           }
           const top = 2 + index * 30;
@@ -874,8 +1041,39 @@ export function TimesView2({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
+        ref={frameRef}
+        className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border"
+      >
+      <div className="flex shrink-0 items-center gap-2 border-b bg-zinc-900/80 px-2 py-1.5">
+        <span className="shrink-0 text-[10px] font-medium tracking-wide text-zinc-400 uppercase">
+          Plan
+        </span>
+        <div
+          ref={hScrollRef}
+          className={cn(
+            "h-4 min-w-0 flex-1 rounded-sm bg-zinc-800 [scrollbar-color:#22d3ee_#3f3f46] [scrollbar-width:auto]",
+            canPan
+              ? "overflow-x-scroll overflow-y-hidden"
+              : "overflow-hidden",
+          )}
+          aria-label="Desplazar el plan en el tiempo"
+          aria-disabled={!canPan}
+          onScroll={onPlanScroll}
+        >
+          <div
+            style={{ width: canPan ? planWidth : "100%", height: 1 }}
+            aria-hidden
+          />
+        </div>
+        <span className="shrink-0 font-mono text-[10px] text-zinc-400 tabular-nums">
+          {formatAxisLabel(clampedStart, t0Ms, eventTimezone, useClockLabels)}
+          {" – "}
+          {formatAxisLabel(windowEnd, t0Ms, eventTimezone, useClockLabels)}
+        </span>
+      </div>
+      <div
         ref={scrollerRef}
-        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-xl border [scrollbar-gutter:stable]"
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
       >
       <div style={{ width: chartWidth }} className="min-w-0">
         {!dayDStartAt ? (
@@ -885,11 +1083,46 @@ export function TimesView2({
           </div>
         ) : null}
         <div className="sticky top-0 z-10 overflow-hidden border-b bg-background/95 backdrop-blur">
+          <div
+            className="relative h-7 overflow-hidden border-b border-cyan-500/30 bg-cyan-950/35"
+            style={{ width: chartWidth }}
+          >
+            {dayBands.map((band) => (
+              <div
+                key={`day-${band.startMin}`}
+                className="absolute inset-y-0 flex items-center border-r border-cyan-400/40 px-2"
+                style={{
+                  left: xOf(band.startMin),
+                  width: Math.max(1, (band.endMin - band.startMin) * pxPerMin),
+                }}
+              >
+                <span className="truncate text-[11px] font-semibold tracking-wide text-cyan-100">
+                  {formatDayChip(
+                    band.startMin,
+                    t0Ms,
+                    eventTimezone,
+                    useClockLabels,
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
           {gateMarkers.length ? (
             <div
               className="relative h-7 overflow-hidden border-b border-border/60"
               style={{ width: chartWidth }}
             >
+              {columns.map((column) => (
+                <div
+                  key={`gate-col-${column.index}`}
+                  className={cn(
+                    "absolute inset-y-0 border-l border-border/30",
+                    column.index % 2 === 0 && "bg-foreground/[0.035]",
+                    column.isMidnight && "z-[1] border-l-2 border-l-cyan-400/80",
+                  )}
+                  style={{ left: column.x, width: column.width }}
+                />
+              ))}
               {gateMarkers.map((marker) => (
                 <div
                   key={`head-${marker.id}`}
@@ -920,15 +1153,19 @@ export function TimesView2({
             className="relative h-7 overflow-hidden"
             style={{ width: chartWidth }}
           >
-            {ticks.map((tick) => (
+            {columns.map((column) => (
               <div
-                key={tick}
-                className="absolute top-0 bottom-0 border-l border-border/60"
-                style={{ left: xOf(tick) }}
+                key={`axis-${column.index}`}
+                className={cn(
+                  "absolute top-0 bottom-0 overflow-hidden border-l border-border/60",
+                  column.index % 2 === 0 && "bg-foreground/[0.035]",
+                  column.isMidnight && "border-l-2 border-l-cyan-400/80",
+                )}
+                style={{ left: column.x, width: column.width }}
               >
-                <span className="ml-1 text-[10px] text-muted-foreground">
+                <span className="ml-0.5 text-[9px] text-muted-foreground tabular-nums">
                   {formatAxisLabel(
-                    tick,
+                    column.startMin,
                     t0Ms,
                     eventTimezone,
                     useClockLabels,
@@ -1019,6 +1256,7 @@ export function TimesView2({
             );
           })
         )}
+      </div>
       </div>
       </div>
 
