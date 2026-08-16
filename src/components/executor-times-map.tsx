@@ -8,6 +8,7 @@ import {
   CirclePlay,
   CircleX,
   Clock,
+  Paperclip,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -1272,9 +1273,17 @@ export function ExecutorTimesMap({
                             setFlowerOpenId(null);
                           }}
                         >
-                          <span className="line-clamp-2 text-[10px] font-semibold leading-tight">
-                            {item.mine ? "★ " : ""}
-                            {item.step.name}
+                          <span className="flex min-w-0 items-center gap-1 text-[10px] font-semibold leading-tight">
+                            {item.step.evidenceRequired ? (
+                              <Paperclip
+                                className="size-3 shrink-0 opacity-90"
+                                aria-label="Evidencia obligatoria al marcar éxito"
+                              />
+                            ) : null}
+                            <span className="line-clamp-2">
+                              {item.mine ? "★ " : ""}
+                              {item.step.name}
+                            </span>
                           </span>
                           <span className="truncate text-[9px] opacity-80">
                             {item.step.activityName}

@@ -122,6 +122,8 @@ export const designStepInputSchema = z.object({
   description: z.string().trim().max(1000).default(""),
   /** Descripción larga / instrucciones. */
   longDescription: z.string().trim().max(4000).default(""),
+  /** Si true, marcar éxito exige al menos un adjunto. Default: no. */
+  evidenceRequired: z.boolean().default(false),
 });
 
 export const activityUpdateSchema = z
@@ -147,6 +149,7 @@ export const designStepUpdateSchema = z.object({
   name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(1000).default(""),
   longDescription: z.string().trim().max(4000).default(""),
+  evidenceRequired: z.boolean().default(false),
   activityId: z
     .string()
     .refine(ObjectId.isValid, "Actividad inválida")
@@ -235,6 +238,7 @@ export const stepPlanningInputSchema = z.object({
   requiresGateIds: z
     .array(z.string().refine(ObjectId.isValid, "Gate inválido"))
     .optional(),
+  evidenceRequired: z.boolean().optional(),
 });
 
 export type DesignStepUpdateResult = {
@@ -422,6 +426,8 @@ export type DesignStepSummary = {
   name: string;
   description: string;
   longDescription: string;
+  /** Sin adjunto no se puede marcar éxito. Default false. */
+  evidenceRequired: boolean;
   order: number;
   plannedStartAt: string | null;
   estimatedDurationMinutes: number | null;
@@ -631,6 +637,7 @@ type DesignStepDocument = {
   name: string;
   description: string;
   longDescription?: string;
+  evidenceRequired?: boolean;
   order: number;
   plannedStartAt?: Date | null;
   estimatedDurationMinutes?: number | null;
@@ -2141,22 +2148,102 @@ export async function updateEventActor(
   return toEventActorSummary(result);
 }
 
+async function emailStillNeededInControlX(email: string): Promise<boolean> {
+  const { getSuperAdminEmail } = await import("@/lib/current-user");
+  const normalized = email.trim().toLowerCase();
+  if (normalized === getSuperAdminEmail()) return true;
+
+  const database = await getDatabase();
+  const [eventActive, orgActive] = await Promise.all([
+    database.collection<EventMembershipDocument>("eventMemberships").findOne({
+      email: normalized,
+      status: "ACTIVE",
+    }),
+    database
+      .collection<OrganizationMembershipDocument>("organizationMemberships")
+      .findOne({ email: normalized, status: "ACTIVE" }),
+  ]);
+  return Boolean(eventActive || orgActive);
+}
+
+async function releaseClerkIfUnused(
+  email: string,
+  protectedEmails: Set<string>,
+): Promise<boolean> {
+  const normalized = email.trim().toLowerCase();
+  if (protectedEmails.has(normalized)) return false;
+  if (await emailStillNeededInControlX(normalized)) return false;
+  try {
+    const { deleteClerkUserByEmail } = await import("@/lib/clerk-users");
+    return await deleteClerkUserByEmail(normalized);
+  } catch {
+    return false;
+  }
+}
+
 export async function deactivateEventActor(
   eventId: string,
   actorId: string,
   deactivatedBy: string,
-): Promise<void> {
+  options?: { operatorEmail?: string },
+): Promise<{ clerkDeleted: boolean }> {
   if (!ObjectId.isValid(eventId) || !ObjectId.isValid(actorId)) {
     throw new Error("Actor inválido.");
   }
   const database = await getDatabase();
-  const result = await database
-    .collection<EventMembershipDocument>("eventMemberships")
-    .updateOne(
+  const collection =
+    database.collection<EventMembershipDocument>("eventMemberships");
+  const current = await collection.findOne({
+    _id: new ObjectId(actorId),
+    eventId: new ObjectId(eventId),
+    status: "ACTIVE",
+  });
+  if (!current) throw new Error("El actor no existe.");
+
+  const result = await collection.updateOne(
+    { _id: current._id, eventId: new ObjectId(eventId), status: "ACTIVE" },
+    {
+      $set: {
+        status: "INACTIVE",
+        deactivatedBy,
+        deactivatedAt: new Date(),
+      },
+    },
+  );
+  if (!result.matchedCount) throw new Error("El actor no existe.");
+  await touchPrepReadiness(eventId);
+
+  const protectedEmails = new Set(
+    [options?.operatorEmail].filter(Boolean).map((item) => item!.toLowerCase()),
+  );
+  const clerkDeleted = await releaseClerkIfUnused(
+    current.email,
+    protectedEmails,
+  );
+  return { clerkDeleted };
+}
+
+export async function deactivateAllEventActors(
+  eventId: string,
+  deactivatedBy: string,
+  options: { includeEventAdmins: boolean; operatorEmail?: string },
+): Promise<{
+  deactivated: number;
+  clerkDeleted: number;
+  remaining: EventActorSummary[];
+}> {
+  if (!ObjectId.isValid(eventId)) throw new Error("Evento inválido.");
+  const actors = await listEventActors(eventId);
+  const targets = options.includeEventAdmins
+    ? actors
+    : actors.filter((actor) => !actor.roles.includes("EVENT_ADMIN"));
+  if (targets.length) {
+    const database = await getDatabase();
+    await database.collection<EventMembershipDocument>("eventMemberships").updateMany(
       {
-        _id: new ObjectId(actorId),
         eventId: new ObjectId(eventId),
         status: "ACTIVE",
+        _id: { $in: targets.map((actor) => new ObjectId(actor.id)) },
       },
       {
         $set: {
@@ -2166,8 +2253,111 @@ export async function deactivateEventActor(
         },
       },
     );
-  if (!result.matchedCount) throw new Error("El actor no existe.");
-  await touchPrepReadiness(eventId);
+    await touchPrepReadiness(eventId);
+  }
+
+  const protectedEmails = new Set(
+    [options.operatorEmail].filter(Boolean).map((item) => item!.toLowerCase()),
+  );
+  let clerkDeleted = 0;
+  for (const actor of targets) {
+    if (await releaseClerkIfUnused(actor.email, protectedEmails)) {
+      clerkDeleted += 1;
+    }
+  }
+
+  return {
+    deactivated: targets.length,
+    clerkDeleted,
+    remaining: await listEventActors(eventId),
+  };
+}
+
+export async function importEventActors(
+  eventId: string,
+  rows: Array<{
+    name: string;
+    email: string;
+    area: string;
+    roles: EventActorRole[];
+  }>,
+  actorId: string,
+  options: { canManageEventAdmins: boolean },
+): Promise<{
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: Array<{ email: string; message: string }>;
+  actors: EventActorSummary[];
+}> {
+  const existing = await listEventActors(eventId);
+  const byEmail = new Map(
+    existing.map((actor) => [actor.email.toLowerCase(), actor]),
+  );
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  const errors: Array<{ email: string; message: string }> = [];
+
+  for (const row of rows) {
+    const current = byEmail.get(row.email.toLowerCase());
+    let roles = row.roles;
+    if (!options.canManageEventAdmins) {
+      const keepAdmin = Boolean(current?.roles.includes("EVENT_ADMIN"));
+      roles = roles.filter((role) => role !== "EVENT_ADMIN");
+      if (keepAdmin) roles = [...roles, "EVENT_ADMIN"];
+      if (
+        row.roles.includes("EVENT_ADMIN") &&
+        !keepAdmin &&
+        !roles.length
+      ) {
+        errors.push({
+          email: row.email,
+          message: "Solo OrgAdmin o SuperAdmin puede asignar EventAdmin.",
+        });
+        skipped += 1;
+        continue;
+      }
+    }
+    if (!roles.length) {
+      errors.push({
+        email: row.email,
+        message: "Quedó sin roles válidos.",
+      });
+      skipped += 1;
+      continue;
+    }
+    try {
+      const saved = await upsertEventActor(
+        eventId,
+        {
+          name: row.name,
+          email: row.email,
+          area: row.area,
+          roles,
+        },
+        actorId,
+      );
+      if (current) updated += 1;
+      else created += 1;
+      byEmail.set(saved.email.toLowerCase(), saved);
+    } catch (error) {
+      errors.push({
+        email: row.email,
+        message:
+          error instanceof Error ? error.message : "No fue posible guardar.",
+      });
+      skipped += 1;
+    }
+  }
+
+  return {
+    created,
+    updated,
+    skipped,
+    errors,
+    actors: await listEventActors(eventId),
+  };
 }
 
 export async function createWorkstream(
@@ -2499,6 +2689,7 @@ export async function createDesignStep(
     name: input.name,
     description: input.description,
     longDescription: input.longDescription,
+    evidenceRequired: input.evidenceRequired,
     order: (last?.order ?? 0) + 1,
     plannedStartAt: null,
     estimatedDurationMinutes: null,
@@ -2735,6 +2926,7 @@ function toDesignStepSummary(
     name: step.name,
     description: step.description,
     longDescription: step.longDescription ?? "",
+    evidenceRequired: step.evidenceRequired === true,
     order: step.order,
     plannedStartAt: step.plannedStartAt?.toISOString() ?? null,
     estimatedDurationMinutes: step.estimatedDurationMinutes ?? null,
@@ -3179,6 +3371,7 @@ export async function updateDesignStep(
     name: input.name,
     description: input.description,
     longDescription: input.longDescription,
+    evidenceRequired: input.evidenceRequired,
     updatedAt: new Date(),
   };
 
@@ -3691,6 +3884,9 @@ export async function updateStepPlanning(
           approvalRoles: input.approvalRoles,
           ...(produceGateId !== undefined ? { producesGateId: produceGateId } : {}),
           ...(requireGateIds !== undefined ? { requiresGateIds: requireGateIds } : {}),
+          ...(input.evidenceRequired !== undefined
+            ? { evidenceRequired: input.evidenceRequired }
+            : {}),
           updatedAt: new Date(),
         },
       },

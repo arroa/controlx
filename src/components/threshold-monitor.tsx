@@ -151,6 +151,16 @@ function chartYMax(totalSteps: number): number {
   return n < 11 ? n + 1 : n + 3;
 }
 
+/** 0, intermedias y N. Paso chico para que se lea la escala. */
+function yAxisTicks(totalSteps: number): number[] {
+  const top = Math.max(totalSteps, 0);
+  if (top <= 0) return [0];
+  const step = top <= 12 ? 1 : top <= 24 ? 2 : top <= 50 ? 5 : 10;
+  const ticks = new Set<number>([0, top]);
+  for (let v = step; v < top; v += step) ticks.add(v);
+  return [...ticks].sort((a, b) => a - b);
+}
+
 function situationRows(model: ThresholdMonitorModel) {
   const plannedDone =
     model.totalSteps -
@@ -321,8 +331,10 @@ function StairBurndownChart({ model }: { model: ThresholdMonitorModel }) {
       !xMajorTimes.has(m.t),
   );
 
-  const nowInView =
-    model.nowMs >= viewStartMs && model.nowMs <= viewEndMs;
+  const nowLineMs = Math.min(
+    viewEndMs,
+    Math.max(viewStartMs, model.nowMs),
+  );
   const plannedEndInView =
     model.plannedEndMs != null &&
     model.plannedEndMs >= viewStartMs &&
@@ -386,28 +398,6 @@ function StairBurndownChart({ model }: { model: ThresholdMonitorModel }) {
         />
       ) : null}
 
-      {nowInView ? (
-        <>
-          <line
-            x1={x(model.nowMs)}
-            x2={x(model.nowMs)}
-            y1={pad.t}
-            y2={h - pad.b}
-            stroke="#a5f3fc"
-            strokeWidth={1}
-            strokeDasharray="4 4"
-          />
-          <text
-            x={x(model.nowMs) + 4}
-            y={pad.t + 14}
-            fill="#ecfeff"
-            fontSize={labelFontSize}
-          >
-            ahora
-          </text>
-        </>
-      ) : null}
-
       {plannedEndInView && model.plannedEndMs != null ? (
         <line
           x1={x(model.plannedEndMs)}
@@ -454,6 +444,25 @@ function StairBurndownChart({ model }: { model: ThresholdMonitorModel }) {
         strokeLinejoin="miter"
       />
 
+      <line
+        x1={x(nowLineMs)}
+        x2={x(nowLineMs)}
+        y1={pad.t}
+        y2={h - pad.b}
+        stroke="#e11d48"
+        strokeWidth={1.75}
+        strokeDasharray="5 4"
+      />
+      <text
+        x={Math.min(x(nowLineMs) + 5, w - pad.r - 4)}
+        y={pad.t - 8}
+        fill="#e11d48"
+        fontSize={labelFontSize}
+        fontWeight={600}
+      >
+        ahora
+      </text>
+
       {failTicks.map((m) => {
         const count = runningCountAfter(model.runningDeltas, m.t);
         const cx = x(m.t);
@@ -490,24 +499,28 @@ function StairBurndownChart({ model }: { model: ThresholdMonitorModel }) {
           </text>
         );
       })}
-      <text
-        x={pad.l - 10}
-        y={y(model.totalSteps) + 4}
-        textAnchor="end"
-        className="fill-muted-foreground"
-        fontSize={axisYFontSize}
-      >
-        {model.totalSteps}
-      </text>
-      <text
-        x={pad.l - 10}
-        y={h - pad.b}
-        textAnchor="end"
-        className="fill-muted-foreground"
-        fontSize={axisYFontSize}
-      >
-        0
-      </text>
+      {yAxisTicks(model.totalSteps).map((value) => (
+        <g key={`y-${value}`}>
+          <line
+            x1={pad.l}
+            x2={w - pad.r}
+            y1={y(value)}
+            y2={y(value)}
+            stroke="#3f3f46"
+            strokeOpacity={value === 0 || value === model.totalSteps ? 0 : 0.7}
+            strokeWidth={1}
+          />
+          <text
+            x={pad.l - 10}
+            y={y(value) + 3.5}
+            textAnchor="end"
+            className="fill-muted-foreground"
+            fontSize={axisYFontSize}
+          >
+            {value}
+          </text>
+        </g>
+      ))}
     </svg>
   );
 }

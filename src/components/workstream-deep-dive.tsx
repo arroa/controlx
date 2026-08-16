@@ -244,6 +244,8 @@ export function WorkstreamDeepDive({
       <ExecutionStepInfoDialog
         open={Boolean(infoStep)}
         step={infoStep}
+        steps={detail.steps}
+        gates={detail.gates}
         timezone={detail.timezone}
         executionId={detail.id}
         onClose={() => setInfoId(null)}

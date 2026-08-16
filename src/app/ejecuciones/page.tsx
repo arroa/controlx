@@ -1,4 +1,4 @@
-import { ChartNoAxesCombined, Eye, Play } from "lucide-react";
+import { ChartNoAxesCombined, Eye, Map, Play } from "lucide-react";
 import { ObjectId } from "mongodb";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -128,6 +128,14 @@ function ExecutionRow({ item }: { item: AccessibleExecutionCard }) {
               {item.assignedStepCount} paso
               {item.assignedStepCount === 1 ? "" : "s"} mío
               {item.assignedStepCount === 1 ? "" : "s"}
+            </Button>
+          ) : null}
+          {canPanel ? (
+            <Button size="sm" variant="outline" asChild>
+              <Link href={`/events/${item.eventId}/executions/${item.id}/mapa`}>
+                <Map className="size-3.5" />
+                Mapa General
+              </Link>
             </Button>
           ) : null}
           {canPanel ? (

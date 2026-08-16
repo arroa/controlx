@@ -3,6 +3,7 @@
 import {
   ChartNoAxesCombined,
   LoaderCircle,
+  Map,
   Play,
   RefreshCw,
   Search,
@@ -341,6 +342,14 @@ export function EventExecutions({
                   </Button>
                 </CardHeader>
                 <CardContent className="space-y-2">
+                  <Button variant="outline" className="w-full" asChild>
+                    <Link
+                      href={`/events/${event.id}/executions/${execution.id}/mapa`}
+                    >
+                      <Map className="size-3.5" />
+                      Mapa General
+                    </Link>
+                  </Button>
                   <Button variant="outline" className="w-full" asChild>
                     <Link
                       href={`/events/${event.id}/executions/${execution.id}`}

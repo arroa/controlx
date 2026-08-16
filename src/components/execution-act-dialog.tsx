@@ -239,6 +239,10 @@ type ExecutionActDialogProps = {
   files: File[];
   onFilesChange: (files: File[]) => void;
   blobConfigured: boolean;
+  /** Si el paso exige adjunto para marcarlo como Exitoso. */
+  evidenceRequired?: boolean;
+  /** Adjuntos ya presentes en el paso (cuentan para el cierre). */
+  existingEvidenceCount?: number;
   busy: boolean;
   error?: string;
   onCancel: () => void;
@@ -263,6 +267,8 @@ export function ExecutionActDialog({
   files,
   onFilesChange,
   blobConfigured,
+  evidenceRequired = false,
+  existingEvidenceCount = 0,
   busy,
   error,
   onCancel,
@@ -270,6 +276,9 @@ export function ExecutionActDialog({
 }: ExecutionActDialogProps) {
   const isStart = action ? actionNeedsStartTime(action as RuntimeStepAction) : false;
   const isForce = action === "force_success";
+  const isSuccessClose = action === "complete_success";
+  const needsEvidence = evidenceRequired && isSuccessClose;
+  const hasEvidence = files.length > 0 || existingEvidenceCount > 0;
   const [localError, setLocalError] = useState("");
   const [timeClampHint, setTimeClampHint] = useState("");
 
@@ -390,7 +399,8 @@ export function ExecutionActDialog({
     Boolean(occurredAt) &&
     Boolean(action) &&
     !belowMin &&
-    (!isForce || Boolean(comment.trim()));
+    (!isForce || Boolean(comment.trim())) &&
+    (!needsEvidence || hasEvidence);
 
   const displayError = localError || error;
 
@@ -577,13 +587,20 @@ export function ExecutionActDialog({
             <label
               className={cn(
                 "flex cursor-pointer items-center gap-2 rounded-md border border-dashed px-3 py-2.5 text-sm hover:bg-muted/40",
+                needsEvidence &&
+                  !hasEvidence &&
+                  "border-amber-500/40 bg-amber-500/10",
                 (!blobConfigured || busy) && "cursor-not-allowed opacity-60",
               )}
             >
               <Paperclip className="size-4 shrink-0" />
               <span>
                 {blobConfigured
-                  ? "Adjuntar archivo(s) · máx. 10 MB c/u"
+                  ? needsEvidence
+                    ? "Adjuntar evidencia (obligatoria para el éxito) · máx. 10 MB c/u"
+                    : isStart && evidenceRequired
+                      ? "Adjuntar archivo(s) · opcional al iniciar · máx. 10 MB c/u"
+                      : "Adjuntar archivo(s) · máx. 10 MB c/u"
                   : "Adjuntos no disponibles (Blob sin configurar)"}
               </span>
               <input
@@ -620,6 +637,24 @@ export function ExecutionActDialog({
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {needsEvidence && !hasEvidence ? (
+              <p className="text-xs text-amber-200">
+                {blobConfigured
+                  ? "Este paso exige al menos un adjunto para marcarlo como Exitoso."
+                  : "Este paso exige evidencia al marcar éxito, pero los adjuntos no están disponibles."}
+              </p>
+            ) : isStart && evidenceRequired ? (
+              <p className="flex items-start gap-1.5 text-xs text-amber-200">
+                <Paperclip className="mt-0.5 size-3.5 shrink-0" />
+                Al iniciar no se pide adjunto. Sí será obligatorio al marcar
+                éxito.
+              </p>
+            ) : needsEvidence && existingEvidenceCount > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Ya hay {existingEvidenceCount} adjunto
+                {existingEvidenceCount === 1 ? "" : "s"} en el paso.
+              </p>
             ) : null}
           </div>
 

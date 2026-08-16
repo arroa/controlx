@@ -4,10 +4,12 @@ import {
   Boxes,
   CalendarClock,
   CirclePlus,
+  Download,
   Layers3,
   LoaderCircle,
   Pencil,
   Trash2,
+  Upload,
   Users,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -28,6 +30,7 @@ import { DateTimePicker } from "@/components/datetime-picker";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -63,6 +66,7 @@ type CatalogItem = WorkstreamSummary | BlockSummary;
 
 export function EventSetup({
   eventId,
+  eventName,
   eventTimezone,
   initialDayDStartAt,
   initialWorkstreams,
@@ -71,6 +75,7 @@ export function EventSetup({
   canManageEventAdminRole,
 }: {
   eventId: string;
+  eventName: string;
   eventTimezone: string;
   initialDayDStartAt: string | null;
   initialWorkstreams: WorkstreamSummary[];
@@ -125,6 +130,7 @@ export function EventSetup({
       </div>
       <ActorsMapCard
         eventId={eventId}
+        eventName={eventName}
         actors={actors}
         canManageEventAdminRole={canManageEventAdminRole}
         onSaved={(actor) =>
@@ -137,6 +143,7 @@ export function EventSetup({
         onRemoved={(id) =>
           setActors((current) => current.filter((item) => item.id !== id))
         }
+        onActorsLoaded={setActors}
       />
     </div>
   );
@@ -144,16 +151,20 @@ export function EventSetup({
 
 function ActorsMapCard({
   eventId,
+  eventName,
   actors,
   canManageEventAdminRole,
   onSaved,
   onRemoved,
+  onActorsLoaded,
 }: {
   eventId: string;
+  eventName: string;
   actors: EventActorSummary[];
   canManageEventAdminRole: boolean;
   onSaved: (actor: EventActorSummary) => void;
   onRemoved: (id: string) => void;
+  onActorsLoaded: (actors: EventActorSummary[]) => void;
 }) {
   const [draftName, setDraftName] = useState("");
   const [draftEmail, setDraftEmail] = useState("");
@@ -162,6 +173,12 @@ function ActorsMapCard({
   const [extraAreas, setExtraAreas] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearConfirm, setClearConfirm] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [toast, setToast] = useState<{
     kind: "saving" | "ok" | "error";
     message: string;
@@ -326,6 +343,110 @@ function ActorsMapCard({
     void patchActor(optimistic, actor);
   }
 
+  const clearableCount = canManageEventAdminRole
+    ? actors.length
+    : actors.filter((actor) => !actor.roles.includes("EVENT_ADMIN")).length;
+
+  async function downloadExcel() {
+    setExporting(true);
+    setError("");
+    const response = await fetch(
+      `/api/events/${eventId}/actors/export?name=${encodeURIComponent(eventName)}`,
+    ).catch(() => null);
+    if (!response?.ok) {
+      const payload = response
+        ? ((await response.json()) as { error?: string })
+        : null;
+      showToast("error", payload?.error ?? "No fue posible descargar.");
+      setExporting(false);
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `actores-${stamp}.xlsx`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setExporting(false);
+    showToast("ok", "Excel descargado.");
+  }
+
+  async function uploadExcel(file: File) {
+    setImporting(true);
+    showToast("saving", "Cargando Excel…");
+    const body = new FormData();
+    body.set("file", file);
+    const response = await fetch(`/api/events/${eventId}/actors/import`, {
+      method: "POST",
+      body,
+    }).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as {
+          actors?: EventActorSummary[];
+          created?: number;
+          updated?: number;
+          skipped?: number;
+          error?: string;
+          errors?: Array<{ email: string; message: string }>;
+        })
+      : null;
+    setImporting(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!response?.ok || !payload?.actors) {
+      showToast("error", payload?.error ?? "No fue posible cargar el Excel.");
+      return;
+    }
+    onActorsLoaded(payload.actors);
+    const skipped = payload.skipped ?? 0;
+    const detail = [
+      `${payload.created ?? 0} alta(s)`,
+      `${payload.updated ?? 0} actualizado(s)`,
+    ];
+    if (skipped) detail.push(`${skipped} omitido(s)`);
+    showToast(
+      skipped ? "error" : "ok",
+      skipped
+        ? `${detail.join(" · ")}. ${payload.errors?.[0]?.message ?? ""}`
+        : detail.join(" · "),
+      skipped ? 6000 : 3200,
+    );
+  }
+
+  async function clearAllActors() {
+    if (clearConfirm !== "LIMPIAR") return;
+    setClearing(true);
+    showToast("saving", "Desactivando actores…");
+    const response = await fetch(`/api/events/${eventId}/actors/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: "LIMPIAR" }),
+    }).catch(() => null);
+    const payload = response
+      ? ((await response.json()) as {
+          remaining?: EventActorSummary[];
+          deactivated?: number;
+          clerkDeleted?: number;
+          error?: string;
+        })
+      : null;
+    setClearing(false);
+    if (!response?.ok || !payload?.remaining) {
+      showToast("error", payload?.error ?? "No fue posible limpiar.");
+      return;
+    }
+    onActorsLoaded(payload.remaining);
+    setClearOpen(false);
+    setClearConfirm("");
+    showToast(
+      "ok",
+      `${payload.deactivated ?? 0} del mapa · ${payload.clerkDeleted ?? 0} borrados de Clerk.`,
+    );
+  }
+
   return (
     <Card className="relative overflow-visible">
       {toast ? (
@@ -356,11 +477,116 @@ function ActorsMapCard({
             <CardTitle>Mapa de actores</CardTitle>
             <CardDescription className="mt-1">
               Nombre, correo y área. Los roles se marcan en línea. El alta
-              sincroniza el usuario en Clerk; la baja solo lo desactiva en
-              ControlX.
+              sincroniza el usuario en Clerk. La baja lo saca del mapa y, si
+              no tiene otro rol, también lo borra de Clerk.
             </CardDescription>
           </div>
         </div>
+        <CardAction>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={exporting || importing || clearing}
+              onClick={() => void downloadExcel()}
+            >
+              {exporting ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              Descargar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={exporting || importing || clearing}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {importing ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : (
+                <Upload className="size-3.5" />
+              )}
+              Upload
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void uploadExcel(file);
+              }}
+            />
+            <AlertDialog
+              open={clearOpen}
+              onOpenChange={(next) => {
+                setClearOpen(next);
+                if (!next) setClearConfirm("");
+              }}
+            >
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  disabled={
+                    exporting || importing || clearing || clearableCount === 0
+                  }
+                  title={
+                    clearableCount === 0
+                      ? "No hay actores para desactivar"
+                      : "Saca a todos del mapa y de Clerk si no tienen otro rol"
+                  }
+                >
+                  <Trash2 className="size-3.5" />
+                  Limpiar todo
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent className="sm:max-w-md">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Limpiar todo el mapa?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se sacan {clearableCount} actor(es) del mapa. Si no son
+                    SuperAdmin, OrgAdmin ni actores de otro evento, también se
+                    borran de Clerk.
+                    {canManageEventAdminRole
+                      ? " Incluye EventAdmin."
+                      : " Los EventAdmin no se tocan."}{" "}
+                    Tu usuario no se borra. Para confirmar, escribí{" "}
+                    <strong>LIMPIAR</strong>.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <Input
+                  value={clearConfirm}
+                  onChange={(event) => setClearConfirm(event.target.value)}
+                  placeholder="LIMPIAR"
+                  autoComplete="off"
+                  aria-label="Escribí LIMPIAR para confirmar"
+                />
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={clearing}>
+                    Cancelar
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    disabled={clearing || clearConfirm !== "LIMPIAR"}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void clearAllActors();
+                    }}
+                  >
+                    {clearing ? "Limpiando…" : "Desactivar a todos"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="overflow-x-auto rounded-lg border">
@@ -738,7 +964,8 @@ function RemoveActor({
         <AlertDialogHeader>
           <AlertDialogTitle>¿Quitar actor?</AlertDialogTitle>
           <AlertDialogDescription>
-            {actor.email} saldrá del mapa de actores.
+            {actor.email} saldrá del mapa. Si no está en otro evento ni es
+            admin de org, también se borra de Clerk.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

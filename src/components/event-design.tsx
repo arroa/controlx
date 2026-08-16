@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CirclePlus,
   LoaderCircle,
+  Paperclip,
   Pencil,
   Search,
   Trash2,
@@ -73,6 +74,7 @@ type EditorState = {
   stepName: string;
   stepDescription: string;
   stepLongDescription: string;
+  stepEvidenceRequired: boolean;
 };
 
 function emptyEditor(
@@ -90,8 +92,11 @@ function emptyEditor(
     stepName: "",
     stepDescription: "",
     stepLongDescription: "",
+    stepEvidenceRequired: false,
   };
 }
+
+const DESIGN_COL_COUNT = 8;
 
 export function EventDesign({
   eventId,
@@ -332,6 +337,7 @@ export function EventDesign({
       stepName: "",
       stepDescription: "",
       stepLongDescription: "",
+      stepEvidenceRequired: false,
     });
   }
 
@@ -347,6 +353,7 @@ export function EventDesign({
       stepName: "",
       stepDescription: "",
       stepLongDescription: "",
+      stepEvidenceRequired: false,
     });
   }
 
@@ -362,6 +369,7 @@ export function EventDesign({
       stepName: step.name,
       stepDescription: step.description,
       stepLongDescription: step.longDescription ?? "",
+      stepEvidenceRequired: step.evidenceRequired === true,
     });
   }
 
@@ -419,6 +427,7 @@ export function EventDesign({
               name: editor.stepName,
               description: editor.stepDescription,
               longDescription: editor.stepLongDescription,
+              evidenceRequired: editor.stepEvidenceRequired,
               activityId: editor.activityId,
             }),
           },
@@ -489,6 +498,7 @@ export function EventDesign({
           name: editor.stepName,
           description: editor.stepDescription,
           longDescription: editor.stepLongDescription,
+          evidenceRequired: editor.stepEvidenceRequired,
         }),
       });
       const stepPayload = (await stepResponse.json()) as {
@@ -557,6 +567,7 @@ export function EventDesign({
       <col className="w-[16%]" />
       <col className="w-[16%]" />
       <col />
+      <col className="w-[44px]" />
       <col className="w-[180px]" />
     </colgroup>
   );
@@ -584,6 +595,15 @@ export function EventDesign({
               <TableHead className="bg-muted">Actividad</TableHead>
               <TableHead className="bg-muted">Paso</TableHead>
               <TableHead className="bg-muted">Descripción</TableHead>
+              <TableHead
+                className="bg-muted px-1 text-center"
+                title="Evidencia obligatoria al marcar éxito, no al iniciar ni al fallar"
+              >
+                <span className="sr-only">
+                  Evidencia obligatoria al marcar éxito
+                </span>
+                <Paperclip className="mx-auto size-3.5" aria-hidden />
+              </TableHead>
               <TableHead className="bg-muted text-right">Acciones</TableHead>
             </TableRow>
             <TableRow className="bg-card hover:bg-card">
@@ -675,6 +695,21 @@ export function EventDesign({
                   placeholder="Descripción del paso"
                 />
               </TableCell>
+              <TableCell className="bg-card px-1 text-center">
+                <input
+                  type="checkbox"
+                  checked={bar.stepEvidenceRequired}
+                  onChange={(event) =>
+                    setBar((current) => ({
+                      ...current,
+                      stepEvidenceRequired: event.target.checked,
+                    }))
+                  }
+                  aria-label="Evidencia obligatoria al marcar éxito"
+                  title="Obligatoria al marcar éxito, no al iniciar ni al fallar"
+                  className="size-4 accent-teal-500"
+                />
+              </TableCell>
               <TableCell className="bg-card text-right">
                 <div className="flex justify-end gap-2">
                   <Button
@@ -719,7 +754,7 @@ export function EventDesign({
             {filteredPairs.every((pair) => pair.activities.length === 0) ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={DESIGN_COL_COUNT}
                   className="h-24 text-center text-muted-foreground"
                 >
                   {query
@@ -845,7 +880,7 @@ function WorkstreamGroupRows({
   return (
     <>
       <TableRow className="bg-muted/30 hover:bg-muted/30">
-        <TableCell colSpan={7}>
+        <TableCell colSpan={DESIGN_COL_COUNT}>
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -944,7 +979,7 @@ function BlockGroupRows({
   return (
     <>
       <TableRow className="bg-muted/15 hover:bg-muted/15">
-        <TableCell colSpan={7} className="pl-8">
+        <TableCell colSpan={DESIGN_COL_COUNT} className="pl-8">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -1037,7 +1072,7 @@ function ActivityRows({
   return (
     <>
       <TableRow className="bg-muted/10 hover:bg-muted/10">
-        <TableCell colSpan={7} className="pl-14">
+        <TableCell colSpan={DESIGN_COL_COUNT} className="pl-14">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -1106,6 +1141,20 @@ function ActivityRows({
                 title={step.description || undefined}
               >
                 {step.description || "—"}
+              </TableCell>
+              <TableCell className="px-1 text-center">
+                {step.evidenceRequired ? (
+                  <span title="Evidencia obligatoria al marcar éxito">
+                    <Paperclip
+                      className="mx-auto size-3.5 text-amber-300"
+                      aria-label="Evidencia obligatoria al marcar éxito"
+                    />
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground/40" aria-hidden>
+                    —
+                  </span>
+                )}
               </TableCell>
               <TableCell>
                 <RowActions
@@ -1485,6 +1534,26 @@ function DesignEditorDialog({
                 />
               </div>
             </>
+          ) : null}
+
+          {editor.mode !== "edit-activity" ? (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={editor.stepEvidenceRequired}
+                onChange={(event) =>
+                  patch({ stepEvidenceRequired: event.target.checked })
+                }
+                className="mt-1 size-4 shrink-0 accent-teal-500"
+              />
+              <span>
+                Evidencia obligatoria al marcar éxito
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Sin adjunto no se puede marcar el paso como Exitoso. Al
+                  iniciar o al fallar no se pide.
+                </span>
+              </span>
+            </label>
           ) : null}
 
           {error ? (

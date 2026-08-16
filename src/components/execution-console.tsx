@@ -6,6 +6,7 @@ import {
   ImageIcon,
   LoaderCircle,
   MessageSquarePlus,
+  Paperclip,
   Play,
   RotateCcw,
   ShieldCheck,
@@ -361,6 +362,12 @@ export function ExecutionConsole({
                     <span className="truncate text-sm font-medium">
                       {step.name}
                     </span>
+                    {step.evidenceRequired ? (
+                      <Paperclip
+                        className="size-3.5 shrink-0 text-amber-300"
+                        aria-label="Evidencia obligatoria al marcar éxito"
+                      />
+                    ) : null}
                     {step.overdue ? (
                       <Badge variant="outline" className="text-[10px] text-amber-300">
                         Atrasado
@@ -394,6 +401,12 @@ export function ExecutionConsole({
             <div className="space-y-4">
               <div>
                 <h2 className="text-lg font-semibold">{selected.name}</h2>
+                {selected.evidenceRequired ? (
+                  <p className="mt-1 flex items-center gap-1.5 text-xs text-amber-200">
+                    <Paperclip className="size-3.5 shrink-0" />
+                    Evidencia obligatoria para marcar éxito
+                  </p>
+                ) : null}
                 <p className="mt-1 text-sm text-muted-foreground">
                   {selected.description || "Sin descripción corta"}
                 </p>
@@ -507,8 +520,8 @@ export function ExecutionConsole({
               <div className="space-y-2">
                 <Label>
                   Evidencia (cualquier archivo ≤ 10 MB)
-                  {detail.type === "REAL" ? (
-                    <span className="text-amber-300"> · obligatoria al cerrar</span>
+                  {selected.evidenceRequired ? (
+                    <span className="text-amber-300"> · obligatoria al marcar éxito</span>
                   ) : (
                     <span className="text-muted-foreground"> · opcional</span>
                   )}
@@ -637,6 +650,8 @@ export function ExecutionConsole({
         files={files}
         onFilesChange={setFiles}
         blobConfigured={detail.blobConfigured}
+        evidenceRequired={selected?.evidenceRequired === true}
+        existingEvidenceCount={selected?.evidence.length ?? 0}
         busy={busy}
         error={error}
         onCancel={closeActDialog}

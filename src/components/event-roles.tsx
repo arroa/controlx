@@ -11,7 +11,6 @@ import {
   RefreshCw,
   Search,
   Square,
-  UserRound,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 
@@ -52,52 +51,75 @@ import type { DesignStepSummary } from "@/lib/admin-data";
 import type { EventActorSummary } from "@/lib/event-actors";
 import type { RoleStepRow } from "@/lib/role-steps";
 
-type SortKey = "workstream" | "activity" | "step";
+type SortKey =
+  | "workstream"
+  | "block"
+  | "activity"
+  | "step"
+  | "executor"
+  | "approver";
 type SortDir = "asc" | "desc";
-type StepFilter = "unassigned" | "mine" | "all";
-type AssignAs = "executor" | "approver";
-type ActorPoolFilter = "executors" | "approvers";
 
 type RoleDraftRow = {
   stepId: string;
   stepName: string;
   workstreamName: string;
+  blockName: string;
   activityName: string;
   executorActorId: string;
   approverActorId: string;
 };
 
 const NONE = "__none__";
+const ALL = "all";
+
+function uniqueSorted(values: string[]) {
+  return [...new Set(values)].sort((a, b) => a.localeCompare(b, "es"));
+}
 
 function compareRows(
   a: RoleStepRow,
   b: RoleStepRow,
   key: SortKey,
   dir: SortDir,
+  actorNameById: Map<string, string>,
 ): number {
   const factor = dir === "asc" ? 1 : -1;
+  const nameOf = (id: string | null | undefined) =>
+    (id ? actorNameById.get(id) : "") ?? "";
+  const approversOf = (row: RoleStepRow) =>
+    (row.step.approverActorIds ?? [])
+      .map((id) => actorNameById.get(id) ?? "")
+      .join(", ");
+
   const primary =
     key === "workstream"
       ? a.workstreamName.localeCompare(b.workstreamName, "es")
-      : key === "activity"
-        ? a.activityName.localeCompare(b.activityName, "es")
-        : a.step.name.localeCompare(b.step.name, "es") ||
-          a.step.order - b.step.order;
+      : key === "block"
+        ? a.blockName.localeCompare(b.blockName, "es")
+        : key === "activity"
+          ? a.activityName.localeCompare(b.activityName, "es")
+          : key === "executor"
+            ? nameOf(a.step.executorActorId).localeCompare(
+                nameOf(b.step.executorActorId),
+                "es",
+              )
+            : key === "approver"
+              ? approversOf(a).localeCompare(approversOf(b), "es")
+              : a.step.name.localeCompare(b.step.name, "es") ||
+                a.step.order - b.step.order;
 
   if (primary) return primary * factor;
 
   const byWs = a.workstreamName.localeCompare(b.workstreamName, "es");
   if (byWs) return byWs;
+  const byBlock = a.blockName.localeCompare(b.blockName, "es");
+  if (byBlock) return byBlock;
   const byAct = a.activityName.localeCompare(b.activityName, "es");
   if (byAct) return byAct;
   return (
-    a.step.order - b.step.order ||
-    a.step.name.localeCompare(b.step.name, "es")
+    a.step.order - b.step.order || a.step.name.localeCompare(b.step.name, "es")
   );
-}
-
-function stepHasApprover(step: DesignStepSummary, actorId: string) {
-  return (step.approverActorIds ?? []).includes(actorId);
 }
 
 function actorCanExecute(actor: EventActorSummary) {
@@ -120,14 +142,13 @@ export function EventRoles({
   const [actors, setActors] = useState(initialActors);
   const [actorsLoading, setActorsLoading] = useState(false);
   const [steps, setSteps] = useState(initialSteps);
-  const [selectedActorId, setSelectedActorId] = useState<string | null>(null);
-  const [actorPoolFilter, setActorPoolFilter] =
-    useState<ActorPoolFilter>("executors");
   const [selectedStepIds, setSelectedStepIds] = useState<Set<string>>(
     () => new Set(),
   );
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<StepFilter>("unassigned");
+  const [workstreamFilter, setWorkstreamFilter] = useState(ALL);
+  const [blockFilter, setBlockFilter] = useState(ALL);
+  const [activityFilter, setActivityFilter] = useState(ALL);
   const [sortKey, setSortKey] = useState<SortKey>("workstream");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [saving, setSaving] = useState(false);
@@ -153,17 +174,8 @@ export function EventRoles({
       : null;
     if (!opts?.silent) setActorsLoading(false);
     if (!response?.ok) return;
-    if (payload?.actors) {
-      setActors(payload.actors);
-      setSelectedActorId((current) =>
-        current && payload.actors!.some((actor) => actor.id === current)
-          ? current
-          : null,
-      );
-    }
-    if (payload?.steps) {
-      setSteps(payload.steps);
-    }
+    if (payload?.actors) setActors(payload.actors);
+    if (payload?.steps) setSteps(payload.steps);
   });
 
   useEffect(() => {
@@ -201,42 +213,11 @@ export function EventRoles({
     [actors],
   );
 
-  const pool = useMemo(
-    () =>
-      actors
-        .filter((actor) =>
-          actorPoolFilter === "executors"
-            ? actorCanExecute(actor)
-            : actorCanApprove(actor),
-        )
-        .sort((a, b) => a.name.localeCompare(b.name, "es")),
-    [actors, actorPoolFilter],
-  );
-
   const actorNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const actor of actors) map.set(actor.id, actor.name);
     return map;
   }, [actors]);
-
-  const countsByActor = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const row of steps) {
-      if (actorPoolFilter === "executors") {
-        const id = row.step.executorActorId;
-        if (id) map.set(id, (map.get(id) ?? 0) + 1);
-      } else {
-        for (const id of row.step.approverActorIds ?? []) {
-          map.set(id, (map.get(id) ?? 0) + 1);
-        }
-      }
-    }
-    return map;
-  }, [steps, actorPoolFilter]);
-
-  const selectedActor = pool.find((actor) => actor.id === selectedActorId);
-  const activeAssignAs: AssignAs =
-    actorPoolFilter === "executors" ? "executor" : "approver";
 
   const withExecutor = steps.filter((row) => row.step.executorActorId).length;
   const withApprover = steps.filter(
@@ -244,72 +225,95 @@ export function EventRoles({
   ).length;
   const incomplete = steps.filter(
     (row) =>
-      !row.step.executorActorId ||
-      !(row.step.approverActorIds ?? []).length,
+      !row.step.executorActorId || !(row.step.approverActorIds ?? []).length,
   ).length;
+
+  const workstreamOptions = useMemo(
+    () => uniqueSorted(steps.map((row) => row.workstreamName)),
+    [steps],
+  );
+
+  const blockOptions = useMemo(
+    () =>
+      uniqueSorted(
+        steps
+          .filter(
+            (row) =>
+              workstreamFilter === ALL ||
+              row.workstreamName === workstreamFilter,
+          )
+          .map((row) => row.blockName),
+      ),
+    [steps, workstreamFilter],
+  );
+
+  const activityOptions = useMemo(
+    () =>
+      uniqueSorted(
+        steps
+          .filter(
+            (row) =>
+              (workstreamFilter === ALL ||
+                row.workstreamName === workstreamFilter) &&
+              (blockFilter === ALL || row.blockName === blockFilter),
+          )
+          .map((row) => row.activityName),
+      ),
+    [steps, workstreamFilter, blockFilter],
+  );
 
   const visibleRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return steps
       .filter((row) => {
-        if (filter === "unassigned") {
-          if (selectedActorId) {
-            if (activeAssignAs === "executor") {
-              if (row.step.executorActorId) return false;
-            } else if (stepHasApprover(row.step, selectedActorId)) {
-              return false;
-            }
-          } else if (
-            row.step.executorActorId &&
-            (row.step.approverActorIds ?? []).length > 0
-          ) {
-            return false;
-          }
+        if (
+          workstreamFilter !== ALL &&
+          row.workstreamName !== workstreamFilter
+        ) {
+          return false;
         }
-        if (filter === "mine") {
-          if (!selectedActorId) return false;
-          if (activeAssignAs === "executor") {
-            if (row.step.executorActorId !== selectedActorId) return false;
-          } else if (!stepHasApprover(row.step, selectedActorId)) {
-            return false;
-          }
+        if (blockFilter !== ALL && row.blockName !== blockFilter) {
+          return false;
+        }
+        if (activityFilter !== ALL && row.activityName !== activityFilter) {
+          return false;
         }
         if (!needle) return true;
-        return row.searchText.includes(needle);
+        const executor = row.step.executorActorId
+          ? (actorNameById.get(row.step.executorActorId) ?? "")
+          : "";
+        const approverNames = (row.step.approverActorIds ?? [])
+          .map((id) => actorNameById.get(id) ?? "")
+          .join(" ");
+        return (
+          row.searchText.includes(needle) ||
+          executor.toLowerCase().includes(needle) ||
+          approverNames.toLowerCase().includes(needle)
+        );
       })
-      .sort((a, b) => compareRows(a, b, sortKey, sortDir));
+      .sort((a, b) => compareRows(a, b, sortKey, sortDir, actorNameById));
   }, [
     steps,
     query,
-    filter,
-    selectedActorId,
-    activeAssignAs,
+    workstreamFilter,
+    blockFilter,
+    activityFilter,
     sortKey,
     sortDir,
+    actorNameById,
   ]);
 
-  const selectedAssignableIds = useMemo(
+  const selectedClearableIds = useMemo(
     () =>
       [...selectedStepIds].filter((id) => {
         const row = steps.find((item) => item.step.id === id);
-        if (!row || !selectedActorId) return false;
-        if (activeAssignAs === "executor") return !row.step.executorActorId;
-        return !stepHasApprover(row.step, selectedActorId);
+        if (!row) return false;
+        return Boolean(
+          row.step.executorActorId ||
+            (row.step.approverActorIds ?? []).length,
+        );
       }),
-    [selectedStepIds, steps, selectedActorId, activeAssignAs],
-  );
-
-  const selectedRemovableIds = useMemo(
-    () =>
-      [...selectedStepIds].filter((id) => {
-        const row = steps.find((item) => item.step.id === id);
-        if (!row || !selectedActorId) return false;
-        if (activeAssignAs === "executor") {
-          return row.step.executorActorId === selectedActorId;
-        }
-        return stepHasApprover(row.step, selectedActorId);
-      }),
-    [selectedStepIds, steps, selectedActorId, activeAssignAs],
+    [selectedStepIds, steps],
   );
 
   function toggleSort(key: SortKey) {
@@ -365,24 +369,21 @@ export function EventRoles({
     });
   }
 
-  function selectActor(actorId: string) {
-    const actor = pool.find((item) => item.id === actorId);
-    if (!actor) return;
-    setSelectedActorId(actorId);
+  function changeWorkstreamFilter(next: string) {
+    setWorkstreamFilter(next);
+    setBlockFilter(ALL);
+    setActivityFilter(ALL);
     setSelectedStepIds(new Set());
-    const assignedCount = countsByActor.get(actorId) ?? 0;
-    setFilter(assignedCount > 0 ? "mine" : "unassigned");
   }
 
-  function changeActorPoolFilter(next: ActorPoolFilter) {
-    setActorPoolFilter(next);
-    setSelectedActorId(null);
+  function changeBlockFilter(next: string) {
+    setBlockFilter(next);
+    setActivityFilter(ALL);
     setSelectedStepIds(new Set());
-    setFilter("unassigned");
   }
 
-  function changeFilter(next: StepFilter) {
-    setFilter(next);
+  function changeActivityFilter(next: string) {
+    setActivityFilter(next);
     setSelectedStepIds(new Set());
   }
 
@@ -395,6 +396,7 @@ export function EventRoles({
         stepId: row.step.id,
         stepName: row.step.name,
         workstreamName: row.workstreamName,
+        blockName: row.blockName,
         activityName: row.activityName,
         executorActorId: row.step.executorActorId ?? "",
         approverActorId: row.step.approverActorIds?.[0] ?? "",
@@ -465,89 +467,30 @@ export function EventRoles({
     showToast("ok", `${assignDrafts.length} paso(s) actualizados.`);
   }
 
-  function onAsignarClick() {
-    if (!selectedActorId) {
-      openAssignModal([...selectedStepIds]);
-      return;
-    }
-    void assignSelected();
-  }
-
-  async function assignSelected() {
-    if (!selectedActorId || selectedAssignableIds.length === 0) return;
+  async function clearSelected() {
+    const drafts = selectedClearableIds.flatMap((id) => {
+      const row = steps.find((item) => item.step.id === id);
+      if (!row) return [];
+      return [
+        {
+          stepId: row.step.id,
+          stepName: row.step.name,
+          workstreamName: row.workstreamName,
+          blockName: row.blockName,
+          activityName: row.activityName,
+          executorActorId: "",
+          approverActorId: "",
+        } satisfies RoleDraftRow,
+      ];
+    });
+    if (!drafts.length) return;
     setSaving(true);
-    showToast("saving", "Asignando pasos…");
-    const asExecutor = activeAssignAs === "executor";
-    const endpoint = asExecutor
-      ? `/api/events/${eventId}/step-executors`
-      : `/api/events/${eventId}/step-approvers`;
-    const body = asExecutor
-      ? {
-          executorActorId: selectedActorId,
-          stepIds: selectedAssignableIds,
-        }
-      : {
-          approverActorId: selectedActorId,
-          stepIds: selectedAssignableIds,
-        };
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).catch(() => null);
-    const payload = response
-      ? ((await response.json()) as {
-          steps?: DesignStepSummary[];
-          error?: string;
-        })
-      : null;
+    showToast("saving", "Quitando asignaciones…");
+    const ok = await saveRoleAssignments(drafts);
     setSaving(false);
-    if (!response?.ok || !payload?.steps) {
-      showToast("error", payload?.error ?? "No fue posible asignar.");
-      return;
-    }
-    applyStepUpdates(payload.steps);
+    if (!ok) return;
     setSelectedStepIds(new Set());
-    setFilter("mine");
-    showToast(
-      "ok",
-      `${selectedAssignableIds.length} paso(s) → ${selectedActor?.name ?? "actor"} (${asExecutor ? "ejecutor" : "aprobador"}).`,
-    );
-  }
-
-  async function unassignSelected() {
-    if (!selectedActorId || selectedRemovableIds.length === 0) return;
-    setSaving(true);
-    showToast("saving", "Quitando asignación…");
-    const asExecutor = activeAssignAs === "executor";
-    const endpoint = asExecutor
-      ? `/api/events/${eventId}/step-executors`
-      : `/api/events/${eventId}/step-approvers`;
-    const body = asExecutor
-      ? { stepIds: selectedRemovableIds }
-      : {
-          approverActorId: selectedActorId,
-          stepIds: selectedRemovableIds,
-        };
-    const response = await fetch(endpoint, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).catch(() => null);
-    const payload = response
-      ? ((await response.json()) as {
-          steps?: DesignStepSummary[];
-          error?: string;
-        })
-      : null;
-    setSaving(false);
-    if (!response?.ok || !payload?.steps) {
-      showToast("error", payload?.error ?? "No fue posible quitar.");
-      return;
-    }
-    applyStepUpdates(payload.steps);
-    setSelectedStepIds(new Set());
-    showToast("ok", `${selectedRemovableIds.length} paso(s) actualizados.`);
+    showToast("ok", `${drafts.length} paso(s) sin ejecutor ni aprobador.`);
   }
 
   function executorLabel(row: RoleStepRow) {
@@ -561,6 +504,11 @@ export function EventRoles({
     if (!ids.length) return "—";
     return ids.map((id) => actorNameById.get(id) ?? "?").join(", ");
   }
+
+  const hasHierarchyFilter =
+    workstreamFilter !== ALL ||
+    blockFilter !== ALL ||
+    activityFilter !== ALL;
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -599,396 +547,312 @@ export function EventRoles({
           </span>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(16rem,22rem)_1fr]">
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card">
-            <div className="space-y-3 border-b px-4 py-3">
-              <div>
-                <h2 className="text-sm font-semibold">Actores</h2>
+        <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
+          <div className="space-y-3 border-b px-4 py-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm font-semibold">Pasos</h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  {actorPoolFilter === "executors"
-                    ? "Asignar como ejecutor (1 por paso)"
-                    : "Asignar como aprobador (varios por paso)"}
+                  {visibleRows.length} visibles
+                  {query.trim() ? " · búsqueda" : ""}
+                  {hasHierarchyFilter ? " · filtro" : ""}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="inline-flex min-w-0 flex-1 rounded-lg border p-0.5">
-                  {(
-                    [
-                      ["executors", "Ejecutores"],
-                      ["approvers", "Aprobadores"],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => changeActorPoolFilter(value)}
-                      className={cn(
-                        "flex-1 rounded-md px-2.5 py-1.5 text-xs transition-colors",
-                        actorPoolFilter === value
-                          ? "bg-muted font-medium text-foreground"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      {label}
-                    </button>
+              <div className="relative w-full max-w-xs">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Buscar paso o persona…"
+                  className="h-8 pl-8"
+                />
+              </div>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                title="Actualizar actores y asignaciones"
+                disabled={actorsLoading}
+                onClick={() => void refreshBoard()}
+              >
+                <RefreshCw
+                  className={cn(
+                    "size-3.5",
+                    actorsLoading ? "animate-spin" : undefined,
+                  )}
+                />
+                <span className="sr-only">Actualizar actores</span>
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={workstreamFilter}
+                onValueChange={changeWorkstreamFilter}
+              >
+                <SelectTrigger className="h-8 w-[11rem]">
+                  <SelectValue placeholder="Workstream" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Todos los workstreams</SelectItem>
+                  {workstreamOptions.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
                   ))}
-                </div>
+                </SelectContent>
+              </Select>
+              <Select value={blockFilter} onValueChange={changeBlockFilter}>
+                <SelectTrigger className="h-8 w-[10rem]">
+                  <SelectValue placeholder="Bloque" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Todos los bloques</SelectItem>
+                  {blockOptions.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={activityFilter}
+                onValueChange={changeActivityFilter}
+              >
+                <SelectTrigger className="h-8 w-[12rem]">
+                  <SelectValue placeholder="Actividad" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Todas las actividades</SelectItem>
+                  {activityOptions.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="ml-auto flex flex-wrap gap-2">
                 <Button
                   type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  title="Actualizar actores y asignaciones"
-                  disabled={actorsLoading}
-                  onClick={() => void refreshBoard()}
+                  size="sm"
+                  variant="outline"
+                  disabled={saving || selectedClearableIds.length === 0}
+                  onClick={() => void clearSelected()}
                 >
-                  <RefreshCw
-                    className={cn(
-                      "size-3.5",
-                      actorsLoading ? "animate-spin" : undefined,
-                    )}
-                  />
-                  <span className="sr-only">Actualizar actores</span>
+                  {saving ? (
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                  ) : null}
+                  Quitar ({selectedClearableIds.length})
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={saving || selectedStepIds.size === 0}
+                  onClick={() => openAssignModal([...selectedStepIds])}
+                >
+                  {saving ? (
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                  ) : null}
+                  Asignar ({selectedStepIds.size})
                 </Button>
               </div>
             </div>
-            <ul className="min-h-0 flex-1 overflow-auto p-2">
-              {pool.length ? (
-                pool.map((actor) => {
-                  const count = countsByActor.get(actor.id) ?? 0;
-                  const active = selectedActorId === actor.id;
-                  return (
-                    <li key={actor.id}>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-auto">
+            {visibleRows.length ? (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="sticky top-0 z-[1] w-10 bg-card/95 backdrop-blur">
                       <button
                         type="button"
-                        onClick={() => selectActor(actor.id)}
-                        className={cn(
-                          "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
-                          active
-                            ? "bg-cyan-500/15 ring-1 ring-cyan-400/50"
-                            : "hover:bg-muted/50",
-                        )}
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={toggleAllVisible}
+                        aria-label="Seleccionar visibles"
                       >
-                        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                          <UserRound className="size-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">
-                            {actor.name}
-                          </p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {actor.area || "Sin área"}
-                            {actorPoolFilter === "approvers" &&
-                            actor.roles.includes("STEERCO")
-                              ? " · SteerCo"
-                              : ""}
-                          </p>
-                        </div>
-                        <Badge variant={count ? "secondary" : "outline"}>
-                          {count}
-                        </Badge>
+                        {visibleRows.every((row) =>
+                          selectedStepIds.has(row.step.id),
+                        ) ? (
+                          <CheckSquare className="size-4" />
+                        ) : (
+                          <Square className="size-4" />
+                        )}
                       </button>
-                    </li>
-                  );
-                })
-              ) : (
-                <li className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  {actorPoolFilter === "executors"
-                    ? "No hay ejecutores en Setup."
-                    : "No hay aprobadores ni SteerCo en Setup."}
-                </li>
-              )}
-            </ul>
-          </section>
-
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card">
-            <div className="space-y-3 border-b px-4 py-3">
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-sm font-semibold">
-                    Pasos
-                    {selectedActor ? (
-                      <span className="font-normal text-muted-foreground">
-                        {" "}
-                        · {selectedActor.name}
-                      </span>
-                    ) : null}
-                  </h2>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {visibleRows.length} visibles
-                    {query.trim() ? " (búsqueda)" : ""}
-                    {selectedActor
-                      ? ` · asignar como ${activeAssignAs === "executor" ? "ejecutor" : "aprobador"}`
-                      : ""}
-                  </p>
-                </div>
-                <div className="relative w-full max-w-xs">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Buscar paso…"
-                    className="h-8 pl-8"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex rounded-lg border p-0.5">
-                  {(
-                    [
-                      ["unassigned", "Pendientes"],
-                      ["mine", "De este"],
-                      ["all", "Todos"],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      disabled={value === "mine" && !selectedActorId}
-                      onClick={() => changeFilter(value)}
-                      className={cn(
-                        "rounded-md px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                        filter === value
-                          ? "bg-muted font-medium text-foreground"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="ml-auto flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      saving ||
-                      !selectedActorId ||
-                      selectedRemovableIds.length === 0
-                    }
-                    onClick={() => void unassignSelected()}
-                  >
-                    {saving ? (
-                      <LoaderCircle className="size-3.5 animate-spin" />
-                    ) : null}
-                    Quitar ({selectedRemovableIds.length})
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={
-                      saving ||
-                      (selectedActorId
-                        ? selectedAssignableIds.length === 0
-                        : selectedStepIds.size === 0)
-                    }
-                    onClick={onAsignarClick}
-                  >
-                    {saving ? (
-                      <LoaderCircle className="size-3.5 animate-spin" />
-                    ) : null}
-                    Asignar (
-                    {selectedActorId
-                      ? selectedAssignableIds.length
-                      : selectedStepIds.size}
-                    )
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            {!selectedActorId && filter === "mine" ? (
-              <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
-                Selecciona alguien a la izquierda.
-              </div>
-            ) : (
-              <div className="min-h-0 flex-1 overflow-auto">
-                {visibleRows.length ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="sticky top-0 z-[1] w-10 bg-card/95 backdrop-blur">
+                    </TableHead>
+                    <SortableHead
+                      label="Workstream"
+                      active={sortKey === "workstream"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("workstream")}
+                    />
+                    <SortableHead
+                      label="Bloque"
+                      active={sortKey === "block"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("block")}
+                    />
+                    <SortableHead
+                      label="Actividad"
+                      active={sortKey === "activity"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("activity")}
+                    />
+                    <SortableHead
+                      label="Paso"
+                      active={sortKey === "step"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("step")}
+                    />
+                    <SortableHead
+                      label="Ejecutor"
+                      active={sortKey === "executor"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("executor")}
+                    />
+                    <SortableHead
+                      label="Aprobador"
+                      active={sortKey === "approver"}
+                      dir={sortDir}
+                      onClick={() => toggleSort("approver")}
+                    />
+                    <TableHead className="sticky top-0 z-[1] w-10 bg-card/95 backdrop-blur" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleRows.map((row) => {
+                    const checked = selectedStepIds.has(row.step.id);
+                    const description =
+                      row.step.description.trim() || "Sin descripción";
+                    const exec = executorLabel(row);
+                    const approverText = approversLabel(row);
+                    return (
+                      <TableRow
+                        key={row.step.id}
+                        className={cn(checked && "bg-cyan-500/10")}
+                        onClick={() => toggleStep(row.step.id)}
+                      >
+                        <TableCell className="w-10">
+                          <input
+                            type="checkbox"
+                            className="size-4 accent-primary"
+                            checked={checked}
+                            onChange={() => toggleStep(row.step.id)}
+                            onClick={(event) => event.stopPropagation()}
+                            aria-label={`Seleccionar ${row.step.name}`}
+                          />
+                        </TableCell>
+                        <TableCell className="max-w-[8rem]">
+                          <span
+                            className="block truncate"
+                            title={row.workstreamName}
+                          >
+                            {row.workstreamName}
+                          </span>
+                        </TableCell>
+                        <TableCell className="max-w-[8rem]">
+                          <span
+                            className="block truncate"
+                            title={row.blockName}
+                          >
+                            {row.blockName}
+                          </span>
+                        </TableCell>
+                        <TableCell className="max-w-[9rem]">
+                          <span
+                            className="block truncate"
+                            title={row.activityName}
+                          >
+                            {row.activityName}
+                          </span>
+                        </TableCell>
+                        <TableCell className="max-w-[11rem] font-medium">
+                          <span
+                            className="block truncate"
+                            title={row.step.name}
+                          >
+                            {row.step.name}
+                          </span>
+                        </TableCell>
+                        <TableCell className="max-w-[8rem] text-muted-foreground">
                           <button
                             type="button"
-                            className="text-muted-foreground hover:text-foreground"
-                            onClick={toggleAllVisible}
-                            aria-label="Seleccionar visibles"
+                            className="block max-w-full truncate text-left underline-offset-2 hover:text-foreground hover:underline"
+                            title={`${exec} · editar`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openAssignModal([row.step.id]);
+                            }}
                           >
-                            {visibleRows.every((row) =>
-                              selectedStepIds.has(row.step.id),
-                            ) ? (
-                              <CheckSquare className="size-4" />
-                            ) : (
-                              <Square className="size-4" />
-                            )}
+                            {exec}
                           </button>
-                        </TableHead>
-                        <SortableHead
-                          label="Workstream"
-                          active={sortKey === "workstream"}
-                          dir={sortDir}
-                          onClick={() => toggleSort("workstream")}
-                        />
-                        <SortableHead
-                          label="Actividad"
-                          active={sortKey === "activity"}
-                          dir={sortDir}
-                          onClick={() => toggleSort("activity")}
-                        />
-                        <SortableHead
-                          label="Paso"
-                          active={sortKey === "step"}
-                          dir={sortDir}
-                          onClick={() => toggleSort("step")}
-                        />
-                        <TableHead className="sticky top-0 z-[1] bg-card/95 backdrop-blur">
-                          Ejecutor
-                        </TableHead>
-                        <TableHead className="sticky top-0 z-[1] bg-card/95 backdrop-blur">
-                          Aprobadores
-                        </TableHead>
-                        <TableHead className="sticky top-0 z-[1] w-10 bg-card/95 backdrop-blur" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visibleRows.map((row) => {
-                        const checked = selectedStepIds.has(row.step.id);
-                        const description =
-                          row.step.description.trim() || "Sin descripción";
-                        const exec = executorLabel(row);
-                        const approvers = approversLabel(row);
-                        return (
-                          <TableRow
-                            key={row.step.id}
-                            className={cn(checked && "bg-cyan-500/10")}
-                            onClick={() => toggleStep(row.step.id)}
+                        </TableCell>
+                        <TableCell className="max-w-[10rem] text-muted-foreground">
+                          <button
+                            type="button"
+                            className="block max-w-full truncate text-left underline-offset-2 hover:text-foreground hover:underline"
+                            title={`${approverText} · editar`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openAssignModal([row.step.id]);
+                            }}
                           >
-                            <TableCell className="w-10">
-                              <input
-                                type="checkbox"
-                                className="size-4 accent-primary"
-                                checked={checked}
-                                onChange={() => toggleStep(row.step.id)}
-                                onClick={(event) => event.stopPropagation()}
-                                aria-label={`Seleccionar ${row.step.name}`}
-                              />
-                            </TableCell>
-                            <TableCell className="max-w-[9rem]">
-                              <span
-                                className="block truncate"
-                                title={row.workstreamName}
+                            {approverText}
+                          </button>
+                        </TableCell>
+                        <TableCell className="w-10 text-right">
+                          <div className="flex items-center justify-end gap-0.5">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  aria-label={`Editar roles de ${row.step.name}`}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openAssignModal([row.step.id]);
+                                  }}
+                                >
+                                  <Pencil className="size-3.5" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="left">
+                                Editar ejecutor / aprobador
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  aria-label={`Info de ${row.step.name}`}
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <Info className="size-3.5" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent
+                                side="left"
+                                className="max-w-xs text-left whitespace-pre-wrap"
                               >
-                                {row.workstreamName}
-                              </span>
-                            </TableCell>
-                            <TableCell className="max-w-[10rem]">
-                              <span
-                                className="block truncate"
-                                title={row.activityName}
-                              >
-                                {row.activityName}
-                              </span>
-                            </TableCell>
-                            <TableCell className="max-w-[12rem] font-medium">
-                              <span
-                                className="block truncate"
-                                title={row.step.name}
-                              >
-                                {row.step.name}
-                              </span>
-                            </TableCell>
-                            <TableCell className="max-w-[9rem] text-muted-foreground">
-                              <button
-                                type="button"
-                                className="block max-w-full truncate text-left underline-offset-2 hover:text-foreground hover:underline"
-                                title={`${exec} · editar`}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openAssignModal([row.step.id]);
-                                }}
-                              >
-                                {exec}
-                              </button>
-                            </TableCell>
-                            <TableCell className="max-w-[11rem] text-muted-foreground">
-                              <button
-                                type="button"
-                                className="block max-w-full truncate text-left underline-offset-2 hover:text-foreground hover:underline"
-                                title={`${approvers} · editar`}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openAssignModal([row.step.id]);
-                                }}
-                              >
-                                {approvers}
-                              </button>
-                            </TableCell>
-                            <TableCell className="w-10 text-right">
-                              <div className="flex items-center justify-end gap-0.5">
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                                      aria-label={`Editar roles de ${row.step.name}`}
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        openAssignModal([row.step.id]);
-                                      }}
-                                    >
-                                      <Pencil className="size-3.5" />
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="left">
-                                    Editar ejecutor / aprobador
-                                  </TooltipContent>
-                                </Tooltip>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                                      aria-label={`Info de ${row.step.name}`}
-                                      onClick={(event) =>
-                                        event.stopPropagation()
-                                      }
-                                    >
-                                      <Info className="size-3.5" />
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent
-                                    side="left"
-                                    className="max-w-xs text-left whitespace-pre-wrap"
-                                  >
-                                    {description}
-                                  </TooltipContent>
-                                </Tooltip>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
-                    {filter === "mine"
-                      ? "Sin pasos asignados a esta persona."
-                      : filter === "unassigned"
-                        ? selectedActorId
-                          ? activeAssignAs === "executor"
-                            ? "No hay pasos libres para este ejecutor."
-                            : "Esta persona ya aprueba todos los pasos visibles."
-                          : "Todos los pasos tienen ejecutor y al menos un aprobador."
-                        : "Ningún paso coincide con la búsqueda."}
-                  </div>
-                )}
+                                {description}
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+                Ningún paso coincide con el filtro o la búsqueda.
               </div>
             )}
-          </section>
-        </div>
+          </div>
+        </section>
 
         <Dialog open={assignModalOpen} onOpenChange={setAssignModalOpen}>
           <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden sm:max-w-3xl">
@@ -1012,7 +876,7 @@ export function EventRoles({
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{row.stepName}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {row.workstreamName} · {row.activityName}
+                      {row.workstreamName} · {row.blockName} · {row.activityName}
                     </p>
                   </div>
                   <div className="grid gap-1">

@@ -50,8 +50,8 @@ export default async function EventRolesPage({
             Roles del evento
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Una sola lista de pasos: elige un actor y asígnalo como ejecutor o
-            aprobador.
+            Filtrá por workstream, bloque o actividad y asigná ejecutor y
+            aprobador en cada paso.
           </p>
         </section>
         <div className="min-h-0 flex-1">

@@ -136,8 +136,13 @@ export async function DELETE(_: Request, { params }: RouteParams) {
   }
 
   try {
-    await deactivateEventActor(eventId, actorId, authResult.user.id);
-    return NextResponse.json({ ok: true });
+    const result = await deactivateEventActor(
+      eventId,
+      actorId,
+      authResult.user.id,
+      { operatorEmail: authResult.user.email },
+    );
+    return NextResponse.json({ ok: true, clerkDeleted: result.clerkDeleted });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No fue posible." },

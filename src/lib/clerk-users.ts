@@ -77,6 +77,22 @@ export async function ensureClerkUser(
   }
 }
 
+/** Borra el usuario de Clerk. `false` si no existe o no hay clave. */
+export async function deleteClerkUserByEmail(email: string): Promise<boolean> {
+  const normalized = normalizeEmail(email);
+  if (!process.env.CLERK_SECRET_KEY) return false;
+
+  const clerk = getClerk();
+  const existing = await clerk.users.getUserList({
+    emailAddress: [normalized],
+    limit: 1,
+  });
+  const user = existing.data[0];
+  if (!user) return false;
+  await clerk.users.deleteUser(user.id);
+  return true;
+}
+
 export function formatClerkError(error: unknown): string {
   if (error && typeof error === "object" && "errors" in error) {
     const errors = (

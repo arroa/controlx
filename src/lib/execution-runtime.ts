@@ -71,6 +71,7 @@ type RuntimeStepDoc = {
   name: string;
   description: string;
   longDescription?: string;
+  evidenceRequired?: boolean;
   order: number;
   plannedStartAt: Date | null;
   estimatedDurationMinutes: number | null;
@@ -109,9 +110,10 @@ const SCHEDULE_MUTABLE_STATUSES = new Set<RuntimeStepStatus>([
 
 function toStepSummary(
   doc: RuntimeStepDoc,
-  gateMeta?: {
+  designMeta?: {
     producesGateId: string | null;
     requiresGateIds: string[];
+    evidenceRequired?: boolean;
   },
 ): RuntimeStepSummary {
   const plannedStartAt = doc.plannedStartAt?.toISOString() ?? null;
@@ -129,12 +131,14 @@ function toStepSummary(
     name: doc.name,
     description: doc.description,
     longDescription: doc.longDescription ?? "",
+    evidenceRequired:
+      doc.evidenceRequired === true || designMeta?.evidenceRequired === true,
     order: doc.order,
     plannedStartAt,
     estimatedDurationMinutes: doc.estimatedDurationMinutes,
     dependencyStepIds: doc.dependencyStepIds.map((id) => id.toHexString()),
-    producesGateId: gateMeta?.producesGateId ?? null,
-    requiresGateIds: gateMeta?.requiresGateIds ?? [],
+    producesGateId: designMeta?.producesGateId ?? null,
+    requiresGateIds: designMeta?.requiresGateIds ?? [],
     executorActorId: doc.executorActorId?.toHexString() ?? null,
     executorName: doc.executorName,
     approverActorIds: doc.approverActorIds.map((id) => id.toHexString()),
@@ -226,12 +230,22 @@ function requireComment(
   }
 }
 
-function requireEvidenceForReal(_input: {
+const SUCCESS_CLOSE_ACTIONS = new Set<RuntimeStepAction>([
+  "complete_success",
+]);
+
+function requireEvidenceIfNeeded(input: {
   action: RuntimeStepAction;
-  executionType: "SIMULACRO" | "REAL";
+  evidenceRequired: boolean;
   evidenceCount: number;
 }) {
-  // Obligatoriedad de evidencias pendiente de decisión de producto.
+  if (!input.evidenceRequired) return;
+  if (!SUCCESS_CLOSE_ACTIONS.has(input.action)) return;
+  if (input.evidenceCount < 1) {
+    throw new Error(
+      "Este paso exige evidencia para marcarlo como Exitoso. Adjuntá al menos un archivo.",
+    );
+  }
 }
 
 function nextStatus(input: {
@@ -477,6 +491,7 @@ export async function materializeExecutionSteps(input: {
       name: step.name,
       description: step.description,
       longDescription: step.longDescription ?? "",
+      evidenceRequired: step.evidenceRequired === true,
       order: step.order,
       plannedStartAt: plannedByDesignId.get(step.id) ?? input.anchorStartAt,
       estimatedDurationMinutes: step.estimatedDurationMinutes,
@@ -595,7 +610,7 @@ async function resolveExecutorNames(
  * Sincroniza una ejecución abierta con el diseño actual:
  * - añade pasos nuevos del plan;
  * - si refreshPlan, actualiza duración/deps/texto/horario/ejecutor/aprobadores
- *   de los ya materializados (siempre en caliente mientras la ejecución esté abierta).
+ *   y evidenceRequired de los ya materializados (en caliente si la ejecución está abierta).
  * No toca status, comentarios ni evidencias.
  */
 export async function syncExecutionPlanFromDesign(input: {
@@ -678,6 +693,7 @@ export async function syncExecutionPlanFromDesign(input: {
       name: step.name,
       description: step.description,
       longDescription: step.longDescription ?? "",
+      evidenceRequired: step.evidenceRequired === true,
       order: step.order,
       plannedStartAt: plannedByDesignId.get(step.id) ?? input.anchorStartAt,
       estimatedDurationMinutes: step.estimatedDurationMinutes,
@@ -726,11 +742,13 @@ export async function syncExecutionPlanFromDesign(input: {
         (id) => new ObjectId(id),
       );
       const longDescription = step.longDescription ?? "";
+      const evidenceRequired = step.evidenceRequired === true;
 
       const planChanged =
         current.name !== step.name ||
         current.description !== step.description ||
         (current.longDescription ?? "") !== longDescription ||
+        Boolean(current.evidenceRequired) !== evidenceRequired ||
         current.order !== step.order ||
         current.estimatedDurationMinutes !== step.estimatedDurationMinutes ||
         !sameObjectIdList(current.dependencyStepIds ?? [], dependencyStepIds) ||
@@ -753,6 +771,7 @@ export async function syncExecutionPlanFromDesign(input: {
           name: step.name,
           description: step.description,
           longDescription,
+          evidenceRequired,
           order: step.order,
           plannedStartAt,
           estimatedDurationMinutes: step.estimatedDurationMinutes,
@@ -918,6 +937,7 @@ export async function getExecutionDetail(
           gateMetaByDesignStep.set(step.id, {
             producesGateId: step.producesGateId ?? null,
             requiresGateIds: step.requiresGateIds ?? [],
+            evidenceRequired: step.evidenceRequired === true,
           });
         }
       }
@@ -1043,10 +1063,26 @@ export async function transitionRuntimeStep(input: {
   });
   if (!step) throw new Error("Paso no encontrado.");
 
-  requireEvidenceForReal({
+  let evidenceRequired = step.evidenceRequired === true;
+  if (!evidenceRequired) {
+    const designFlag = await database
+      .collection<{ evidenceRequired?: boolean }>("designSteps")
+      .findOne(
+        { _id: step.designStepId },
+        { projection: { evidenceRequired: 1 } },
+      );
+    evidenceRequired = designFlag?.evidenceRequired === true;
+  }
+  const evidenceNames = new Set(
+    (step.evidence ?? []).map((item) => item.pathname),
+  );
+  for (const pathname of input.evidencePathnames ?? []) {
+    evidenceNames.add(pathname);
+  }
+  requireEvidenceIfNeeded({
     action: input.action,
-    executionType: execution.type,
-    evidenceCount: (step.evidence ?? []).length,
+    evidenceRequired,
+    evidenceCount: evidenceNames.size,
   });
 
   if (
@@ -1121,6 +1157,7 @@ export async function transitionRuntimeStep(input: {
             gateMetaByDesignStep.set(designStep.id, {
               producesGateId: designStep.producesGateId ?? null,
               requiresGateIds: designStep.requiresGateIds ?? [],
+              evidenceRequired: designStep.evidenceRequired === true,
             });
           }
         }

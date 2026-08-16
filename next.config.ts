@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  serverExternalPackages: ["exceljs"],
   /**
    * LAN / móvil en desarrollo. Hostname sin protocolo (Next compara Origin/Referer).
    * Incluye Wi‑Fi y la interfaz que Next imprime como "Network".

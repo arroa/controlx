@@ -129,6 +129,8 @@ export type RuntimeStepSummary = {
   description: string;
   /** Descripción larga (instrucciones del ejecutor). */
   longDescription: string;
+  /** Snapshot del diseño: marcar éxito exige adjunto. */
+  evidenceRequired: boolean;
   order: number;
   plannedStartAt: string | null;
   estimatedDurationMinutes: number | null;

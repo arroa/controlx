@@ -69,6 +69,7 @@ function toTimesViewRow(
     order: step.order,
     status: step.status,
     mine,
+    evidenceRequired: step.evidenceRequired === true,
     actualStartedAt: step.actualStartedAt,
     actualEndedAt: step.actualEndedAt,
     // Siempre se puede abrir la flor; las acciones de guardar se deshabilitan aparte.
@@ -529,7 +530,9 @@ export function ExecutionTimesPanel({
           disabled: busy || !canAct,
           title: onBehalf
             ? `Contingencia: cerrar en nombre de ${onBehalf}.`
-            : undefined,
+            : step.evidenceRequired
+              ? "Este paso exige evidencia para marcarlo como Exitoso."
+              : undefined,
           onClick: () => {
             if (!canAct) return;
             setSelectedId(null);
@@ -891,6 +894,8 @@ export function ExecutionTimesPanel({
       <ExecutionStepInfoDialog
         open={Boolean(infoStep)}
         step={infoStep}
+        steps={detail.steps}
+        gates={detail.gates}
         timezone={detail.timezone}
         executionId={detail.id}
         viewerActorId={actorId}
@@ -943,6 +948,8 @@ export function ExecutionTimesPanel({
         files={files}
         onFilesChange={setFiles}
         blobConfigured={detail.blobConfigured}
+        evidenceRequired={outcomeStep?.evidenceRequired === true}
+        existingEvidenceCount={outcomeStep?.evidence.length ?? 0}
         busy={busy}
         error={error}
         onCancel={closeOutcome}

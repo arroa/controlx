@@ -55,6 +55,7 @@ export default async function EventSetupPage({
         </section>
         <EventSetup
           eventId={eventId}
+          eventName={setup.event.name}
           eventTimezone={setup.event.timezone}
           initialDayDStartAt={setup.event.dayDStartAt}
           initialWorkstreams={setup.workstreams}

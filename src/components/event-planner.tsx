@@ -7,6 +7,7 @@ import {
   DoorOpen,
   List,
   LoaderCircle,
+  Paperclip,
   Pencil,
   Save,
   Search,
@@ -89,6 +90,7 @@ type Draft = {
   plannedStartAt: string | null;
   producesGateId: string | null;
   requiresGateIds: string[];
+  evidenceRequired: boolean;
 };
 
 function pairsToRows(pairs: DesignPair[]): PlannerRow[] {
@@ -115,6 +117,17 @@ function draftFromRow(row: PlannerRow): Draft {
     plannedStartAt: row.plannedStartAt,
     producesGateId: row.producesGateId ?? null,
     requiresGateIds: [...(row.requiresGateIds ?? [])],
+    evidenceRequired: row.evidenceRequired === true,
+  };
+}
+
+function resolveDraft(row: PlannerRow, draft?: Draft): Draft {
+  const base = draftFromRow(row);
+  if (!draft) return base;
+  return {
+    ...base,
+    ...draft,
+    evidenceRequired: draft.evidenceRequired === true,
   };
 }
 
@@ -136,13 +149,16 @@ function isDirty(row: PlannerRow, draft: Draft) {
   const sameRequire =
     draft.requiresGateIds.length === (row.requiresGateIds?.length ?? 0) &&
     draft.requiresGateIds.every((id) => row.requiresGateIds?.includes(id));
+  const sameEvidence =
+    draft.evidenceRequired === (row.evidenceRequired === true);
   return !(
     sameDuration &&
     sameDeps &&
     sameApprovals &&
     sameAnchor &&
     sameProduce &&
-    sameRequire
+    sameRequire &&
+    sameEvidence
   );
 }
 
@@ -229,7 +245,7 @@ export function EventPlanner({
   }
 
   async function saveRow(row: PlannerRow): Promise<boolean> {
-    const draft = drafts[row.id] ?? draftFromRow(row);
+    const draft = resolveDraft(row, drafts[row.id]);
     const durationRaw = draft.estimatedDurationMinutes.trim();
     const estimatedDurationMinutes =
       durationRaw === "" ? null : Number(durationRaw);
@@ -255,6 +271,7 @@ export function EventPlanner({
           estimatedDurationMinutes,
           dependencyStepIds: draft.dependencyStepIds,
           approvalRoles: draft.approvalRoles,
+          evidenceRequired: draft.evidenceRequired,
         }),
       },
     ).catch(() => null);
@@ -460,7 +477,7 @@ export function EventPlanner({
       allRows={rows}
       draft={
         editingRow
-          ? (drafts[editingRow.id] ?? draftFromRow(editingRow))
+          ? resolveDraft(editingRow, drafts[editingRow.id])
           : null
       }
       eventTimezone={eventTimezone}
@@ -588,6 +605,27 @@ function StepPlanningEditor({
                   placeholder="Sin hora"
                 />
               </div>
+
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={draft.evidenceRequired === true}
+                  onChange={(event) =>
+                    onDraftChange({
+                      ...draft,
+                      evidenceRequired: event.target.checked,
+                    })
+                  }
+                  className="mt-1 size-4 shrink-0 accent-teal-500"
+                />
+                <span>
+                  Evidencia obligatoria al marcar éxito
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    Sin adjunto no se puede marcar el paso como Exitoso. Al
+                    iniciar o al fallar no se pide.
+                  </span>
+                </span>
+              </label>
             </div>
 
             <DialogFooter className="shrink-0 flex-col gap-2 border-t p-4 sm:flex-col">
@@ -646,12 +684,13 @@ function PlannerGrid({
     <colgroup>
       <col className="w-[12%]" />
       <col className="w-[10%]" />
-      <col className="w-[13%]" />
-      <col className="w-[13%]" />
+      <col className="w-[12%]" />
+      <col className="w-[12%]" />
+      <col className="w-[44px]" />
       <col className="w-[8%]" />
-      <col className="w-[14%]" />
-      <col className="w-[12%]" />
-      <col className="w-[12%]" />
+      <col className="w-[13%]" />
+      <col className="w-[11%]" />
+      <col className="w-[11%]" />
       <col className="w-[6%]" />
     </colgroup>
   );
@@ -667,6 +706,13 @@ function PlannerGrid({
               <TableHead className="bg-muted/40">Bloque</TableHead>
               <TableHead className="bg-muted/40">Actividad</TableHead>
               <TableHead className="bg-muted/40">Paso</TableHead>
+              <TableHead
+                className="bg-muted/40 px-1 text-center"
+                title="Evidencia obligatoria al marcar éxito"
+              >
+                <span className="sr-only">Evidencia al marcar éxito</span>
+                <Paperclip className="mx-auto size-3.5" aria-hidden />
+              </TableHead>
               <TableHead className="bg-muted/40">Duración</TableHead>
               <TableHead className="bg-muted/40">Deps (OK exitoso)</TableHead>
               <TableHead className="bg-muted/40">Aprobaciones</TableHead>
@@ -684,7 +730,7 @@ function PlannerGrid({
             {!rows.length ? (
               <TableRow>
                 <TableCell
-                  colSpan={9}
+                  colSpan={10}
                   className="h-24 text-center text-muted-foreground"
                 >
                   No hay filas que coincidan con la búsqueda.
@@ -692,7 +738,7 @@ function PlannerGrid({
               </TableRow>
             ) : (
               rows.map((row) => {
-                const draft = drafts[row.id] ?? draftFromRow(row);
+                const draft = resolveDraft(row, drafts[row.id]);
                 const dirty = isDirty(row, draft);
                 return (
                   <TableRow key={row.id}>
@@ -707,6 +753,21 @@ function PlannerGrid({
                     </TableCell>
                     <TableCell className="align-top">
                       <span className="line-clamp-2 font-medium">{row.name}</span>
+                    </TableCell>
+                    <TableCell className="align-top px-1 text-center">
+                      <input
+                        type="checkbox"
+                        checked={draft.evidenceRequired === true}
+                        onChange={(event) =>
+                          onDraftChange(row.id, {
+                            ...draft,
+                            evidenceRequired: event.target.checked,
+                          })
+                        }
+                        aria-label="Evidencia obligatoria al marcar éxito"
+                        title="Obligatoria al marcar éxito, no al iniciar ni al fallar"
+                        className="size-4 accent-teal-500"
+                      />
                     </TableCell>
                     <TableCell className="align-top">
                       <div className="flex items-center gap-1">

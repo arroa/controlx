@@ -18,10 +18,16 @@ import {
   STEP_ITERATION_STATUS_LABELS,
   stepHeaderStatusLabel,
   type EvidenceMeta,
+  type ExecutionGateSummary,
   type RuntimeStepSummary,
   type StepAct,
   type StepIteration,
 } from "@/lib/execution-types";
+import {
+  stepDependents,
+  stepPredecessors,
+  type StepInfoRelation,
+} from "@/lib/step-info-relations";
 import { cn } from "@/lib/utils";
 
 function ActColumn({
@@ -164,9 +170,41 @@ function IterationCard({
   );
 }
 
+function RelationList({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: StepInfoRelation[];
+}) {
+  return (
+    <section className="space-y-1">
+      <p className="text-xs font-semibold tracking-wide text-foreground uppercase">
+        {title}
+      </p>
+      {rows.length ? (
+        <ul className="space-y-1">
+          {rows.map((row) => (
+            <li
+              key={`${row.kind}:${row.id}`}
+              className="text-xs leading-relaxed text-muted-foreground"
+            >
+              {row.path} · {row.statusLabel}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">Ninguno</p>
+      )}
+    </section>
+  );
+}
+
 type ExecutionStepInfoDialogProps = {
   open: boolean;
   step: RuntimeStepSummary | null;
+  steps?: RuntimeStepSummary[];
+  gates?: ExecutionGateSummary[];
   timezone: string;
   executionId: string;
   viewerActorId?: string | null;
@@ -176,6 +214,8 @@ type ExecutionStepInfoDialogProps = {
 export function ExecutionStepInfoDialog({
   open,
   step,
+  steps = [],
+  gates = [],
   timezone,
   executionId,
   viewerActorId = null,
@@ -204,24 +244,31 @@ export function ExecutionStepInfoDialog({
               {step?.name ?? "Paso"}
             </DialogTitle>
             {step ? (
-              <Badge
-                variant="outline"
-                className={cn(
-                  "shrink-0",
-                  headerStatus === "En curso" &&
-                    "border-sky-500/40 bg-sky-500/10 text-sky-100",
-                  headerStatus === "Exitosa" &&
-                    "border-emerald-500/40 bg-emerald-500/10 text-emerald-100",
-                  headerStatus === "Fallida" &&
-                    "border-red-500/40 bg-red-500/10 text-red-100",
-                  headerStatus === "Forzada OK" &&
-                    "border-amber-500/40 bg-amber-500/10 text-amber-100",
-                  headerStatus === "No iniciada" &&
-                    "border-border bg-muted/40 text-muted-foreground",
-                )}
-              >
-                {headerStatus}
-              </Badge>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    headerStatus === "En curso" &&
+                      "border-sky-500/40 bg-sky-500/10 text-sky-100",
+                    headerStatus === "Exitosa" &&
+                      "border-emerald-500/40 bg-emerald-500/10 text-emerald-100",
+                    headerStatus === "Fallida" &&
+                      "border-red-500/40 bg-red-500/10 text-red-100",
+                    headerStatus === "Forzada OK" &&
+                      "border-amber-500/40 bg-amber-500/10 text-amber-100",
+                    headerStatus === "No iniciada" &&
+                      "border-border bg-muted/40 text-muted-foreground",
+                  )}
+                >
+                  {headerStatus}
+                </Badge>
+                {step.evidenceRequired ? (
+                  <span className="flex items-center gap-1 text-[10px] text-amber-200">
+                    <Paperclip className="size-3" />
+                    Ev. al éxito
+                  </span>
+                ) : null}
+              </div>
             ) : null}
           </div>
           <DialogDescription className="text-left text-xs leading-relaxed">
@@ -246,6 +293,12 @@ export function ExecutionStepInfoDialog({
               step.description.trim() !== step.longDescription.trim() ? (
                 <p className="whitespace-pre-wrap text-sm text-muted-foreground">
                   {step.longDescription}
+                </p>
+              ) : null}
+              {step.evidenceRequired ? (
+                <p className="flex items-center gap-1.5 text-xs text-amber-200">
+                  <Paperclip className="size-3.5 shrink-0" />
+                  Evidencia obligatoria para marcar éxito
                 </p>
               ) : null}
             </section>
@@ -276,6 +329,15 @@ export function ExecutionStepInfoDialog({
                 Ejecutor: {step.executorName}
               </p>
             ) : null}
+
+            <RelationList
+              title="Predecesores"
+              rows={stepPredecessors(step, steps, gates)}
+            />
+            <RelationList
+              title="Dependientes"
+              rows={stepDependents(step, steps, gates)}
+            />
           </div>
         ) : null}
 

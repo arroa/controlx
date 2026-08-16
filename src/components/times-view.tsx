@@ -1,6 +1,6 @@
 "use client";
 
-import { BadgeInfo, ChevronDown, ChevronRight } from "lucide-react";
+import { BadgeInfo, ChevronDown, ChevronRight, Paperclip } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +66,8 @@ export type TimesViewRow = {
   /** Campos opcionales de runtime (ejecución). Ausentes en el planificador. */
   status?: string;
   mine?: boolean;
+  /** Si el paso exige adjunto al marcar éxito. */
+  evidenceRequired?: boolean;
   /** false = el paso no se puede seleccionar/operar (p. ej. no es mío ni admin). */
   operable?: boolean;
   actualStartedAt?: string | null;
@@ -732,10 +734,18 @@ export function TimesView({
                   if (!operable) return;
                   onSelect(active ? null : row.id);
                 }}
-                className="min-w-0 flex-1 truncate py-0 pr-1.5 pl-2.5 text-left text-[11px] font-medium disabled:cursor-not-allowed"
+                className="flex min-w-0 flex-1 items-center gap-1 py-0 pr-1.5 pl-2 text-left text-[11px] font-medium disabled:cursor-not-allowed"
               >
-                {row.mine ? "★ " : ""}
-                {row.name}
+                {row.evidenceRequired ? (
+                  <Paperclip
+                    className="size-3 shrink-0 opacity-90"
+                    aria-label="Evidencia obligatoria al marcar éxito"
+                  />
+                ) : null}
+                <span className="min-w-0 truncate">
+                  {row.mine ? "★ " : ""}
+                  {row.name}
+                </span>
               </button>
               {active && operable ? (
                 <div className="relative mr-0.5 shrink-0">
