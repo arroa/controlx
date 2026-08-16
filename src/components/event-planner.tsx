@@ -929,11 +929,12 @@ function PlannerGrid({
                           aria-label="Guardando esta fila"
                         />
                       ) : dirty ? (
-                        <Flag
-                          className="mx-auto size-4 fill-amber-400 text-amber-400"
-                          aria-label="Cambios sin guardar"
-                          title="Sin guardar"
-                        />
+                        <span title="Sin guardar">
+                          <Flag
+                            className="mx-auto size-4 fill-amber-400 text-amber-400"
+                            aria-label="Cambios sin guardar"
+                          />
+                        </span>
                       ) : (
                         <span className="inline-block size-4" />
                       )}

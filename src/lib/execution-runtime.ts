@@ -928,7 +928,11 @@ export async function getExecutionDetail(
 
   const gateMetaByDesignStep = new Map<
     string,
-    { producesGateId: string | null; requiresGateIds: string[] }
+    {
+      producesGateId: string | null;
+      requiresGateIds: string[];
+      evidenceRequired?: boolean;
+    }
   >();
   if (design) {
     for (const pair of design.pairs) {
@@ -1148,7 +1152,11 @@ export async function transitionRuntimeStep(input: {
     const design = await getEventDesign(execution.eventId.toHexString());
     const gateMetaByDesignStep = new Map<
       string,
-      { producesGateId: string | null; requiresGateIds: string[] }
+      {
+        producesGateId: string | null;
+        requiresGateIds: string[];
+        evidenceRequired?: boolean;
+      }
     >();
     if (design) {
       for (const pair of design.pairs) {
