@@ -1,7 +1,7 @@
 "use client";
 
 import { BadgeInfo, ChevronDown, ChevronRight, Paperclip } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type UIEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -391,13 +391,91 @@ function formatDurationCompact(totalMin: number) {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
+function isLaneStepDone(status: string | undefined) {
+  return (
+    status === "EXITOSO" ||
+    status === "APROBADO" ||
+    status === "SIMULADO" ||
+    status === "OMITIDO"
+  );
+}
+
+function computeLaneProgress(
+  laneRows: TimesViewRow[],
+  items: Map<string, ScheduleItem>,
+  nowMin: number | null,
+): { theoretical: number; real: number; dueCount: number; doneCount: number } {
+  const total = laneRows.length;
+  if (total === 0) {
+    return { theoretical: 0, real: 0, dueCount: 0, doneCount: 0 };
+  }
+  let dueCount = 0;
+  let doneCount = 0;
+  for (const row of laneRows) {
+    if (isLaneStepDone(row.status)) doneCount += 1;
+    const item = items.get(row.id);
+    if (nowMin != null && item && item.endMin <= nowMin) dueCount += 1;
+  }
+  return {
+    theoretical: dueCount / total,
+    real: doneCount / total,
+    dueCount,
+    doneCount,
+  };
+}
+
 type LaneStatsDisplay = {
   /** Conteo de grupo (bloques o actividades); null en el nivel actividad. */
   blocksLabel: string | null;
   stepsLabel: string;
   durationLabel: string;
   rangeLabel: string;
+  theoretical: number;
+  real: number;
+  dueCount: number;
+  doneCount: number;
+  stepCount: number;
 };
+
+function LaneProgressBar({
+  theoretical,
+  real,
+  dueCount,
+  doneCount,
+  stepCount,
+}: {
+  theoretical: number;
+  real: number;
+  dueCount: number;
+  doneCount: number;
+  stepCount: number;
+}) {
+  const theoPct = Math.round(theoretical * 100);
+  const realPct = Math.round(real * 100);
+  return (
+    <div
+      className="relative h-5 w-full rounded-sm bg-white"
+      title={`Teórico ${theoPct}% (${dueCount}/${stepCount} ya debían cerrar) · Real ${realPct}% (${doneCount}/${stepCount} cerrados)`}
+    >
+      <div
+        className="absolute top-1/2 left-0 h-[90%] -translate-y-1/2 rounded-sm bg-[#22d3ee]"
+        style={{ width: `${Math.min(100, theoretical * 100)}%` }}
+      />
+      <div
+        className="absolute top-1/2 left-0 h-[50%] -translate-y-1/2 rounded-sm bg-blue-500"
+        style={{ width: `${Math.min(100, real * 100)}%` }}
+      />
+      {[25, 50, 75].map((mark) => (
+        <span
+          key={mark}
+          aria-hidden
+          className="pointer-events-none absolute bottom-[5%] z-[1] h-0 w-0 -translate-x-1/2 border-x-[4px] border-b-[9px] border-x-transparent border-b-red-500"
+          style={{ left: `${mark}%` }}
+        />
+      ))}
+    </div>
+  );
+}
 
 export function TimesLaneHeader({
   title,
@@ -419,28 +497,43 @@ export function TimesLaneHeader({
       onClick={onToggle}
       aria-expanded={expanded}
       className={cn(
-        "sticky left-0 right-0 flex w-full items-center gap-2 py-1.5 pr-3 text-left backdrop-blur transition-colors",
+        "sticky left-0 right-0 grid w-full grid-cols-[14rem_minmax(6.5rem,1fr)_auto] items-center gap-3 py-1.5 pr-3 pl-3 text-left backdrop-blur transition-colors",
         tone === "workstream" &&
-          "z-[5] border-l-2 border-l-cyan-500/80 bg-slate-700/55 pl-3 text-slate-100 hover:bg-slate-700/70",
+          "z-[5] border-l-2 border-l-cyan-500/80 bg-slate-700/55 text-slate-100 hover:bg-slate-700/70",
         tone === "block" &&
-          "z-[4] border-l-2 border-l-slate-500/70 bg-slate-800/40 pl-5 text-slate-200 hover:bg-slate-800/55",
+          "z-[4] border-l-2 border-l-slate-500/70 bg-slate-800/40 text-slate-200 hover:bg-slate-800/55",
         tone === "activity" &&
-          "z-[3] border-l-2 border-l-teal-500/50 bg-slate-900/35 pl-7 text-slate-300 hover:bg-slate-900/50",
+          "z-[3] border-l-2 border-l-teal-500/50 bg-slate-900/35 text-slate-300 hover:bg-slate-900/50",
       )}
     >
-      <Chevron className="size-4 shrink-0 opacity-70" />
       <span
         className={cn(
-          "min-w-0 flex-1 truncate text-left font-semibold tracking-wide",
-          tone === "workstream" && "text-sm",
-          tone === "block" && "text-[13px]",
-          tone === "activity" && "text-xs font-medium",
+          "flex min-w-0 items-center gap-2",
+          tone === "block" && "pl-3",
+          tone === "activity" && "pl-6",
         )}
       >
-        {title}
+        <Chevron className="size-4 shrink-0 opacity-70" />
+        <span
+          className={cn(
+            "min-w-0 truncate text-left font-semibold tracking-wide",
+            tone === "workstream" && "text-sm",
+            tone === "block" && "text-[13px]",
+            tone === "activity" && "text-xs font-medium",
+          )}
+        >
+          {title}
+        </span>
       </span>
+      <LaneProgressBar
+        theoretical={stats.theoretical}
+        real={stats.real}
+        dueCount={stats.dueCount}
+        doneCount={stats.doneCount}
+        stepCount={stats.stepCount}
+      />
       <span
-        className="ml-auto flex shrink-0 items-baseline gap-x-2 font-mono text-[10px] leading-none text-slate-300/85 tabular-nums"
+        className="flex shrink-0 items-baseline gap-x-2 font-mono text-[10px] leading-none text-slate-300/85 tabular-nums"
         title={[
           stats.blocksLabel,
           stats.stepsLabel,
@@ -468,6 +561,14 @@ export function TimesLaneHeader({
 }
 
 const WINDOW_COLUMNS = 24;
+
+function useIsClient() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+}
 
 function clampWindowStart(start: number, span: number, totalMin: number) {
   if (span >= totalMin) return 0;
@@ -617,6 +718,7 @@ export function TimesView2({
     () => computeSchedule(allRows, gates, dayDStartAt),
     [allRows, gates, dayDStartAt],
   );
+  const isClient = useIsClient();
   const [flowerOpenId, setFlowerOpenId] = useState<string | null>(null);
   const [infoRowId, setInfoRowId] = useState<string | null>(null);
   const infoRow =
@@ -814,7 +916,7 @@ export function TimesView2({
   const planWidth = canPan
     ? (totalMin / windowSpan) * Math.max(trackWidth, 1)
     : undefined;
-  const useClockLabels = Boolean(dayDStartAt && t0Ms != null);
+  const useClockLabels = isClient && Boolean(dayDStartAt && t0Ms != null);
   const columns = Array.from({ length: WINDOW_COLUMNS }, (_, index) => {
     const startMin = clampedStart + (index / WINDOW_COLUMNS) * windowSpan;
     const dayKey = civilDayKey(
@@ -840,13 +942,17 @@ export function TimesView2({
       isMidnight: index > 0 && dayKey !== prevDayKey,
     };
   });
-  const dayBands = visibleDayBands(
+  const dayBandsRaw = visibleDayBands(
     clampedStart,
     windowEnd,
     t0Ms,
     eventTimezone,
     useClockLabels,
   );
+  const dayBands =
+    dayBandsRaw.length > 0
+      ? dayBandsRaw
+      : [{ startMin: clampedStart, endMin: windowEnd }];
 
   useEffect(() => {
     const node = hScrollRef.current;
@@ -900,6 +1006,7 @@ export function TimesView2({
     } else if (meta?.activities != null) {
       groupLabel = `${meta.activities} actividad${meta.activities === 1 ? "" : "es"}`;
     }
+    const progress = computeLaneProgress(laneRows, items, nowMin);
     return {
       blocksLabel: groupLabel,
       stepsLabel: `${stats.stepCount} paso${stats.stepCount === 1 ? "" : "s"}`,
@@ -908,6 +1015,11 @@ export function TimesView2({
         stats.startMin != null && stats.endMin != null
           ? `${formatAxisLabel(stats.startMin, t0Ms, eventTimezone, useClockLabels)}–${formatAxisLabel(stats.endMin, t0Ms, eventTimezone, useClockLabels)}`
           : "—",
+      theoretical: progress.theoretical,
+      real: progress.real,
+      dueCount: progress.dueCount,
+      doneCount: progress.doneCount,
+      stepCount: stats.stepCount,
     };
   }
 

@@ -81,80 +81,63 @@ function ExecutionRow({ item }: { item: AccessibleExecutionCard }) {
             >
               {STATUS_LABELS[item.status]}
             </Badge>
+            {item.assignedStepCount > 0 ? (
+              <Badge
+                variant="outline"
+                className="shrink-0 border-transparent bg-white px-2 py-0.5 text-xs text-black"
+              >
+                {item.assignedStepCount} paso
+                {item.assignedStepCount === 1 ? "" : "s"} mío
+                {item.assignedStepCount === 1 ? "" : "s"}
+              </Badge>
+            ) : null}
           </div>
         </Link>
       </div>
 
-      <div className="mt-3 space-y-2">
-        {canPanel ? (
-          <Button
-            size="sm"
-            className="h-9 w-full gap-2 text-sm font-semibold shadow-sm"
-            asChild
-          >
-            <Link
-              href={`/events/${item.eventId}/executions/${item.id}/umbral`}
-            >
-              <ChartNoAxesCombined className="size-3.5" aria-hidden />
-              Monitor de Umbral
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {canRun ? (
+          <Button size="sm" className="h-12 w-full text-base font-semibold" asChild>
+            <Link href={`/run/${item.id}`}>
+              <Play className="size-5" />
+              Mis pasos
             </Link>
           </Button>
         ) : null}
-        <div className="flex flex-wrap items-center gap-2">
-          {canRun ? (
-            <Button size="sm" variant={canPanel ? "outline" : "default"} asChild>
-              <Link href={`/run/${item.id}`}>
-                <Play className="size-3.5" />
-                Ir a Mis Pasos
-              </Link>
-            </Button>
-          ) : null}
-          {item.assignedStepCount > 0 ? (
-            <Button
-              type="button"
-              size="sm"
-              tabIndex={-1}
-              aria-label={`${item.assignedStepCount} pasos asignados`}
-              className={cn(
-                "pointer-events-none shadow-none",
-                // Mismo borde transparente que el botón primary; el contorno
-                // va por ring inset para no cambiar el alto visual.
-                "border-transparent bg-white text-black ring-1 ring-inset ring-neutral-300",
-                "hover:bg-white hover:text-black",
-                "dark:border-transparent dark:bg-white dark:text-black dark:ring-neutral-300",
-                "dark:hover:bg-white dark:hover:text-black",
-              )}
+        {canPanel ? (
+          <Button size="sm" variant="outline" className="h-12 w-full text-base font-semibold" asChild>
+            <Link href={`/events/${item.eventId}/executions/${item.id}`}>
+              <Eye className="size-5" />
+              Panel
+            </Link>
+          </Button>
+        ) : null}
+        {canPanel ? (
+          <Button size="sm" variant="outline" className="h-12 w-full text-base font-semibold" asChild>
+            <Link href={`/events/${item.eventId}/executions/${item.id}/mapa`}>
+              <Map className="size-5" />
+              Mapa
+            </Link>
+          </Button>
+        ) : null}
+        {canPanel ? (
+          <Button size="sm" variant="outline" className="h-12 w-full text-base font-semibold" asChild>
+            <Link
+              href={`/events/${item.eventId}/executions/${item.id}/umbral`}
             >
-              {item.assignedStepCount} paso
-              {item.assignedStepCount === 1 ? "" : "s"} mío
-              {item.assignedStepCount === 1 ? "" : "s"}
-            </Button>
-          ) : null}
-          {canPanel ? (
-            <Button size="sm" variant="outline" asChild>
-              <Link href={`/events/${item.eventId}/executions/${item.id}/mapa`}>
-                <Map className="size-3.5" />
-                Mapa General
-              </Link>
-            </Button>
-          ) : null}
-          {canPanel ? (
-            <Button size="sm" variant="outline" asChild>
-              <Link href={`/events/${item.eventId}/executions/${item.id}`}>
-                <Eye className="size-3.5" />
-                Panel
-              </Link>
-            </Button>
-          ) : null}
-          {!canRun && !canPanel ? (
-            <Button size="sm" variant="outline" asChild>
-              <Link href={`/run/${item.id}`}>
-                <Play className="size-3.5" />
-                Abrir
-              </Link>
-            </Button>
-          ) : null}
-        </div>
+              <ChartNoAxesCombined className="size-5" aria-hidden />
+              Monitor
+            </Link>
+          </Button>
+        ) : null}
+        {!canRun && !canPanel ? (
+          <Button size="sm" className="h-12 w-full text-base font-semibold" asChild>
+            <Link href={`/run/${item.id}`}>
+              <Play className="size-5" />
+              Abrir
+            </Link>
+          </Button>
+        ) : null}
       </div>
     </article>
   );

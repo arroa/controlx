@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { AppHeader } from "@/components/app-header";
 import { DevActorSwitcher } from "@/components/dev-actor-switcher";
-import { ExecutionTimesPanel } from "@/components/execution-times-panel";
+import { ExecutionTimesPanel2 } from "@/components/execution-times-panel-2";
 import { Badge } from "@/components/ui/badge";
 import { canAccessEvent, listEventActors } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
@@ -129,7 +129,7 @@ export default async function ExecutorRunPage({
         }
       />
       <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-3 pb-4 sm:px-6">
-        <ExecutionTimesPanel
+        <ExecutionTimesPanel2
           initial={detail}
           actorId={actor?.id ?? null}
           actorName={actor?.name ?? null}

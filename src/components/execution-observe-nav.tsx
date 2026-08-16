@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { Activity, Columns2, Eye, Map } from "lucide-react";
+import { Activity, Eye, Map } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
-type ObserveView = "panel" | "panel-2" | "monitor" | "mapa";
+type ObserveView = "panel" | "monitor" | "mapa";
 
 export function ExecutionObserveNav({
   eventId,
@@ -19,7 +19,6 @@ export function ExecutionObserveNav({
     { id: "monitor" as const, href: `${base}/umbral`, label: "Monitor", Icon: Activity },
     { id: "mapa" as const, href: `${base}/mapa`, label: "Mapa General", Icon: Map },
     { id: "panel" as const, href: base, label: "Panel", Icon: Eye },
-    { id: "panel-2" as const, href: `${base}/panel-2`, label: "Panel 2", Icon: Columns2 },
   ];
 
   return (

@@ -5,6 +5,7 @@ import {
   CalendarClock,
   ChartNoAxesGantt,
   DoorOpen,
+  Flag,
   List,
   LoaderCircle,
   Paperclip,
@@ -12,7 +13,7 @@ import {
   Save,
   Search,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { Label } from "@/components/ui/label";
 
@@ -206,6 +207,9 @@ export function EventPlanner({
     Object.fromEntries(pairsToRows(pairs).map((row) => [row.id, draftFromRow(row)])),
   );
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [savingAll, setSavingAll] = useState(false);
+  const [saveNotice, setSaveNotice] = useState("");
+  const saveNoticeTimer = useRef(0);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -225,6 +229,14 @@ export function EventPlanner({
     );
   }, [query, rows]);
 
+  const dirtyRows = useMemo(
+    () =>
+      rows.filter((row) =>
+        isDirty(row, resolveDraft(row, drafts[row.id])),
+      ),
+    [drafts, rows],
+  );
+
   function patchRow(step: DesignStepSummary) {
     setRows((current) => {
       const updated = current.map((row) => {
@@ -237,9 +249,12 @@ export function EventPlanner({
         }
         return row;
       });
-      setDrafts(
-        Object.fromEntries(updated.map((row) => [row.id, draftFromRow(row)])),
-      );
+      setDrafts((current) => {
+        const next = { ...current };
+        const saved = updated.find((row) => row.id === step.id);
+        if (saved) next[saved.id] = draftFromRow(saved);
+        return next;
+      });
       return updated;
     });
   }
@@ -289,6 +304,38 @@ export function EventPlanner({
     }
     patchRow(payload.step);
     return true;
+  }
+
+  async function saveDirtyRows() {
+    if (!dirtyRows.length || savingAll) return;
+    const count = dirtyRows.length;
+    const startedAt = Date.now();
+    setSavingAll(true);
+    setError("");
+    setSaveNotice(
+      count === 1
+        ? "Se está guardando 1 cambio…"
+        : `Se están guardando ${count} cambios…`,
+    );
+    let ok = true;
+    for (const row of dirtyRows) {
+      ok = await saveRow(row);
+      if (!ok) break;
+    }
+    const waitMs = 1000 - (Date.now() - startedAt);
+    if (waitMs > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, waitMs));
+    }
+    setSavingAll(false);
+    if (!ok) {
+      setSaveNotice("");
+      return;
+    }
+    setSaveNotice(
+      count === 1 ? "Se guardó 1 cambio." : `Se guardaron ${count} cambios.`,
+    );
+    window.clearTimeout(saveNoticeTimer.current);
+    saveNoticeTimer.current = window.setTimeout(() => setSaveNotice(""), 2800);
   }
 
   function handleGatesChange(nextGates: GateSummary[]) {
@@ -409,6 +456,32 @@ export function EventPlanner({
 
         <div className="min-w-2 flex-1" />
 
+        {saveNotice && !savingAll ? (
+          <p
+            aria-live="polite"
+            className="shrink-0 text-xs text-cyan-200/85"
+          >
+            {saveNotice}
+          </p>
+        ) : null}
+
+        {dirtyRows.length ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-8"
+            disabled={savingAll}
+            onClick={() => void saveDirtyRows()}
+          >
+            {savingAll ? (
+              <LoaderCircle className="size-3.5 animate-spin" />
+            ) : (
+              <Save className="size-3.5" />
+            )}
+            Guardar {dirtyRows.length}
+          </Button>
+        ) : null}
+
         <Button
           type="button"
           size="sm"
@@ -440,7 +513,6 @@ export function EventPlanner({
           onDraftChange={(id, next) =>
             setDrafts((current) => ({ ...current, [id]: next }))
           }
-          onSave={(row) => void saveRow(row)}
         />
       </TabsContent>
 
@@ -497,6 +569,32 @@ export function EventPlanner({
         });
       }}
     />
+
+    <Dialog
+      open={savingAll}
+      onOpenChange={(open) => {
+        if (!open && savingAll) return;
+      }}
+    >
+      <DialogContent
+        showCloseButton={false}
+        className="sm:max-w-xs"
+        onPointerDownOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+      >
+        <div className="flex flex-col items-center gap-3 py-2 text-center">
+          <LoaderCircle
+            className="size-6 animate-spin text-cyan-300"
+            aria-hidden
+          />
+          <DialogHeader className="items-center">
+            <DialogTitle>Guardando</DialogTitle>
+            <DialogDescription>{saveNotice}</DialogDescription>
+          </DialogHeader>
+        </div>
+      </DialogContent>
+    </Dialog>
 
     <GatesManager
       open={gatesOpen}
@@ -670,7 +768,6 @@ function PlannerGrid({
   eventTimezone,
   savingId,
   onDraftChange,
-  onSave,
 }: {
   rows: PlannerRow[];
   allRows: PlannerRow[];
@@ -678,7 +775,6 @@ function PlannerGrid({
   eventTimezone: string;
   savingId: string | null;
   onDraftChange: (id: string, draft: Draft) => void;
-  onSave: (row: PlannerRow) => void;
 }) {
   const colgroup = (
     <colgroup>
@@ -717,7 +813,13 @@ function PlannerGrid({
               <TableHead className="bg-muted/40">Deps (OK exitoso)</TableHead>
               <TableHead className="bg-muted/40">Aprobaciones</TableHead>
               <TableHead className="bg-muted/40">Hora (no antes de)</TableHead>
-              <TableHead className="bg-muted/40 text-right"> </TableHead>
+              <TableHead
+                className="bg-muted/40 px-1 text-center"
+                title="Cambios sin guardar"
+              >
+                <span className="sr-only">Cambios sin guardar</span>
+                <Flag className="mx-auto size-3.5 text-muted-foreground" />
+              </TableHead>
             </TableRow>
           </TableHeader>
         </table>
@@ -820,20 +922,21 @@ function PlannerGrid({
                         placeholder="Sin hora"
                       />
                     </TableCell>
-                    <TableCell className="align-top text-right">
-                      <Button
-                        size="sm"
-                        variant={dirty ? "default" : "ghost"}
-                        disabled={!dirty || savingId === row.id}
-                        onClick={() => onSave(row)}
-                      >
-                        {savingId === row.id ? (
-                          <LoaderCircle className="size-4 animate-spin" />
-                        ) : (
-                          <Save className="size-4" />
-                        )}
-                        Guardar
-                      </Button>
+                    <TableCell className="align-top px-1 text-center">
+                      {savingId === row.id ? (
+                        <LoaderCircle
+                          className="mx-auto size-4 animate-spin text-cyan-300"
+                          aria-label="Guardando esta fila"
+                        />
+                      ) : dirty ? (
+                        <Flag
+                          className="mx-auto size-4 fill-amber-400 text-amber-400"
+                          aria-label="Cambios sin guardar"
+                          title="Sin guardar"
+                        />
+                      ) : (
+                        <span className="inline-block size-4" />
+                      )}
                     </TableCell>
                   </TableRow>
                 );

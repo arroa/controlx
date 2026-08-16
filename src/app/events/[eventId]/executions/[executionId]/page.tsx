@@ -4,7 +4,7 @@ import { Play } from "lucide-react";
 
 import { AppHeader } from "@/components/app-header";
 import { ExecutionObserveNav } from "@/components/execution-observe-nav";
-import { ExecutionTimesPanel } from "@/components/execution-times-panel";
+import { ExecutionTimesPanel2 } from "@/components/execution-times-panel-2";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,7 +85,7 @@ export default async function ExecutionPage({
         }
       />
       <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-x-hidden px-3 pb-4 sm:px-6">
-        <ExecutionTimesPanel
+        <ExecutionTimesPanel2
           initial={detail}
           actorId={realActor?.id ?? null}
           actorName={realActor?.name ?? null}
