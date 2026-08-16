@@ -7,6 +7,7 @@ import {
   loadStoredEventReadiness,
   markEventReadinessStale,
   saveEventReadinessSnapshot,
+  type StoredEventReadiness,
 } from "@/lib/event-readiness-store";
 import type {
   EventReadiness,
@@ -257,17 +258,10 @@ export async function getEventReadiness(
   };
 }
 
-/** Vista del hub: no auto-recalcula si solo está stale (hay que pulsar Recalcular). */
-export async function getEventReadinessSnapshot(
+function fromStoredReadiness(
   eventId: string,
-): Promise<EventReadiness | null> {
-  const stored = await loadStoredEventReadiness(eventId);
-
-  // Primera vez: calcula y persiste.
-  if (!stored || !stored.computedAt) {
-    return recomputeEventReadiness(eventId);
-  }
-
+  stored: StoredEventReadiness,
+): EventReadiness {
   const stale = Boolean(stored.stale);
   return {
     eventId,
@@ -286,9 +280,35 @@ export async function getEventReadinessSnapshot(
       plan: "empty",
     },
     stale,
-    computedAt: stored.computedAt.toISOString(),
+    computedAt: stored.computedAt ? stored.computedAt.toISOString() : null,
     aiAnalysis: stored.aiAnalysis ?? null,
   };
+}
+
+/**
+ * Snapshot cacheado tal cual está, sin recalcular.
+ * Tras un cambio de preparación (carga masiva, limpiar, etc.).
+ */
+export async function peekEventReadinessSnapshot(
+  eventId: string,
+): Promise<EventReadiness | null> {
+  const stored = await loadStoredEventReadiness(eventId);
+  if (!stored) return null;
+  return fromStoredReadiness(eventId, stored);
+}
+
+/** Vista del hub: no auto-recalcula si solo está stale (hay que pulsar Recalcular). */
+export async function getEventReadinessSnapshot(
+  eventId: string,
+): Promise<EventReadiness | null> {
+  const stored = await loadStoredEventReadiness(eventId);
+
+  // Primera vez: calcula y persiste.
+  if (!stored || !stored.computedAt) {
+    return recomputeEventReadiness(eventId);
+  }
+
+  return fromStoredReadiness(eventId, stored);
 }
 
 export async function assertCanCreateExecution(

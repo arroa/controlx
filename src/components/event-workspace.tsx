@@ -3,6 +3,7 @@
 import {
   Boxes,
   CalendarClock,
+  FileSpreadsheet,
   PencilRuler,
   UsersRound,
   type LucideIcon,
@@ -10,6 +11,7 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 
+import { DesignBulkDialog } from "@/components/design-bulk-dialog";
 import { EventReadinessBoard } from "@/components/event-readiness-board";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,17 +34,33 @@ export function EventWorkspace({
   readOnly?: boolean;
 }) {
   const [readiness, setReadiness] = useState(initialReadiness);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   return (
     <div className="space-y-10">
       <section>
-        <div className="mb-4">
-          <h2 className="text-xl font-semibold">Preparación del evento</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {readOnly
-              ? "Consulta en solo lectura mientras el evento esté archivado."
-              : "Setup, diseño, roles y planificador."}
-          </p>
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">Preparación del evento</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {readOnly
+                ? "Consulta en solo lectura mientras el evento esté archivado."
+                : "Setup, diseño, roles y planificador."}
+            </p>
+          </div>
+          {!readOnly ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2.5 rounded-xl border-cyan-400/50 bg-cyan-500/15 px-3.5 font-semibold text-cyan-50 shadow-[0_0_0_1px_rgba(34,211,238,0.12)] hover:bg-cyan-500/25 hover:text-cyan-50"
+              onClick={() => setBulkOpen(true)}
+            >
+              <span className="flex size-7 items-center justify-center rounded-lg bg-cyan-400/20 text-cyan-300">
+                <FileSpreadsheet className="size-4" />
+              </span>
+              Carga masiva
+            </Button>
+          ) : null}
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <PreparationCard
@@ -79,6 +97,16 @@ export function EventWorkspace({
           />
         </div>
       </section>
+
+      {!readOnly ? (
+        <DesignBulkDialog
+          eventId={event.id}
+          eventName={event.name}
+          open={bulkOpen}
+          onOpenChange={setBulkOpen}
+          onReadinessChange={setReadiness}
+        />
+      ) : null}
 
       {!readOnly ? (
         <EventReadinessBoard
