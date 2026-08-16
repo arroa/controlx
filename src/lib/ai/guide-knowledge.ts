@@ -109,7 +109,7 @@ Un paso puede arrancar si tiene condición de inicio, por ejemplo:
 - o es raíz anclada al Día D.
 
 Vista lista: editas deps/gates/aprobaciones/hora.
-Vista panorámica: cronograma.`,
+Vista panorámica: cronograma con ventana, zoom y pan (mismo lienzo que el Panel).`
   },
   {
     id: "readiness",

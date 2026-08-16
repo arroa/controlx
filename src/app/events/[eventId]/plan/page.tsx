@@ -38,7 +38,7 @@ export default async function EventPlanPage({
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             En Lista de Pasos defines deps, gates, aprobaciones y hora. Vista
-            Panorámica muestra el cronograma.
+            Panorámica muestra el cronograma con zoom y pan.
           </p>
         </section>
         <div className="min-h-0 flex-1 overflow-hidden">

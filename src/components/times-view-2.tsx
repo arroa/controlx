@@ -29,6 +29,56 @@ export const TIMES_VIEW_ZOOM_OPTIONS = [
   { id: "all" as const, label: "Todo", minutes: null },
 ];
 export type TimesViewZoomId = (typeof TIMES_VIEW_ZOOM_OPTIONS)[number]["id"];
+export type TimesViewVariant = "run" | "plan";
+
+export function TimesViewWindowControls({
+  zoom,
+  onZoomChange,
+  onFold,
+}: {
+  zoom: TimesViewZoomId;
+  onZoomChange: (id: TimesViewZoomId) => void;
+  onFold: (action: "open" | "collapse") => void;
+}) {
+  return (
+    <>
+      <div className="flex overflow-hidden rounded-md border">
+        {TIMES_VIEW_ZOOM_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onZoomChange(option.id)}
+            className={cn(
+              "px-2.5 py-1.5 text-xs font-medium transition",
+              zoom === option.id
+                ? "bg-cyan-500/20 text-cyan-100"
+                : "bg-muted/20 text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex overflow-hidden rounded-md border">
+        <button
+          type="button"
+          onClick={() => onFold("collapse")}
+          className="px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground"
+        >
+          Colapsar
+        </button>
+        <button
+          type="button"
+          onClick={() => onFold("open")}
+          className="px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground"
+        >
+          Abrir
+        </button>
+      </div>
+    </>
+  );
+}
+
 /**
  * Ancho mínimo de barra: pasos cortos (p.ej. 5 min) seguirían siendo un punto
  * a la densidad del eje. Se dibujan más anchos para poder leer/tocar; la
@@ -483,12 +533,14 @@ export function TimesLaneHeader({
   onToggle,
   stats,
   tone,
+  showProgress = true,
 }: {
   title: string;
   expanded: boolean;
   onToggle: () => void;
   stats: LaneStatsDisplay;
   tone: "workstream" | "block" | "activity";
+  showProgress?: boolean;
 }) {
   const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
@@ -497,7 +549,10 @@ export function TimesLaneHeader({
       onClick={onToggle}
       aria-expanded={expanded}
       className={cn(
-        "sticky left-0 right-0 grid w-full grid-cols-[14rem_minmax(6.5rem,1fr)_auto] items-center gap-3 py-1.5 pr-3 pl-3 text-left backdrop-blur transition-colors",
+        "sticky left-0 right-0 grid w-full items-center gap-3 py-1.5 pr-3 pl-3 text-left backdrop-blur transition-colors",
+        showProgress
+          ? "grid-cols-[14rem_minmax(6.5rem,1fr)_auto]"
+          : "grid-cols-[minmax(14rem,1fr)_auto]",
         tone === "workstream" &&
           "z-[5] border-l-2 border-l-cyan-500/80 bg-slate-700/55 text-slate-100 hover:bg-slate-700/70",
         tone === "block" &&
@@ -525,13 +580,15 @@ export function TimesLaneHeader({
           {title}
         </span>
       </span>
-      <LaneProgressBar
-        theoretical={stats.theoretical}
-        real={stats.real}
-        dueCount={stats.dueCount}
-        doneCount={stats.doneCount}
-        stepCount={stats.stepCount}
-      />
+      {showProgress ? (
+        <LaneProgressBar
+          theoretical={stats.theoretical}
+          real={stats.real}
+          dueCount={stats.dueCount}
+          doneCount={stats.doneCount}
+          stepCount={stats.stepCount}
+        />
+      ) : null}
       <span
         className="flex shrink-0 items-baseline gap-x-2 font-mono text-[10px] leading-none text-slate-300/85 tabular-nums"
         title={[
@@ -692,6 +749,7 @@ export function TimesView2({
   showBuiltInInfoDialog = true,
   zoom,
   foldAll = null,
+  variant = "run",
 }: {
   /** Filas visibles (tras filtro de búsqueda / WS / focus). */
   rows: TimesViewRow[];
@@ -713,6 +771,8 @@ export function TimesView2({
   showBuiltInInfoDialog?: boolean;
   zoom: TimesViewZoomId;
   foldAll?: { action: "open" | "collapse"; nonce: number } | null;
+  /** plan = preparación (sin playhead ni teórico/real). run = Panel / Mi turno. */
+  variant?: TimesViewVariant;
 }) {
   const { items, totalMin, gateMarkers, t0Ms } = useMemo(
     () => computeSchedule(allRows, gates, dayDStartAt),
@@ -815,6 +875,7 @@ export function TimesView2({
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [nowMs, setNowMs] = useState<number | null>(null);
+  const isPlan = variant === "plan";
 
   const allGroupKeys = useMemo(() => {
     const keys: string[] = [];
@@ -870,10 +931,11 @@ export function TimesView2({
   }, []);
 
   useEffect(() => {
+    if (isPlan) return;
     setNowMs(Date.now());
     const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [isPlan]);
 
   const zoomOption = TIMES_VIEW_ZOOM_OPTIONS.find((option) => option.id === zoom)!;
   const windowSpan =
@@ -884,12 +946,12 @@ export function TimesView2({
     t0Ms != null && nowMs != null ? (nowMs - t0Ms) / 60_000 : null;
 
   useEffect(() => {
-    if (didSnapNow.current || nowMin == null) return;
+    if (isPlan || didSnapNow.current || nowMin == null) return;
     didSnapNow.current = true;
     setWindowStart(
       clampWindowStart(nowMin - windowSpan / 2, windowSpan, totalMin),
     );
-  }, [nowMin, windowSpan, totalMin]);
+  }, [isPlan, nowMin, windowSpan, totalMin]);
 
   useEffect(() => {
     if (prevSpanRef.current == null) {
@@ -1015,10 +1077,10 @@ export function TimesView2({
         stats.startMin != null && stats.endMin != null
           ? `${formatAxisLabel(stats.startMin, t0Ms, eventTimezone, useClockLabels)}–${formatAxisLabel(stats.endMin, t0Ms, eventTimezone, useClockLabels)}`
           : "—",
-      theoretical: progress.theoretical,
-      real: progress.real,
-      dueCount: progress.dueCount,
-      doneCount: progress.doneCount,
+      theoretical: isPlan ? 0 : progress.theoretical,
+      real: isPlan ? 0 : progress.real,
+      dueCount: isPlan ? 0 : progress.dueCount,
+      doneCount: isPlan ? 0 : progress.doneCount,
       stepCount: stats.stepCount,
     };
   }
@@ -1055,7 +1117,7 @@ export function TimesView2({
             }}
           />
         ))}
-        {nowMin != null ? (
+        {nowMin != null && !isPlan ? (
           <div
             className="pointer-events-none absolute inset-y-0 z-[3] border-l border-dashed border-rose-500"
             style={{ left: xOf(nowMin) }}
@@ -1285,7 +1347,7 @@ export function TimesView2({
                 </span>
               </div>
             ))}
-            {nowMin != null ? (
+            {nowMin != null && !isPlan ? (
               <div
                 className="pointer-events-none absolute inset-y-0 z-[2] border-l border-dashed border-rose-500"
                 style={{ left: xOf(nowMin) }}
@@ -1314,6 +1376,7 @@ export function TimesView2({
                   expanded={wsExpanded}
                   onToggle={() => toggleCollapsed(wsKey)}
                   tone="workstream"
+                  showProgress={!isPlan}
                   stats={laneStatsFor(wsRows, { blocks: blocks.length })}
                 />
                 {wsExpanded
@@ -1328,6 +1391,7 @@ export function TimesView2({
                             expanded={blockExpanded}
                             onToggle={() => toggleCollapsed(blockKey)}
                             tone="block"
+                            showProgress={!isPlan}
                             stats={laneStatsFor(blockRows, {
                               activities: activities.length,
                             })}
@@ -1347,6 +1411,7 @@ export function TimesView2({
                                           toggleCollapsed(activityKey)
                                         }
                                         tone="activity"
+                                        showProgress={!isPlan}
                                         stats={laneStatsFor(activityRows)}
                                       />
                                       {activityExpanded

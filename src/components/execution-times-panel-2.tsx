@@ -21,8 +21,8 @@ import { ExecutorTimesMap } from "@/components/executor-times-map";
 import type { FlowerAction } from "@/components/step-action-flower";
 import { type TimesViewRow } from "@/components/times-view";
 import {
-  TIMES_VIEW_ZOOM_OPTIONS,
   TimesView2,
+  TimesViewWindowControls,
   type TimesViewZoomId,
 } from "@/components/times-view-2";
 import type { ApprovalRole } from "@/domain/controlx";
@@ -805,45 +805,13 @@ export function ExecutionTimesPanel2({
             </button>
           </div>
           {viewMode === "timeline" && !isMobile ? (
-            <div className="flex overflow-hidden rounded-md border">
-              {TIMES_VIEW_ZOOM_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setZoom(option.id)}
-                  className={cn(
-                    "px-2.5 py-1.5 text-xs font-medium transition",
-                    zoom === option.id
-                      ? "bg-cyan-500/20 text-cyan-100"
-                      : "bg-muted/20 text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {viewMode === "timeline" && !isMobile ? (
-            <div className="flex overflow-hidden rounded-md border">
-              <button
-                type="button"
-                onClick={() =>
-                  setFoldAll({ action: "collapse", nonce: Date.now() })
-                }
-                className="px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground"
-              >
-                Colapsar
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setFoldAll({ action: "open", nonce: Date.now() })
-                }
-                className="px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground"
-              >
-                Abrir
-              </button>
-            </div>
+            <TimesViewWindowControls
+              zoom={zoom}
+              onZoomChange={setZoom}
+              onFold={(action) =>
+                setFoldAll({ action, nonce: Date.now() })
+              }
+            />
           ) : null}
           {hasActor && viewMode === "timeline" ? (
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-md border">

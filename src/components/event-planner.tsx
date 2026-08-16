@@ -64,9 +64,11 @@ import {
 } from "@/components/datetime-picker";
 import {
   DEFAULT_DURATION_MINUTES,
-  TimesView,
+  TimesView2,
+  TimesViewWindowControls,
   type TimesViewRow,
-} from "@/components/times-view";
+  type TimesViewZoomId,
+} from "@/components/times-view-2";
 import { cn } from "@/lib/utils";
 
 function formatDayDToolbar(iso: string, timezone: string) {
@@ -214,6 +216,11 @@ export function EventPlanner({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [view, setView] = useState<"grid" | "times">("grid");
+  const [zoom, setZoom] = useState<TimesViewZoomId>("4h");
+  const [foldAll, setFoldAll] = useState<{
+    action: "open" | "collapse";
+    nonce: number;
+  } | null>(null);
 
   const editingRow = editingId
     ? (rows.find((row) => row.id === editingId) ?? null)
@@ -494,6 +501,16 @@ export function EventPlanner({
         </Button>
       </div>
 
+      {view === "times" ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <TimesViewWindowControls
+            zoom={zoom}
+            onZoomChange={setZoom}
+            onFold={(action) => setFoldAll({ action, nonce: Date.now() })}
+          />
+        </div>
+      ) : null}
+
       {error ? (
         <p role="alert" className="shrink-0 text-sm text-red-300">
           {error}
@@ -520,7 +537,7 @@ export function EventPlanner({
         value="times"
         className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden outline-none data-[state=inactive]:hidden"
       >
-        <TimesView
+        <TimesView2
           rows={filteredRows}
           allRows={rows}
           gates={gates}
@@ -539,6 +556,9 @@ export function EventPlanner({
             })
           }
           showBuiltInInfoDialog
+          zoom={zoom}
+          foldAll={foldAll}
+          variant="plan"
         />
       </TabsContent>
     </Tabs>
