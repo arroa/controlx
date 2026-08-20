@@ -1286,14 +1286,23 @@ export async function transitionRuntimeStep(input: {
 
   const iterations = [...(step.iterations ?? [])];
   if (input.action === "start") {
-    if (iterations.length) {
+    if (iterations.length && step.status !== "RECHAZADO") {
       throw new Error("El paso ya tiene iteraciones; usa Rearrancar.");
     }
-    iterations.push({
-      n: 1,
-      status: "EN_CURSO",
-      start: actBase,
-    });
+    if (iterations.length && step.status === "RECHAZADO") {
+      const last = iterations[iterations.length - 1]!;
+      iterations.push({
+        n: last.n + 1,
+        status: "EN_CURSO",
+        start: actBase,
+      });
+    } else {
+      iterations.push({
+        n: 1,
+        status: "EN_CURSO",
+        start: actBase,
+      });
+    }
   } else if (input.action === "restart") {
     const last = iterations[iterations.length - 1];
     if (!last || last.status !== "FALLIDA") {
@@ -1317,11 +1326,13 @@ export async function transitionRuntimeStep(input: {
           ? ("fail" as const)
           : ("force" as const);
     const iterStatus =
-      outcome === "success"
-        ? ("EXITOSA" as const)
-        : outcome === "fail"
-          ? ("FALLIDA" as const)
-          : ("FORZADA_OK" as const);
+      input.action === "complete_success" && status === "PENDIENTE_APROBACION"
+        ? ("PENDIENTE_APROBACION" as const)
+        : outcome === "success"
+          ? ("EXITOSA" as const)
+          : outcome === "fail"
+            ? ("FALLIDA" as const)
+            : ("FORZADA_OK" as const);
 
     if (input.action === "force_success") {
       if (!last || last.status !== "FALLIDA") {
@@ -1336,6 +1347,16 @@ export async function transitionRuntimeStep(input: {
       last.end = { ...actBase, outcome };
       last.status = iterStatus;
     }
+  } else if (input.action === "approve" || input.action === "reject") {
+    const last = iterations[iterations.length - 1];
+    if (
+      !last ||
+      (last.status !== "PENDIENTE_APROBACION" && last.status !== "EXITOSA")
+    ) {
+      throw new Error("No hay una iteración pendiente de aprobación.");
+    }
+    last.status =
+      input.action === "approve" ? "EXITOSA" : "RECHAZADA";
   }
 
   const comments = [...(step.comments ?? [])];

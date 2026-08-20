@@ -44,9 +44,6 @@ next-env.d.ts
 # clerk configuration (can include secrets)
 /.clerk/
 
-# docs locales (especificaciones, Excel de mejoras, bitácora)
-/Documentacion/
-
 # local dump/clone helpers (prod ↔ local)
 /scripts/clone-event-to-local.mjs
 /scripts/export-event-from-prod.mjs

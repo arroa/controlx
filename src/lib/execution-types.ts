@@ -94,7 +94,9 @@ export type StepIterationStatus =
   | "EN_CURSO"
   | "EXITOSA"
   | "FALLIDA"
-  | "FORZADA_OK";
+  | "FORZADA_OK"
+  | "PENDIENTE_APROBACION"
+  | "RECHAZADA";
 
 export type StepIteration = {
   n: number;
@@ -111,6 +113,8 @@ export const STEP_ITERATION_STATUS_LABELS: Record<
   EXITOSA: "Exitosa",
   FALLIDA: "Fallida",
   FORZADA_OK: "Forzada OK",
+  PENDIENTE_APROBACION: "Pendiente aprobación",
+  RECHAZADA: "Rechazada",
 };
 
 export type RuntimeStepSummary = {
@@ -353,8 +357,11 @@ export function stepHeaderStatusLabel(step: {
   status: RuntimeStepStatus;
   forced: boolean;
 }): string {
-  if (step.status === "PLANIFICADO" || step.status === "RECHAZADO") {
+  if (step.status === "PLANIFICADO") {
     return "No iniciada";
+  }
+  if (step.status === "RECHAZADO") {
+    return "Rechazada";
   }
   if (step.status === "INICIADO" || step.status === "PENDIENTE_APROBACION") {
     return "En curso";
@@ -367,6 +374,48 @@ export function stepHeaderStatusLabel(step: {
     return "Omitida";
   }
   return RUNTIME_STEP_STATUS_LABELS[step.status];
+}
+
+/**
+ * Estado de iteración a mostrar.
+ * - Si hubo otra iteración después de un cierre exitoso/pendiente, ese
+ *   intento fue rechazado (solo desde RECHAZADO se puede volver a Iniciar).
+ * - Corrige también datos viejos donde el rechazo no reescribió el status.
+ */
+export function iterationStatusForDisplay(
+  step: { status: RuntimeStepStatus },
+  iteration: StepIteration,
+  isLatest: boolean,
+): StepIterationStatus {
+  if (
+    !isLatest &&
+    (iteration.status === "EXITOSA" ||
+      iteration.status === "PENDIENTE_APROBACION")
+  ) {
+    return "RECHAZADA";
+  }
+  if (!isLatest) return iteration.status;
+
+  if (
+    step.status === "RECHAZADO" &&
+    (iteration.status === "EXITOSA" ||
+      iteration.status === "PENDIENTE_APROBACION")
+  ) {
+    return "RECHAZADA";
+  }
+  if (
+    step.status === "PENDIENTE_APROBACION" &&
+    iteration.status === "EXITOSA"
+  ) {
+    return "PENDIENTE_APROBACION";
+  }
+  if (
+    step.status === "APROBADO" &&
+    iteration.status === "PENDIENTE_APROBACION"
+  ) {
+    return "EXITOSA";
+  }
+  return iteration.status;
 }
 
 /** Terminales según tipo de ejecución. */

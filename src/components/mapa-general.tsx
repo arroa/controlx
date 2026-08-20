@@ -7,10 +7,12 @@ import {
   Flag,
   Info,
   Search,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ExecutionStepInfoDialog } from "@/components/execution-step-info-dialog";
+import { MapaStatusFilterPanel } from "@/components/mapa-status-filter-panel";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
@@ -36,7 +38,6 @@ import {
 } from "@/components/ui/tooltip";
 import type { EventActorSummary } from "@/lib/event-actors";
 import {
-  ALL_STATUSES,
   buildMapaGeneralRows,
   compareMapaRows,
   DEFAULT_NOVEDAD_MINUTES,
@@ -45,14 +46,66 @@ import {
   type MapaSortDir,
   type MapaSortKey,
 } from "@/lib/mapa-general";
-import {
-  RUNTIME_STEP_STATUS_LABELS,
-  type ExecutionDetail,
-  type RuntimeStepStatus,
+import type {
+  ExecutionDetail,
+  RuntimeStepStatus,
 } from "@/lib/execution-types";
 import { cn } from "@/lib/utils";
 
 const ALL = "all";
+
+/** Chips del filtro (labels cortos; OMITIDO/SIMULADO ya no se ven iguales). */
+const STATUS_FILTER_CHIPS: Array<{
+  status: RuntimeStepStatus;
+  label: string;
+  activeClass: string;
+}> = [
+  {
+    status: "PLANIFICADO",
+    label: "Planificado",
+    activeClass: "border-blue-400/60 bg-blue-600/80 text-white",
+  },
+  {
+    status: "INICIADO",
+    label: "Iniciado",
+    activeClass: "border-sky-300/70 bg-sky-400/90 text-sky-950",
+  },
+  {
+    status: "PENDIENTE_APROBACION",
+    label: "Pend. aprobación",
+    activeClass: "border-amber-300/70 bg-amber-400/90 text-amber-950",
+  },
+  {
+    status: "EXITOSO",
+    label: "Exitoso",
+    activeClass: "border-emerald-300/70 bg-emerald-500/90 text-emerald-950",
+  },
+  {
+    status: "APROBADO",
+    label: "Aprobado",
+    activeClass: "border-emerald-300/70 bg-emerald-600/90 text-white",
+  },
+  {
+    status: "FALLIDO",
+    label: "Fallido",
+    activeClass: "border-rose-300/70 bg-rose-500/90 text-white",
+  },
+  {
+    status: "RECHAZADO",
+    label: "Rechazado",
+    activeClass: "border-rose-300/70 bg-rose-600/90 text-white",
+  },
+  {
+    status: "OMITIDO",
+    label: "Omitido",
+    activeClass: "border-zinc-300/50 bg-zinc-500/80 text-zinc-50",
+  },
+  {
+    status: "SIMULADO",
+    label: "Simulado",
+    activeClass: "border-zinc-300/50 bg-zinc-600/80 text-zinc-50",
+  },
+];
 
 function uniqueSorted(values: string[]) {
   return [...new Set(values.filter(Boolean))].sort((a, b) =>
@@ -83,11 +136,12 @@ export function MapaGeneral({
   const [activityFilter, setActivityFilter] = useState(ALL);
   const [executorFilter, setExecutorFilter] = useState(ALL);
   const [approverFilter, setApproverFilter] = useState(ALL);
-  const [statusFilter, setStatusFilter] = useState<typeof ALL | RuntimeStepStatus>(
-    ALL,
+  const [statusFilter, setStatusFilter] = useState<Set<RuntimeStepStatus>>(
+    () => new Set(),
   );
   const [onlyLio, setOnlyLio] = useState(false);
   const [onlyNovedad, setOnlyNovedad] = useState(false);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const [sortKey, setSortKey] = useState<MapaSortKey>("lio");
   const [sortDir, setSortDir] = useState<MapaSortDir>("desc");
   const [infoStepId, setInfoStepId] = useState<string | null>(null);
@@ -220,7 +274,7 @@ export function MapaGeneral({
         ) {
           return false;
         }
-        if (statusFilter !== ALL && row.step.status !== statusFilter) {
+        if (statusFilter.size > 0 && !statusFilter.has(row.step.status)) {
           return false;
         }
         if (needle && !row.searchText.includes(needle)) return false;
@@ -254,6 +308,23 @@ export function MapaGeneral({
     setSortKey(key);
     setSortDir(key === "lio" || key === "novedad" || key === "runs" ? "desc" : "asc");
   }
+
+  function toggleStatus(status: RuntimeStepStatus) {
+    setStatusFilter((current) => {
+      const next = new Set(current);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  }
+
+  const statusFilterLabel =
+    statusFilter.size === 0
+      ? "Estado"
+      : statusFilter.size === 1
+        ? (STATUS_FILTER_CHIPS.find((chip) => statusFilter.has(chip.status))
+            ?.label ?? "Estado")
+        : `Estado · ${statusFilter.size}`;
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -385,24 +456,18 @@ export function MapaGeneral({
               ))}
             </SelectContent>
           </Select>
-          <Select
-            value={statusFilter}
-            onValueChange={(value) =>
-              setStatusFilter(value as typeof ALL | RuntimeStepStatus)
-            }
+          <button
+            type="button"
+            onClick={() => setStatusPanelOpen(true)}
+            className={cn(
+              "h-8 rounded-md border px-2.5 text-xs font-medium transition",
+              statusFilter.size > 0 || statusPanelOpen
+                ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-100"
+                : "text-muted-foreground hover:text-foreground",
+            )}
           >
-            <SelectTrigger className="h-8 w-[11rem]">
-              <SelectValue placeholder="Estado" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>Estado</SelectItem>
-              {ALL_STATUSES.map((status) => (
-                <SelectItem key={status} value={status}>
-                  {RUNTIME_STEP_STATUS_LABELS[status]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            {statusFilterLabel}
+          </button>
           <button
             type="button"
             onClick={() => setOnlyLio((current) => !current)}
@@ -428,6 +493,35 @@ export function MapaGeneral({
             Solo novedades
           </button>
         </div>
+
+        {statusFilter.size > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-cyan-500/25 bg-cyan-500/5 px-2.5 py-2">
+            {STATUS_FILTER_CHIPS.filter((chip) =>
+              statusFilter.has(chip.status),
+            ).map((chip) => (
+              <button
+                key={chip.status}
+                type="button"
+                onClick={() => toggleStatus(chip.status)}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                  chip.activeClass,
+                )}
+                title="Quitar filtro"
+              >
+                {chip.label}
+                <X className="size-3 opacity-80" />
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setStatusFilter(new Set())}
+              className="ml-auto text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Limpiar
+            </button>
+          </div>
+        ) : null}
 
         <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
           <div className="min-h-0 flex-1 overflow-auto">
@@ -593,6 +687,15 @@ export function MapaGeneral({
             )}
           </div>
         </section>
+
+        <MapaStatusFilterPanel
+          open={statusPanelOpen}
+          chips={STATUS_FILTER_CHIPS}
+          selected={statusFilter}
+          onToggle={toggleStatus}
+          onClear={() => setStatusFilter(new Set())}
+          onClose={() => setStatusPanelOpen(false)}
+        />
 
         <ExecutionStepInfoDialog
           open={Boolean(infoStep)}

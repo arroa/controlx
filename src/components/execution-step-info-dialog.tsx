@@ -16,6 +16,7 @@ import { evidenceFileHref } from "@/lib/evidence-url";
 import { formatDayTimeLabel } from "@/lib/execution-schedule";
 import {
   STEP_ITERATION_STATUS_LABELS,
+  iterationStatusForDisplay,
   stepHeaderStatusLabel,
   type EvidenceMeta,
   type ExecutionGateSummary,
@@ -124,10 +125,12 @@ function EvidenceList({
 
 function IterationCard({
   iteration,
+  displayStatus,
   timezone,
   executionId,
 }: {
   iteration: StepIteration;
+  displayStatus: StepIteration["status"];
   timezone: string;
   executionId: string;
 }) {
@@ -138,17 +141,21 @@ function IterationCard({
         <Badge
           variant="outline"
           className={cn(
-            iteration.status === "EN_CURSO" &&
+            displayStatus === "EN_CURSO" &&
               "border-sky-500/40 bg-sky-500/10 text-sky-100",
-            iteration.status === "EXITOSA" &&
+            displayStatus === "EXITOSA" &&
               "border-emerald-500/40 bg-emerald-500/10 text-emerald-100",
-            iteration.status === "FALLIDA" &&
+            displayStatus === "FALLIDA" &&
               "border-red-500/40 bg-red-500/10 text-red-100",
-            iteration.status === "FORZADA_OK" &&
+            displayStatus === "FORZADA_OK" &&
               "border-amber-500/40 bg-amber-500/10 text-amber-100",
+            displayStatus === "PENDIENTE_APROBACION" &&
+              "border-amber-500/40 bg-amber-500/10 text-amber-100",
+            displayStatus === "RECHAZADA" &&
+              "border-rose-500/40 bg-rose-500/10 text-rose-100",
           )}
         >
-          {STEP_ITERATION_STATUS_LABELS[iteration.status]}
+          {STEP_ITERATION_STATUS_LABELS[displayStatus]}
         </Badge>
       </div>
       <div className="flex flex-col gap-2 sm:flex-row">
@@ -256,6 +263,8 @@ export function ExecutionStepInfoDialog({
                       "border-red-500/40 bg-red-500/10 text-red-100",
                     headerStatus === "Forzada OK" &&
                       "border-amber-500/40 bg-amber-500/10 text-amber-100",
+                    headerStatus === "Rechazada" &&
+                      "border-rose-500/40 bg-rose-500/10 text-rose-100",
                     headerStatus === "No iniciada" &&
                       "border-border bg-muted/40 text-muted-foreground",
                   )}
@@ -305,10 +314,15 @@ export function ExecutionStepInfoDialog({
 
             {iterationsNewestFirst.length ? (
               <div className="space-y-3">
-                {iterationsNewestFirst.map((iteration) => (
+                {iterationsNewestFirst.map((iteration, index) => (
                   <IterationCard
                     key={iteration.n}
                     iteration={iteration}
+                    displayStatus={iterationStatusForDisplay(
+                      step,
+                      iteration,
+                      index === 0,
+                    )}
                     timezone={timezone}
                     executionId={executionId}
                   />
