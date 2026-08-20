@@ -38,10 +38,12 @@ import {
 } from "@/lib/execution-focus";
 import {
   actionNeedsStartTime,
-  actTimeFloor,
+  actTimeFloorForStep,
   defaultActOccurredAt,
+  maxDependencyEndedAt,
   unmetStepDependencies,
   type ExecutionDetail,
+  type RuntimeStepAction,
   type RuntimeStepStatus,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
@@ -275,19 +277,40 @@ export function ExecutionTimesPanel2({
     () => detail.steps.filter((step) => isMineStep(step, actorId)).length,
     [detail.steps, actorId],
   );
+  const rejectedCount = useMemo(
+    () => detail.steps.filter((step) => step.status === "RECHAZADO").length,
+    [detail.steps],
+  );
 
   const infoStep = detail.steps.find((step) => step.id === infoId) ?? null;
   const outcomeStep = outcome
     ? (detail.steps.find((step) => step.id === outcome.stepId) ?? null)
     : null;
 
-  const effectiveFocus: ExecutionFocusMode = hasActor ? focusMode : "all";
+  const effectiveFocus: ExecutionFocusMode =
+    !hasActor &&
+    (focusMode === "highlight-mine" || focusMode === "mine-only")
+      ? "all"
+      : focusMode;
   const dimOthers = effectiveFocus === "highlight-mine";
 
   const stepsById = useMemo(
     () => new Map(detail.steps.map((step) => [step.id, step])),
     [detail.steps],
   );
+
+  function timeFloor(
+    action: RuntimeStepAction,
+    step: RuntimeStepSummary | null | undefined,
+  ) {
+    if (!step) return detail.anchorStartAt;
+    return actTimeFloorForStep({
+      action,
+      step,
+      stepsById,
+      anchorStartAt: detail.anchorStartAt,
+    });
+  }
 
   const allTimesRows = useMemo(
     () => detail.steps.map((step) => toTimesViewRow(step, actorId)),
@@ -442,7 +465,21 @@ export function ExecutionTimesPanel2({
             ? "Contingencia: rechazar en nombre del aprobador (no lo reemplaza)."
             : undefined,
           onClick: () => {
-            void runApproval(step.id, "reject");
+            setSelectedId(null);
+            setError("");
+            setComment("");
+            setFiles([]);
+            setOccurredAt(
+              defaultActOccurredAt(
+                actTimeFloorForStep({
+                  action: "reject",
+                  step,
+                  stepsById,
+                  anchorStartAt: detail.anchorStartAt,
+                }),
+              ),
+            );
+            setOutcome({ stepId: step.id, action: "reject" });
           },
         },
       ];
@@ -466,11 +503,11 @@ export function ExecutionTimesPanel2({
             setFiles([]);
             setOccurredAt(
               defaultActOccurredAt(
-                actTimeFloor({
+                actTimeFloorForStep({
                   action: "force_success",
+                  step,
+                  stepsById,
                   anchorStartAt: detail.anchorStartAt,
-                  actualStartedAt: step.actualStartedAt,
-                  actualEndedAt: step.actualEndedAt,
                 }),
               ),
             );
@@ -516,8 +553,10 @@ export function ExecutionTimesPanel2({
           setFiles([]);
           setOccurredAt(
             defaultActOccurredAt(
-              actTimeFloor({
+              actTimeFloorForStep({
                 action: "start",
+                step,
+                stepsById,
                 anchorStartAt: detail.anchorStartAt,
               }),
             ),
@@ -551,11 +590,11 @@ export function ExecutionTimesPanel2({
             setFiles([]);
             setOccurredAt(
               defaultActOccurredAt(
-                actTimeFloor({
+                actTimeFloorForStep({
                   action: "complete_success",
+                  step,
+                  stepsById,
                   anchorStartAt: detail.anchorStartAt,
-                  actualStartedAt: step.actualStartedAt,
-                  actualEndedAt: step.actualEndedAt,
                 }),
               ),
             );
@@ -583,11 +622,11 @@ export function ExecutionTimesPanel2({
             setFiles([]);
             setOccurredAt(
               defaultActOccurredAt(
-                actTimeFloor({
+                actTimeFloorForStep({
                   action: "complete_fail",
+                  step,
+                  stepsById,
                   anchorStartAt: detail.anchorStartAt,
-                  actualStartedAt: step.actualStartedAt,
-                  actualEndedAt: step.actualEndedAt,
                 }),
               ),
             );
@@ -614,11 +653,11 @@ export function ExecutionTimesPanel2({
             setFiles([]);
             setOccurredAt(
               defaultActOccurredAt(
-                actTimeFloor({
+                actTimeFloorForStep({
                   action: "restart",
+                  step,
+                  stepsById,
                   anchorStartAt: detail.anchorStartAt,
-                  actualStartedAt: step.actualStartedAt,
-                  actualEndedAt: step.actualEndedAt,
                 }),
               ),
             );
@@ -641,11 +680,11 @@ export function ExecutionTimesPanel2({
             setFiles([]);
             setOccurredAt(
               defaultActOccurredAt(
-                actTimeFloor({
+                actTimeFloorForStep({
                   action: "force_success",
+                  step,
+                  stepsById,
                   anchorStartAt: detail.anchorStartAt,
-                  actualStartedAt: step.actualStartedAt,
-                  actualEndedAt: step.actualEndedAt,
                 }),
               ),
             );
@@ -673,10 +712,17 @@ export function ExecutionTimesPanel2({
     if (!outcome || !outcomeStep) return;
     const isStart = actionNeedsStartTime(outcome.action);
     const isForce = outcome.action === "force_success";
+    const isReject = outcome.action === "reject";
     if (isForce) {
       if (!canForceSuccess) return;
       if (!comment.trim()) {
         setError("Forzar requiere un comentario con el motivo.");
+        return;
+      }
+    } else if (isReject) {
+      if (!canApproveStep(outcomeStep)) return;
+      if (!comment.trim()) {
+        setError("Rechazar requiere un comentario con el motivo.");
         return;
       }
     } else {
@@ -687,7 +733,9 @@ export function ExecutionTimesPanel2({
       setError(
         isStart
           ? "Indica la hora en que arrancó la actividad."
-          : "Indica la hora en que terminó la actividad.",
+          : isReject
+            ? "Indica la hora del rechazo."
+            : "Indica la hora en que terminó la actividad.",
       );
       return;
     }
@@ -813,7 +861,7 @@ export function ExecutionTimesPanel2({
               }
             />
           ) : null}
-          {hasActor && viewMode === "timeline" ? (
+          {viewMode === "timeline" ? (
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-md border">
               {EXECUTION_FOCUS_OPTIONS.map((option) => (
                 <button
@@ -829,7 +877,9 @@ export function ExecutionTimesPanel2({
                 >
                   {option.value === "mine-only"
                     ? `${option.label} (${mineCount})`
-                    : option.label}
+                    : option.value === "rejected-only"
+                      ? `${option.label} (${rejectedCount})`
+                      : option.label}
                 </button>
               ))}
             </div>
@@ -874,12 +924,7 @@ export function ExecutionTimesPanel2({
             onSelect={setSelectedId}
             onOutcome={(stepId, action) => {
               const step = stepsById.get(stepId);
-              const floor = actTimeFloor({
-                action,
-                anchorStartAt: detail.anchorStartAt,
-                actualStartedAt: step?.actualStartedAt,
-                actualEndedAt: step?.actualEndedAt,
-              });
+              const floor = timeFloor(action, step);
               setError("");
               setComment("");
               setFiles([]);
@@ -887,6 +932,17 @@ export function ExecutionTimesPanel2({
               setOutcome({ stepId, action });
             }}
             onApproval={(stepId, action) => {
+              if (action === "reject") {
+                const step = stepsById.get(stepId);
+                setError("");
+                setComment("");
+                setFiles([]);
+                setOccurredAt(
+                  defaultActOccurredAt(timeFloor("reject", step)),
+                );
+                setOutcome({ stepId, action: "reject" });
+                return;
+              }
               void runApproval(stepId, action);
             }}
             onOpenInfo={setInfoId}
@@ -933,34 +989,39 @@ export function ExecutionTimesPanel2({
             : undefined
         }
         onBehalfOf={
-          outcomeStep &&
-          canOperateAny &&
-          !isMyExecutorStep(outcomeStep, actorId) &&
-          outcome?.action !== "force_success"
-            ? (outcomeStep.executorName ?? "el ejecutor asignado")
-            : null
+          outcomeStep && outcome?.action === "reject"
+            ? canApproveAny &&
+              actorId &&
+              !outcomeStep.approverActorIds.includes(actorId)
+              ? "el aprobador asignado"
+              : null
+            : outcomeStep &&
+                canOperateAny &&
+                !isMyExecutorStep(outcomeStep, actorId) &&
+                outcome?.action !== "force_success"
+              ? (outcomeStep.executorName ?? "el ejecutor asignado")
+              : null
         }
         timezone={detail.timezone}
         anchorStartAt={detail.anchorStartAt}
         plannedStartAt={outcomeStep?.plannedStartAt ?? null}
-        minOccurredAt={
-          outcome
-            ? actTimeFloor({
-                action: outcome.action,
-                anchorStartAt: detail.anchorStartAt,
-                actualStartedAt: outcomeStep?.actualStartedAt,
-                actualEndedAt: outcomeStep?.actualEndedAt,
-              })
-            : null
-        }
+        minOccurredAt={outcome ? timeFloor(outcome.action, outcomeStep) : null}
         minOccurredLabel={
           outcome?.action === "restart"
             ? "No puede ser anterior al fin de la iteración anterior."
-            : outcome && actionNeedsStartTime(outcome.action)
-              ? "No puede ser anterior al T0 de la ejecución."
-              : outcomeStep?.actualStartedAt
-                ? "No puede ser anterior al inicio del paso."
-                : "No puede ser anterior al T0 de la ejecución."
+            : outcome?.action === "reject"
+              ? "No puede ser anterior al inicio del paso."
+              : outcome && actionNeedsStartTime(outcome.action)
+                ? outcomeStep &&
+                  maxDependencyEndedAt(
+                    outcomeStep.dependencyStepIds,
+                    stepsById,
+                  )
+                  ? "No puede ser anterior al fin real de una predecesora."
+                  : "No puede ser anterior al T0 de la ejecución."
+                : outcomeStep?.actualStartedAt
+                  ? "No puede ser anterior al inicio del paso."
+                  : "No puede ser anterior al T0 de la ejecución."
         }
         occurredAt={occurredAt}
         onOccurredAtChange={setOccurredAt}

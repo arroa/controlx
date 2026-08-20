@@ -3,7 +3,11 @@ import type {
   RuntimeStepSummary,
 } from "@/lib/execution-types";
 
-export type ExecutionFocusMode = "all" | "highlight-mine" | "mine-only";
+export type ExecutionFocusMode =
+  | "all"
+  | "highlight-mine"
+  | "mine-only"
+  | "rejected-only";
 
 export const EXECUTION_FOCUS_OPTIONS: Array<{
   value: ExecutionFocusMode;
@@ -12,6 +16,7 @@ export const EXECUTION_FOCUS_OPTIONS: Array<{
   { value: "all", label: "Todas" },
   { value: "highlight-mine", label: "Destacar mías" },
   { value: "mine-only", label: "Solo mías" },
+  { value: "rejected-only", label: "Rechazadas" },
 ];
 
 export function isMineStep(
@@ -44,6 +49,9 @@ export function filterStepsByFocus(
   actorId: string | null,
   focusMode: ExecutionFocusMode,
 ): RuntimeStepSummary[] {
+  if (focusMode === "rejected-only") {
+    return steps.filter((step) => step.status === "RECHAZADO");
+  }
   if (focusMode !== "mine-only" || !actorId) return steps;
   return steps.filter((step) => isMineStep(step, actorId));
 }
@@ -58,7 +66,11 @@ export const RUNTIME_BAR_LEGEND: Array<{
   { key: "running", label: "En curso", swatch: "bg-sky-300 border-sky-200" },
   { key: "approval", label: "Espera aprobación", swatch: "bg-amber-400 border-amber-300" },
   { key: "ok", label: "OK", swatch: "bg-emerald-500 border-emerald-300" },
-  { key: "fail", label: "Fallido", swatch: "bg-rose-500 border-rose-300" },
+  {
+    key: "fail",
+    label: "Fallido / rechazado",
+    swatch: "bg-rose-500 border-rose-300",
+  },
   { key: "other", label: "De otro (Destacar)", swatch: "bg-zinc-500 border-zinc-400" },
 ];
 
@@ -87,7 +99,7 @@ export function runtimeBarTone(input: {
   ) {
     return "border-emerald-300 bg-emerald-500 text-emerald-950";
   }
-  if (status === "FALLIDO") {
+  if (status === "FALLIDO" || status === "RECHAZADO") {
     return "border-rose-300 bg-rose-500 text-rose-50";
   }
   if (status === "PENDIENTE_APROBACION") {

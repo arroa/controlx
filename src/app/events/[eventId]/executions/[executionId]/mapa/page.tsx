@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { AppHeader } from "@/components/app-header";
 import { ExecutionObserveNav } from "@/components/execution-observe-nav";
 import { MapaGeneral } from "@/components/mapa-general";
-import { canAccessEvent, listEventActors } from "@/lib/admin-data";
+import { listEventActors } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { canViewExecution } from "@/lib/execution-auth";
 import { getExecutionDetail } from "@/lib/execution-runtime";
@@ -22,10 +22,6 @@ export default async function MapaGeneralPage({
 
   const canView = await canViewExecution(user, eventId);
   if (!canView) redirect("/");
-
-  const isAdmin =
-    user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
-  if (!isAdmin) redirect(`/run/${executionId}`);
 
   const actors = await listEventActors(eventId);
 

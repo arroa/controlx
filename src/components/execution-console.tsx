@@ -26,8 +26,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   actionNeedsOccurredAt,
-  actTimeFloor,
+  actTimeFloorForStep,
   defaultActOccurredAt,
+  maxDependencyEndedAt,
   RUNTIME_STEP_STATUS_LABELS,
   type ExecutionDetail,
   type RuntimeStepAction,
@@ -46,7 +47,7 @@ const STATUS_TONE: Record<RuntimeStepStatus, string> = {
   SIMULADO: "border-emerald-500/40 bg-emerald-500/15 text-emerald-200",
   PENDIENTE_APROBACION: "border-amber-500/40 bg-amber-500/15 text-amber-200",
   APROBADO: "border-emerald-500/40 bg-emerald-500/15 text-emerald-200",
-  RECHAZADO: "border-orange-500/40 bg-orange-500/15 text-orange-200",
+  RECHAZADO: "border-rose-500/40 bg-rose-500/15 text-rose-200",
 };
 
 export function ExecutionConsole({
@@ -71,6 +72,11 @@ export function ExecutionConsole({
   const selected = useMemo(
     () => detail.steps.find((step) => step.id === selectedId) ?? null,
     [detail.steps, selectedId],
+  );
+
+  const stepsById = useMemo(
+    () => new Map(detail.steps.map((step) => [step.id, step])),
+    [detail.steps],
   );
 
   const counts = useMemo(() => {
@@ -183,12 +189,14 @@ export function ExecutionConsole({
 
   function requestAction(action: RuntimeStepAction) {
     if (actionNeedsOccurredAt(action)) {
-      const floor = actTimeFloor({
-        action,
-        anchorStartAt: detail.anchorStartAt,
-        actualStartedAt: selected?.actualStartedAt,
-        actualEndedAt: selected?.actualEndedAt,
-      });
+      const floor = selected
+        ? actTimeFloorForStep({
+            action,
+            step: selected,
+            stepsById,
+            anchorStartAt: detail.anchorStartAt,
+          })
+        : detail.anchorStartAt;
       setOccurredAt(defaultActOccurredAt(floor));
       setPendingAction(action as ExecutionActAction);
       setFiles([]);
@@ -500,7 +508,7 @@ export function ExecutionConsole({
                       size="sm"
                       variant="destructive"
                       disabled={busy}
-                      onClick={() => void runAction("reject")}
+                      onClick={() => requestAction("reject")}
                     >
                       Rechazar
                     </Button>
@@ -625,23 +633,28 @@ export function ExecutionConsole({
         anchorStartAt={detail.anchorStartAt}
         plannedStartAt={selected?.plannedStartAt ?? null}
         minOccurredAt={
-          pendingAction
-            ? actTimeFloor({
+          pendingAction && selected
+            ? actTimeFloorForStep({
                 action: pendingAction,
+                step: selected,
+                stepsById,
                 anchorStartAt: detail.anchorStartAt,
-                actualStartedAt: selected?.actualStartedAt,
-                actualEndedAt: selected?.actualEndedAt,
               })
             : null
         }
         minOccurredLabel={
           pendingAction === "restart"
             ? "No puede ser anterior al fin de la iteración anterior."
-            : pendingAction === "start"
-              ? "No puede ser anterior al T0 de la ejecución."
-              : selected?.actualStartedAt
-                ? "No puede ser anterior al inicio del paso."
-                : "No puede ser anterior al T0 de la ejecución."
+            : pendingAction === "reject"
+              ? "No puede ser anterior al inicio del paso."
+              : pendingAction === "start"
+                ? selected &&
+                  maxDependencyEndedAt(selected.dependencyStepIds, stepsById)
+                  ? "No puede ser anterior al fin real de una predecesora."
+                  : "No puede ser anterior al T0 de la ejecución."
+                : selected?.actualStartedAt
+                  ? "No puede ser anterior al inicio del paso."
+                  : "No puede ser anterior al T0 de la ejecución."
         }
         occurredAt={occurredAt}
         onOccurredAtChange={setOccurredAt}

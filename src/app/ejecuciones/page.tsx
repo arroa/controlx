@@ -56,10 +56,7 @@ function ExecutionRow({ item }: { item: AccessibleExecutionCard }) {
     item.assignedStepCount > 0 ||
     item.roles.includes("EXECUTOR") ||
     item.roles.includes("APPROVER");
-  const canPanel =
-    item.isAdmin ||
-    item.roles.includes("APPROVER") ||
-    item.roles.includes("STEERCO");
+  const canPanel = true;
   const primaryHref = canRun
     ? `/run/${item.id}`
     : `/events/${item.eventId}/executions/${item.id}`;

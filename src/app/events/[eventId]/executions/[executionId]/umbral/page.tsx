@@ -3,7 +3,6 @@ import { notFound, redirect } from "next/navigation";
 import { AppHeader } from "@/components/app-header";
 import { ExecutionObserveNav } from "@/components/execution-observe-nav";
 import { ThresholdMonitor } from "@/components/threshold-monitor";
-import { canAccessEvent } from "@/lib/admin-data";
 import { getCurrentUser } from "@/lib/current-user";
 import { canViewExecution } from "@/lib/execution-auth";
 import { getExecutionDetail } from "@/lib/execution-runtime";
@@ -22,10 +21,6 @@ export default async function ThresholdMonitorPage({
 
   const canView = await canViewExecution(user, eventId);
   if (!canView) redirect("/");
-
-  const isAdmin =
-    user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
-  if (!isAdmin) redirect(`/run/${executionId}`);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">

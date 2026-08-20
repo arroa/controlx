@@ -166,7 +166,7 @@ function addStepToStats(stats: LaneStats, step: RuntimeStepSummary) {
     step.status === "SIMULADO"
   ) {
     stats.ok += 1;
-  } else if (step.status === "FALLIDO") {
+  } else if (step.status === "FALLIDO" || step.status === "RECHAZADO") {
     stats.fail += 1;
   } else if (step.status === "INICIADO") {
     stats.running += 1;

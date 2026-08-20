@@ -165,7 +165,8 @@ export function actionNeedsOccurredAt(action: RuntimeStepAction): boolean {
     action === "restart" ||
     action === "complete_success" ||
     action === "complete_fail" ||
-    action === "force_success"
+    action === "force_success" ||
+    action === "reject"
   );
 }
 
@@ -187,9 +188,39 @@ export function defaultActOccurredAt(floorIso?: string | null): string {
   return new Date(nowMs).toISOString();
 }
 
+/** ISO más tardío entre candidatos válidos. */
+export function laterIso(
+  ...candidates: Array<string | null | undefined>
+): string | null {
+  let maxMs: number | null = null;
+  for (const iso of candidates) {
+    if (!iso) continue;
+    const ms = new Date(iso).getTime();
+    if (!Number.isFinite(ms)) continue;
+    if (maxMs == null || ms > maxMs) maxMs = ms;
+  }
+  return maxMs == null ? null : new Date(maxMs).toISOString();
+}
+
+/** Máximo fin real entre predecesoras del paso. */
+export function maxDependencyEndedAt(
+  dependencyStepIds: string[],
+  stepsById: Map<string, Pick<RuntimeStepSummary, "actualEndedAt">>,
+): string | null {
+  let maxMs: number | null = null;
+  for (const id of dependencyStepIds) {
+    const ended = stepsById.get(id)?.actualEndedAt;
+    if (!ended) continue;
+    const ms = new Date(ended).getTime();
+    if (!Number.isFinite(ms)) continue;
+    if (maxMs == null || ms > maxMs) maxMs = ms;
+  }
+  return maxMs == null ? null : new Date(maxMs).toISOString();
+}
+
 /**
  * Piso del reloj según el acto:
- * - start: T0
+ * - start: max(T0, fin real más tardío de predecesoras)
  * - restart: fin (o inicio) de la iteración anterior
  * - cierre/forzar: inicio real del paso
  */
@@ -198,13 +229,45 @@ export function actTimeFloor(input: {
   anchorStartAt?: string | null;
   actualStartedAt?: string | null;
   actualEndedAt?: string | null;
+  /** Fin real más tardío de predecesoras (solo start). */
+  predecessorEndedAt?: string | null;
 }): string | null {
-  const { action, anchorStartAt, actualStartedAt, actualEndedAt } = input;
-  if (action === "start") return anchorStartAt ?? null;
+  const {
+    action,
+    anchorStartAt,
+    actualStartedAt,
+    actualEndedAt,
+    predecessorEndedAt,
+  } = input;
+  if (action === "start") {
+    return laterIso(anchorStartAt, predecessorEndedAt);
+  }
   if (action === "restart") {
     return actualEndedAt ?? actualStartedAt ?? anchorStartAt ?? null;
   }
   return actualStartedAt ?? anchorStartAt ?? null;
+}
+
+/** Piso del acto usando el paso y el mapa de hermanos (predecesoras). */
+export function actTimeFloorForStep(input: {
+  action: RuntimeStepAction;
+  step: Pick<
+    RuntimeStepSummary,
+    "actualStartedAt" | "actualEndedAt" | "dependencyStepIds"
+  >;
+  stepsById: Map<string, Pick<RuntimeStepSummary, "actualEndedAt">>;
+  anchorStartAt?: string | null;
+}): string | null {
+  return actTimeFloor({
+    action: input.action,
+    anchorStartAt: input.anchorStartAt,
+    actualStartedAt: input.step.actualStartedAt,
+    actualEndedAt: input.step.actualEndedAt,
+    predecessorEndedAt:
+      input.action === "start"
+        ? maxDependencyEndedAt(input.step.dependencyStepIds, input.stepsById)
+        : null,
+  });
 }
 
 export type ExecutionGateSummary = {

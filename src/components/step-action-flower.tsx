@@ -122,10 +122,24 @@ export function StepActionFlower({
         return;
       }
       const bottom = window.innerHeight - rect.top + 8;
+      const menuW =
+        actions.length * PETAL_SIZE +
+        Math.max(0, actions.length - 1) * PETAL_GAP;
       if (openToRight) {
-        setCoords({ bottom, left: rect.left });
+        setCoords({
+          bottom,
+          left: Math.max(
+            8,
+            Math.min(rect.left, window.innerWidth - menuW - 8),
+          ),
+        });
       } else {
-        setCoords({ bottom, right: window.innerWidth - rect.right });
+        const menuLeft = rect.right - menuW;
+        if (menuLeft < 8) {
+          setCoords({ bottom, left: 8 });
+        } else {
+          setCoords({ bottom, right: window.innerWidth - rect.right });
+        }
       }
     }
     update();

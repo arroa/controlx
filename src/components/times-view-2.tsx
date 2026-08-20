@@ -1130,7 +1130,6 @@ export function TimesView2({
             return null;
           }
           const top = 2 + index * 30;
-          const left = xOf(item.startMin);
           const active = selectedId === row.id;
           const flowerOpen = flowerOpenId === row.id;
           const operable = row.operable !== false;
@@ -1139,8 +1138,17 @@ export function TimesView2({
             active && operable
               ? MIN_BAR_WIDTH_WITH_FLOWER_PX
               : MIN_BAR_WIDTH_PX;
-          const width = Math.max(minWidth, naturalWidth);
-          const openFlowerToRight = left + width < 220;
+          // El track recorta con overflow-hidden; si la barra se pasa del
+          // borde derecho, el "?" de la flor queda inaccesible. Preferimos
+          // correr la barra a la izquierda (sobre todo al seleccionar).
+          let width = Math.max(minWidth, naturalWidth);
+          const maxRight = Math.max(0, chartWidth - 2);
+          if (width > maxRight) width = maxRight;
+          let left = xOf(item.startMin);
+          if (left + width > maxRight) {
+            left = Math.max(0, maxRight - width);
+          }
+          const openFlowerToRight = left < 220;
           return (
             <div
               key={row.id}

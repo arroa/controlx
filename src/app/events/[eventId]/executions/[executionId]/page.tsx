@@ -35,17 +35,7 @@ export default async function ExecutionPage({
     user.isSuperAdmin || (await canAccessEvent(user.email, eventId));
   const realActor = await getEventActorByEmail(eventId, user.email);
 
-  // Ejecutor / aprobador puro (sin ser admin) → Mi turno.
-  if (
-    !isAdmin &&
-    realActor &&
-    (realActor.roles.includes("EXECUTOR") ||
-      realActor.roles.includes("APPROVER"))
-  ) {
-    redirect(`/run/${executionId}`);
-  }
-
-  // Panel = solo observación. Operar (incl. contingencia EventAdmin) vive en /run.
+  // Panel = observación. Operar (incl. contingencia EventAdmin) vive en /run.
   const canOpenCockpit =
     isAdmin ||
     Boolean(

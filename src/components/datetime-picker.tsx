@@ -20,14 +20,15 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-const MINUTE_STEP = 5;
+const MINUTE_STEP = 1;
 
 function pad(value: number) {
   return String(value).padStart(2, "0");
 }
 
 function roundToStep(minute: number) {
-  return Math.min(55, Math.round(minute / MINUTE_STEP) * MINUTE_STEP);
+  const stepped = Math.round(minute / MINUTE_STEP) * MINUTE_STEP;
+  return Math.min(60 - MINUTE_STEP, Math.max(0, stepped));
 }
 
 /** Lee fecha/hora civil en una TZ a partir de un ISO. */

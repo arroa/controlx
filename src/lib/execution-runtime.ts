@@ -1109,7 +1109,9 @@ export async function transitionRuntimeStep(input: {
       throw new Error(
         isStartTime
           ? "Indica la hora en que arrancó la actividad."
-          : "Indica la hora en que terminó la actividad.",
+          : input.action === "reject"
+            ? "Indica la hora del rechazo."
+            : "Indica la hora en que terminó la actividad.",
       );
     }
     occurredAt = new Date(input.occurredAt);
@@ -1202,6 +1204,20 @@ export async function transitionRuntimeStep(input: {
       }
       throw new Error(
         `No se puede iniciar: dependencias sin cierre OK (${parts.join("; ")}).`,
+      );
+    }
+
+    let maxPredEnd: Date | null = null;
+    for (const depId of step.dependencyStepIds) {
+      const dep = siblings.find((item) => item._id!.equals(depId));
+      if (!dep?.actualEndedAt) continue;
+      if (!maxPredEnd || dep.actualEndedAt > maxPredEnd) {
+        maxPredEnd = dep.actualEndedAt;
+      }
+    }
+    if (maxPredEnd && occurredAt < maxPredEnd) {
+      throw new Error(
+        "La hora de inicio no puede ser anterior al fin real de una predecesora.",
       );
     }
 

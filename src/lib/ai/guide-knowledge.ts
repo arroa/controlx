@@ -260,7 +260,7 @@ Planificado → Iniciado → Exitoso / Fallido
 Con aprobación: Iniciado → Pendiente de aprobación → Aprobado / Rechazado
 En simulacro también Omitido y Simulado (no en REAL). Esos no desbloquean dependencias.
 
-Iniciar / Exitoso / Fallido piden hora (Ahora, ±5 min, o Planificada). El fin no puede ser anterior al inicio.
+Iniciar / Exitoso / Fallido piden hora (Ahora, ±5/15 min, o Planificada; minutero de 1 en 1). El fin no puede ser anterior al inicio. El inicio no puede ser anterior al T0 ni al fin real más tardío de una predecesora.
 Evidencia: si el paso la exige, hay que adjuntar ≥1 archivo (máx. 10 MB c/u) antes de Exitoso.
 
 Contingencia: EventAdmin/OrgAdmin opera “en nombre de” el asignado; queda registro.

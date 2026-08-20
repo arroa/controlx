@@ -28,13 +28,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { EVIDENCE_MAX_BYTES } from "@/lib/evidence-limits";
 import { formatDayTimeLabel } from "@/lib/execution-schedule";
 import {
+  actionNeedsOccurredAt,
   actionNeedsStartTime,
   defaultActOccurredAt,
   type RuntimeStepAction,
 } from "@/lib/execution-types";
 import { cn } from "@/lib/utils";
 
-const MINUTE_STEP = 5;
+const MINUTE_STEP = 1;
 /** Compacto para mobile: 3 filas visibles × 34px. */
 const ITEM_H = 34;
 const VISIBLE = 3;
@@ -46,7 +47,8 @@ export type ExecutionActAction =
   | "restart"
   | "complete_success"
   | "complete_fail"
-  | "force_success";
+  | "force_success"
+  | "reject";
 
 const ACTION_TITLE: Record<ExecutionActAction, string> = {
   start: "Iniciar",
@@ -54,6 +56,7 @@ const ACTION_TITLE: Record<ExecutionActAction, string> = {
   complete_success: "Marcar como Exitoso",
   complete_fail: "Marcar como Fallido",
   force_success: "Forzar OK",
+  reject: "Rechazar",
 };
 
 function pad(value: number) {
@@ -61,7 +64,8 @@ function pad(value: number) {
 }
 
 function roundToStep(minute: number) {
-  return Math.min(55, Math.round(minute / MINUTE_STEP) * MINUTE_STEP);
+  const stepped = Math.round(minute / MINUTE_STEP) * MINUTE_STEP;
+  return Math.min(60 - MINUTE_STEP, Math.max(0, stepped));
 }
 
 function dayKeyFromParts(parts: {
@@ -276,6 +280,11 @@ export function ExecutionActDialog({
 }: ExecutionActDialogProps) {
   const isStart = action ? actionNeedsStartTime(action as RuntimeStepAction) : false;
   const isForce = action === "force_success";
+  const isReject = action === "reject";
+  const needsComment = isForce || isReject;
+  const needsTime = action
+    ? actionNeedsOccurredAt(action as RuntimeStepAction)
+    : false;
   const isSuccessClose = action === "complete_success";
   const needsEvidence = evidenceRequired && isSuccessClose;
   const hasEvidence = files.length > 0 || existingEvidenceCount > 0;
@@ -396,10 +405,9 @@ export function ExecutionActDialog({
 
   const t0Hint = offsetLabel(effectiveIso, anchorStartAt);
   const canConfirm =
-    Boolean(occurredAt) &&
     Boolean(action) &&
-    !belowMin &&
-    (!isForce || Boolean(comment.trim())) &&
+    (!needsTime || (Boolean(occurredAt) && !belowMin)) &&
+    (!needsComment || Boolean(comment.trim())) &&
     (!needsEvidence || hasEvidence);
 
   const displayError = localError || error;
@@ -427,14 +435,19 @@ export function ExecutionActDialog({
         <div className="space-y-4 px-5 py-4">
           {onBehalfOf ? (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-              Contingencia: actuás en nombre de {onBehalfOf}. El ejecutor
-              asignado no se reemplaza.
+              Contingencia: actuás en nombre de {onBehalfOf}. El asignado no
+              se reemplaza.
             </div>
           ) : null}
+          {needsTime ? (
           <div className="space-y-2">
             <div className="flex items-end justify-between gap-2">
               <Label className="text-base">
-                {isStart ? "Hora de inicio" : "Hora de término"}
+                {isStart
+                  ? "Hora de inicio"
+                  : isReject
+                    ? "Hora del rechazo"
+                    : "Hora de término"}
               </Label>
               {t0Hint ? (
                 <span className="font-mono text-[11px] text-muted-foreground">
@@ -562,27 +575,32 @@ export function ExecutionActDialog({
               </p>
             )}
           </div>
+          ) : null}
 
           <div className="space-y-1.5">
             <Label htmlFor="execution-act-comment">
-              {isForce ? "Motivo (obligatorio)" : "Comentario"}
+              {needsComment ? "Motivo (obligatorio)" : "Comentario"}
             </Label>
             <Textarea
               id="execution-act-comment"
               value={comment}
               onChange={(event) => onCommentChange(event.target.value)}
               placeholder={
-                isForce
-                  ? "Motivo del forzado…"
-                  : isStart
-                    ? "Nota opcional al arrancar…"
-                    : "Nota opcional…"
+                isReject
+                  ? "Motivo del rechazo…"
+                  : isForce
+                    ? "Motivo del forzado…"
+                    : isStart
+                      ? "Nota opcional al arrancar…"
+                      : "Nota opcional…"
               }
-              rows={2}
+              rows={isReject ? 3 : 2}
               disabled={busy}
+              autoFocus={isReject}
             />
           </div>
 
+          {needsTime && !isReject ? (
           <div className="space-y-2">
             <label
               className={cn(
@@ -657,6 +675,7 @@ export function ExecutionActDialog({
               </p>
             ) : null}
           </div>
+          ) : null}
 
           {displayError ? (
             <p role="alert" className="text-sm text-red-300">
@@ -698,4 +717,5 @@ export const EXECUTION_ACT_LABELS: Record<ExecutionActAction, string> = {
   complete_success: "Exitoso",
   complete_fail: "Fallido",
   force_success: "Forzado OK",
+  reject: "Rechazado",
 };
