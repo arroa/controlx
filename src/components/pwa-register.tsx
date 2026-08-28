@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 import {
+  applyCompactDocumentClass,
+  hasPwaDisplayCookie,
   isStandaloneDisplayMode,
-  PWA_DISPLAY_COOKIE,
-  PWA_DISPLAY_STANDALONE,
   syncPwaDisplayCookie,
 } from "@/lib/pwa-display";
 
@@ -18,10 +18,9 @@ export function PwaRegister() {
   const router = useRouter();
 
   useEffect(() => {
-    const hadCookie = document.cookie.includes(
-      `${PWA_DISPLAY_COOKIE}=${PWA_DISPLAY_STANDALONE}`,
-    );
+    const hadCookie = hasPwaDisplayCookie();
     syncPwaDisplayCookie();
+    applyCompactDocumentClass();
     if (isStandaloneDisplayMode() && !hadCookie) {
       router.refresh();
     }

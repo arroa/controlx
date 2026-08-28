@@ -47,7 +47,11 @@ import {
   type RuntimeStepStatus,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
-import { prefersCompactExecutionUi } from "@/lib/pwa-display";
+import {
+  getCompactUiServerSnapshot,
+  getCompactUiSnapshot,
+  subscribeCompactUi,
+} from "@/lib/pwa-display";
 import { cn } from "@/lib/utils";
 
 type TimedAction = ExecutionActAction;
@@ -128,28 +132,6 @@ function executionSyncKey(detail: ExecutionDetail) {
   ].join("|");
 }
 
-const MOBILE_MQ = "(max-width: 767px)";
-const STANDALONE_MQ = "(display-mode: standalone)";
-
-function subscribeMobile(onChange: () => void) {
-  const widthMq = window.matchMedia(MOBILE_MQ);
-  const standaloneMq = window.matchMedia(STANDALONE_MQ);
-  widthMq.addEventListener("change", onChange);
-  standaloneMq.addEventListener("change", onChange);
-  return () => {
-    widthMq.removeEventListener("change", onChange);
-    standaloneMq.removeEventListener("change", onChange);
-  };
-}
-
-function getMobileSnapshot() {
-  return prefersCompactExecutionUi();
-}
-
-function getServerMobileSnapshot() {
-  return false;
-}
-
 function patchStep(
   detail: ExecutionDetail,
   step: RuntimeStepSummary,
@@ -206,9 +188,9 @@ export function ExecutionTimesPanel2({
 }) {
   const hasActor = Boolean(actorId);
   const isMobile = useSyncExternalStore(
-    subscribeMobile,
-    getMobileSnapshot,
-    getServerMobileSnapshot,
+    subscribeCompactUi,
+    getCompactUiSnapshot,
+    getCompactUiServerSnapshot,
   );
   const [detail, setDetail] = useState(initial);
   const [viewMode, setViewMode] = useState<ExecutionViewMode>("timeline");

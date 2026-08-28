@@ -5,6 +5,7 @@ import { shadcn } from "@clerk/ui/themes";
 import { PwaRegister } from "@/components/pwa-register";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { isDevBypassEnabled } from "@/lib/dev-flags";
+import { PWA_BOOTSTRAP_SCRIPT } from "@/lib/pwa-display";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,6 +21,7 @@ const geistMono = Geist_Mono({
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
   themeColor: "#11131a",
   // Android Chrome: el layout se achica con el teclado (dialogs no quedan tapados).
   interactiveWidget: "resizes-content",
@@ -64,6 +66,11 @@ export default function RootLayout({
       lang="es"
       className={`${geistSans.variable} ${geistMono.variable} dark h-full`}
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{ __html: PWA_BOOTSTRAP_SCRIPT }}
+        />
+      </head>
       <body className="min-h-full bg-background text-foreground antialiased">
         <PwaRegister />
         {bypass ? (

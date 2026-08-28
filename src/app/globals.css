@@ -134,3 +134,17 @@
     @apply font-sans;
   }
 }
+
+/* PWA / vista compacta: shell móvil aunque el viewport sea ancho (tablet, landscape). */
+html.cx-pwa {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html.cx-pwa body {
+  overflow-x: clip;
+}
+
+html.cx-pwa .max-w-7xl {
+  max-width: 100%;
+}

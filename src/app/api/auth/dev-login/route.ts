@@ -42,6 +42,7 @@ export async function POST(request: Request) {
   const isMobile = isMobileUserAgent(
     request.headers.get("user-agent"),
     request.headers.get("sec-ch-ua-mobile"),
+    request.headers.get("sec-ch-ua-platform"),
   );
   const destination = await getPostLoginPath(email, {
     isMobile,
