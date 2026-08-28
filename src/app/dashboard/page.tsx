@@ -11,12 +11,13 @@ export default async function DashboardPage() {
   if (!user) {
     redirect("/");
   }
-  if (!user.isSuperAdmin) {
-    const isMobile = await isMobileRequest();
+
+  const isMobile = await isMobileRequest();
+  if (isMobile || !user.isSuperAdmin) {
     redirect(
       await getPostLoginPath(user.email, {
         isMobile,
-        isSuperAdmin: false,
+        isSuperAdmin: user.isSuperAdmin,
       }),
     );
   }

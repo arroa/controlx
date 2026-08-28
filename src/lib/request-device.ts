@@ -1,4 +1,9 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
+
+import {
+  isStandaloneDisplayCookie,
+  PWA_DISPLAY_COOKIE,
+} from "@/lib/pwa-display";
 
 /** Detecta móvil/tablet por Client Hints o User-Agent. */
 export function isMobileUserAgent(
@@ -15,6 +20,13 @@ export function isMobileUserAgent(
 
 /** Server Components / Route Handlers: lee headers de la petición. */
 export async function isMobileRequest(): Promise<boolean> {
+  const cookieStore = await cookies();
+  if (
+    isStandaloneDisplayCookie(cookieStore.get(PWA_DISPLAY_COOKIE)?.value)
+  ) {
+    return true;
+  }
+
   const h = await headers();
   return isMobileUserAgent(
     h.get("user-agent"),

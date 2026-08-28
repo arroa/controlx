@@ -4,6 +4,7 @@ import { Download, Share, Smartphone } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { isStandaloneDisplayMode } from "@/lib/pwa-display";
 import { cn } from "@/lib/utils";
 
 type BeforeInstallPromptEvent = Event & {
@@ -12,12 +13,7 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 function isStandalone() {
-  if (typeof window === "undefined") return false;
-  return (
-    window.matchMedia("(display-mode: standalone)").matches ||
-    ("standalone" in navigator &&
-      Boolean((navigator as Navigator & { standalone?: boolean }).standalone))
-  );
+  return isStandaloneDisplayMode();
 }
 
 function isIos() {

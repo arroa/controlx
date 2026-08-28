@@ -47,6 +47,7 @@ import {
   type RuntimeStepStatus,
   type RuntimeStepSummary,
 } from "@/lib/execution-types";
+import { prefersCompactExecutionUi } from "@/lib/pwa-display";
 import { cn } from "@/lib/utils";
 
 type TimedAction = ExecutionActAction;
@@ -128,15 +129,21 @@ function executionSyncKey(detail: ExecutionDetail) {
 }
 
 const MOBILE_MQ = "(max-width: 767px)";
+const STANDALONE_MQ = "(display-mode: standalone)";
 
 function subscribeMobile(onChange: () => void) {
-  const mq = window.matchMedia(MOBILE_MQ);
-  mq.addEventListener("change", onChange);
-  return () => mq.removeEventListener("change", onChange);
+  const widthMq = window.matchMedia(MOBILE_MQ);
+  const standaloneMq = window.matchMedia(STANDALONE_MQ);
+  widthMq.addEventListener("change", onChange);
+  standaloneMq.addEventListener("change", onChange);
+  return () => {
+    widthMq.removeEventListener("change", onChange);
+    standaloneMq.removeEventListener("change", onChange);
+  };
 }
 
 function getMobileSnapshot() {
-  return window.matchMedia(MOBILE_MQ).matches;
+  return prefersCompactExecutionUi();
 }
 
 function getServerMobileSnapshot() {
